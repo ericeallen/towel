@@ -39,6 +39,7 @@ from typing import List, Set, Tuple
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.assignment_analyzer import (
     analyze_assignments,
     has_reassignments_without_bindings,
@@ -473,6 +474,11 @@ def test_a_renamed_binder_read_after_its_deletion_is_declined(
         return r
     """
     helpers, messages = _analysis(tmp_path, source, caplog)
-    assert any("renamed binder observable: " in message for message in messages), messages
+    reason = (
+        "renamed binder observable: "
+        if lifetime_order_certified()
+        else "REJECT[lifetime_order_uncertified]"
+    )
+    assert any(reason in message for message in messages), messages
     # What is still extracted leaves the deletion, and the spelling, with each site.
     assert not any("del " in helper for helper in helpers), helpers

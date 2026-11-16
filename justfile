@@ -72,7 +72,7 @@ test-smoke:
 test-crossfile:
     uv run --frozen python -m pytest -q tests/test_crossfile_observational_equivalence.py
 
-# A release-candidate step (docs/RELEASING.md). SEED is a random start, printed, when
+# A release-candidate step (docs/maintainers/RELEASING.md). SEED is a random start, printed, when
 # omitted; each seed is drawn as the round-3 grammar and again with its binding forms,
 # and each case runs in the default and the --cross-module modes, every 20th also
 # typed. Each failure is written as a hostile fixture under the directory the run prints,
@@ -157,7 +157,19 @@ check-diagrams:
     # ESM ignores NODE_PATH and resolves by walking up from the script, so the
     # packages go beside it; --no-save leaves no package.json behind.
     [ -d node_modules/mermaid ] || npm install --no-save --no-audit --no-fund --silent mermaid jsdom
-    node scripts/check_mermaid.mjs docs/*.md *.md
+    # Pages sit in subdirectories of docs/ too, and macOS's bash has no globstar.
+    node scripts/check_mermaid.mjs $(find docs -name '*.md' | sort) *.md
+
+# === Documentation ===
+
+# Build the documentation site into site/, strictly: any warning fails.
+# CI's documentation workflow runs this same command.
+docs:
+    uv run --frozen --only-group docs zensical build --strict --clean
+
+# Preview the documentation site at http://localhost:8000, rebuilding on change
+docs-serve:
+    uv run --frozen --only-group docs zensical serve
 
 # === Release ===
 

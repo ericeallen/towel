@@ -48,6 +48,7 @@ from typing import Dict, List, Mapping, Set, Tuple
 
 import pytest
 
+from tests.test_helpers import strict_lifetime_refusal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise semantic guards independently of the product usefulness policy.
@@ -221,23 +222,28 @@ def test_two_sites_binding_the_name_each_pass_their_own(tmp_path: Path) -> None:
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
         _write(root, {"m.py": source, "drive.py": SAME_MODULE_DRIVER})
-    applied, _ = _refactor(after / "m.py")
-    assert applied == 1
-    calls = _helper_calls((after / "m.py").read_text())
-    assert [len(calls["first"]), len(calls["second"])] == [1, 1]
-    functions = {
-        node.name: node
-        for node in ast.parse((after / "m.py").read_text()).body
-        if isinstance(node, ast.FunctionDef)
-    }
-    for name in ("first", "second"):
-        storage = functions[name].body[0]
-        assert isinstance(storage, ast.Assign) and isinstance(storage.targets[0], ast.Name)
-        box = storage.targets[0].id
-        assert ast.dump(storage.value) == ast.dump(
-            ast.parse("[(len, name, rows)]", mode="eval").body
-        )
-        assert all(f"{box}[0][0]" in call and f"{box}.pop()" in call for call in calls[name])
+    applied, declined = _refactor(after / "m.py")
+    if strict_lifetime_refusal():
+        assert applied == 0
+        assert declined["lifetime_order_uncertified"] > 0
+        assert _python_files(after) == _python_files(before)
+    else:
+        assert applied == 1
+        calls = _helper_calls((after / "m.py").read_text())
+        assert [len(calls["first"]), len(calls["second"])] == [1, 1]
+        functions = {
+            node.name: node
+            for node in ast.parse((after / "m.py").read_text()).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        for name in ("first", "second"):
+            storage = functions[name].body[0]
+            assert isinstance(storage, ast.Assign) and isinstance(storage.targets[0], ast.Name)
+            box = storage.targets[0].id
+            assert ast.dump(storage.value) == ast.dump(
+                ast.parse("[(len, name, rows)]", mode="eval").body
+            )
+            assert all(f"{box}[0][0]" in call and f"{box}.pop()" in call for call in calls[name])
     assert _handed_builtins(_python_files(after)) == []
     assert _run(after, "drive.py") == _run(before, "drive.py")
 
@@ -253,11 +259,16 @@ def test_a_clustered_site_reading_the_builtin_keeps_its_code(tmp_path: Path) -> 
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
         _write(root, {"m.py": source + "\n", "drive.py": SAME_MODULE_DRIVER})
-    applied, _ = _refactor(after / "m.py")
-    assert applied == 1
+    applied, declined = _refactor(after / "m.py")
     calls = _helper_calls((after / "m.py").read_text())
     assert calls["third"] == []
-    assert len(calls["first"]) == len(calls["second"]) == 1
+    if strict_lifetime_refusal():
+        assert applied == 0
+        assert declined["lifetime_order_uncertified"] > 0
+        assert _python_files(after) == _python_files(before)
+    else:
+        assert applied == 1
+        assert len(calls["first"]) == len(calls["second"]) == 1
     assert _handed_builtins(_python_files(after)) == []
     assert _run(after, "drive.py") == _run(before, "drive.py")
 
@@ -408,8 +419,14 @@ def test_across_modules_two_sites_binding_the_name_each_pass_their_own(tmp_path:
         for path, text in files.items()
     }
     _write(tmp_path, files)
-    applied, _ = _refactor(tmp_path / "pkg")
-    assert applied > 0
+    original = _python_files(tmp_path)
+    applied, declined = _refactor(tmp_path / "pkg")
+    if strict_lifetime_refusal():
+        assert applied == 0
+        assert declined["lifetime_order_uncertified"] > 0
+        assert _python_files(tmp_path) == original
+    else:
+        assert applied > 0
     assert _handed_builtins(_python_files(tmp_path)) == []
 
 

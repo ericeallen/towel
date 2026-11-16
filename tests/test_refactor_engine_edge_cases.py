@@ -26,6 +26,7 @@ import textwrap
 import ast
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise extraction mechanics independently of the usefulness policy.
@@ -147,10 +148,20 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
         """Analyze temporary module source, apply first proposal, and return code."""
         temp_path = self._write_temp(textwrap.dedent(source))
 
-        proposals = self.engine.analyze_file(temp_path)
+        # This placement test concerns the complete two-statement method;
+        # a safe one-statement suffix exercises a different placement rule.
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=2
+        )
+        proposals = engine.analyze_file(temp_path)
+        if not _supported_runtime():
+            self.assertEqual(proposals, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            self.assertEqual(Path(temp_path).read_text(), textwrap.dedent(source))
+            return textwrap.dedent(source)
         self.assertTrue(proposals, "Expected at least one proposal")
         proposal = proposals[0]
-        return self.engine.apply_refactoring(str(temp_path), proposal)
+        return engine.apply_refactoring(str(temp_path), proposal)
 
     @pytest.mark.strict_mode
     def test_instance_methods_extracted_into_class(self):
@@ -167,6 +178,9 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                     return tmp * 2
             """)
 
+        if not _supported_runtime():
+            self.assertNotIn("__extracted_func_", result)
+            return
         tree = ast.parse(result)
         cls = next(
             node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example"
@@ -219,6 +233,9 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                     return tmp * 2
             """)
 
+        if not _supported_runtime():
+            self.assertNotIn("__extracted_func_", result)
+            return
         tree = ast.parse(result)
         cls = next(
             node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example"
@@ -271,6 +288,9 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                     return tmp * 2
             """)
 
+        if not _supported_runtime():
+            self.assertNotIn("__extracted_func_", result)
+            return
         tree = ast.parse(result)
         cls = next(
             node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Example"
@@ -308,7 +328,7 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
 
         The helper used to be hoisted into ``Base``, a class that held none of
         the code, where every subclass anywhere would inherit it
-        (docs/DECISIONS.md, "A method helper lives in the class that holds
+        (docs/design/DECISIONS.md, "A method helper lives in the class that holds
         both duplicates").
         """
 
@@ -327,6 +347,9 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                     return tmp * 2
             """)
 
+        if not _supported_runtime():
+            self.assertNotIn("__extracted_func_", result)
+            return
         tree = ast.parse(result)
         base = next(
             node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Base"

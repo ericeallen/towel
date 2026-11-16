@@ -134,6 +134,10 @@ EFFECT_FREE_TABLE: List[Tuple[str, bool]] = [
     ("(yield x)", False),
     ("(yield from xs)", False),
 ]
+if hasattr(ast, "TemplateStr"):
+    # TemplateStr and Interpolation have no effect-free proof, even for an
+    # empty template; interpolations can evaluate arbitrary expressions.
+    EFFECT_FREE_TABLE += [("t'abc'", False), ("t'{x}'", False), ("t'{f()!r:>{y}}'", False)]
 
 
 @pytest.mark.parametrize(

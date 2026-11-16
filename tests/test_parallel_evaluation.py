@@ -52,8 +52,8 @@ pytestmark = pytest.mark.skipif(
 
 # Two block shapes, so the run yields two clustered proposals rather than one.
 SHAPES = (
-    "def {name}(x):\n    a = x + {index}\n    b = a * 2\n    c = b - 3\n    return c\n",
-    "def {name}(items):\n    total = 0\n    for item in items:\n        total += item * {index}\n    return total\n",
+    "def {name}():\n    a = 1 + {index}\n    b = a * 2\n    c = b - 3\n    return c\n",
+    "def {name}():\n    a = 2 * {index}\n    b = a + 3\n    c = b // 2\n    return c\n",
 )
 
 

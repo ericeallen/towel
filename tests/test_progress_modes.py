@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.test_cli_integration import BODY as LITERAL_BODY
 
 
 def _make_fixture(dir_path: Path) -> None:
@@ -104,37 +105,16 @@ def b():
 def _two_round_project(root: Path) -> None:
     """Two useful extractions; rewriting their shared host triggers local re-analysis."""
     root.mkdir()
-    prices = (
-        "    total = 0\n    for item in items:\n"
-        "        base = item * 3\n        tax = base * 0.1\n"
-        "        taxed = base + tax\n        discounted = taxed - 2\n"
-        "        fee = discounted * 0.02\n        charged = discounted + fee\n"
-        "        rounded = (charged * 100) // 1 / 100\n        total += rounded\n"
-    )
-    names = (
-        "    names = []\n    for record in records:\n"
-        "        stripped = record.name.strip()\n        lower = stripped.lower()\n"
-        "        words = lower.replace('-', ' ')\n        punctuated = words.replace('.', ' ')\n"
-        "        spaces = punctuated.replace('  ', ' ')\n        tabs = spaces.replace('\\t', ' ')\n"
-        "        cleaned = tabs.strip()\n        names.append(cleaned)\n"
-    )
+    # Two distinct literal-only pipelines still require two rounds and four
+    # caller rewrites, without depending on caller-lifetime transfer proofs.
+    arithmetic = LITERAL_BODY
+    bitwise = LITERAL_BODY.replace("+", "^").replace("*", "|").replace("//", "&")
     (root / "a.py").write_text(
-        "def alpha(items):\n"
-        + prices
-        + '    print(total, "alpha")\n    return total\n\n'
-        + "def alpha_two(records):\n"
-        + names
-        + '    print(names, "alpha_two")\n    return names\n'
+        "def alpha():\n    x = 1\n" + arithmetic + "\ndef alpha_two():\n    x = 2\n" + bitwise
     )
-    # Two top-level modules share a helper only when the borrower imports the host.
-    (root / "b.py").write_text(
-        "import a\n\ndef beta(items):\n" + prices + '    print(total, "beta")\n    return total\n'
-    )
-    (root / "c.py").write_text(
-        "import a\n\ndef gamma(records):\n"
-        + names
-        + '    print(names, "gamma")\n    return names\n'
-    )
+    # Each borrower explicitly loads the shared host, as in the original fixture.
+    (root / "b.py").write_text("import a\n\ndef beta():\n    x = 3\n" + arithmetic)
+    (root / "c.py").write_text("import a\n\ndef gamma():\n    x = 4\n" + bitwise)
 
 
 def test_none_is_silent_through_every_re_analysis(tmp_path: Path) -> None:
@@ -197,23 +177,24 @@ def _without_tqdm(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make tqdm look uninstalled, as in a plain ``pip install code-towel``, and the note unsaid."""
     import sys
 
-    from towel.unification import fixed_point
+    from towel.unification import progress
 
     monkeypatch.setitem(sys.modules, "tqdm.auto", None)
-    monkeypatch.setattr(fixed_point, "_TQDM_NOTED", False)
+    monkeypatch.setattr(progress, "_TQDM_NOTED", False)
 
 
-def test_default_progress_without_tqdm_draws_every_phase_inline(
+class _TerminalStream(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def test_explicit_tqdm_without_tqdm_draws_every_phase_inline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The apply phase, where verification spends the time, falls back as analysis does.
-
-    The note once said only the pairing phase drew an inline bar; analysis and
-    unification drew one too, and the apply phase alone drew nothing.
-    """
+    """Audit finding 7: explicit tqdm falls back to the common terminal renderer."""
     _make_fixture(tmp_path / "proj")
     _without_tqdm(monkeypatch)
-    err = io.StringIO()
+    err = _TerminalStream()
     with (
         caplog.at_level(logging.WARNING, logger="towel"),
         contextlib.redirect_stdout(io.StringIO()),
@@ -223,7 +204,7 @@ def test_default_progress_without_tqdm_draws_every_phase_inline(
             str(tmp_path / "proj"), str(tmp_path / "out"), progress="tqdm"
         )
     assert sum(count for count, _ in results.values()) == 2
-    for label in ("Analyzing files:", "Pairing blocks:", "[towel] apply ", "[towel] applied "):
+    for label in ("Analyzing files:", "Pairing blocks:", "apply:", "on=applied:"):
         assert label in err.getvalue(), (label, err.getvalue())
     notes = [record.getMessage() for record in caplog.records if "tqdm" in record.getMessage()]
     assert notes == ["tqdm is not installed; progress is shown as inline bars on stderr instead"]
@@ -284,3 +265,138 @@ def test_cli_detail_progress_logs_a_single_file_run(tmp_path: Path, command: str
     result = invoke([command, *target, "--no-types", "--min-lines", "3", "--progress", "detail"])
     assert result.status == 0, result.stderr
     assert "[towel] Discovered 2 proposal(s)" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("installed", [False, True])
+def test_default_auto_is_silent_on_pipes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    installed: bool,
+) -> None:
+    """Audit CLI-02: the plain-install default never warns or draws into a pipe."""
+    from towel.cli import _build_parser
+    from towel.unification.progress import DEFAULT_PROGRESS
+
+    assert DEFAULT_PROGRESS == "auto"
+    assert _build_parser().parse_args(["preview", "."]).progress == "auto"
+    _make_fixture(tmp_path / "proj")
+    if not installed:
+        _without_tqdm(monkeypatch)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err), caplog.at_level(logging.WARNING, logger="towel"):
+        results, _ = UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
+            str(tmp_path / "proj"), str(tmp_path / "out")
+        )
+    assert sum(count for count, _ in results.values()) == 2
+    assert err.getvalue() == ""
+    assert not [record for record in caplog.records if "tqdm" in record.getMessage()]
+
+
+def test_cli_skipped_file_warning_is_not_repeated_by_analysis_passes(tmp_path: Path) -> None:
+    """Audit 7: undecodable files warn once despite multiple fixed-point passes."""
+    from tests.test_cli_integration import invoke
+
+    _make_fixture(tmp_path / "proj")
+    (tmp_path / "proj" / "bad.py").write_bytes(b"# \xff\n")
+    result = invoke(
+        [
+            "preview",
+            str(tmp_path / "proj"),
+            "--no-types",
+            "--no-format",
+            "--summary",
+            "--min-lines",
+            "3",
+        ]
+    )
+    assert result.status == 0, result.stderr
+    assert "Would apply 2 refactoring(s)." in result.stdout
+    assert result.stderr.count("Warning: Skipping ") == 1, result.stderr
+
+
+@pytest.mark.parametrize(
+    "command, positionals",
+    [("dry", ["in", "out"]), ("preview", ["in"]), ("rename-helpers", ["in"])],
+)
+@pytest.mark.parametrize("flag", ["--quiet", "-q"])
+def test_quiet_and_progress_are_shared_cli_flags(
+    command: str, positionals: list[str], flag: str
+) -> None:
+    """Audit 7: all three commands accept quiet and the same progress choices."""
+    from towel.cli import _build_parser
+
+    args = _build_parser().parse_args([command, *positionals, "--progress", "detail", flag])
+    assert args.quiet and args.progress == "detail"
+
+
+@pytest.mark.parametrize("command", ["dry", "preview", "rename-helpers"])
+def test_quiet_cli_keeps_results_and_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    """Audit 7: quiet takes precedence over explicit detail without hiding results."""
+    import argparse
+    import sys
+    from towel import cli
+    from towel.diagnostics import LOG
+    from towel.unification.progress import write_note
+
+    def dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+        assert args.progress == "none"
+        write_note("unavailable formatter")
+        LOG.info("detail should be quiet")
+        LOG.warning("unreadable source")
+        print("Result: unchanged")
+
+    monkeypatch.setattr(cli, "_dispatch", dispatch)
+    positionals = ["in", "out", "--no-interactive"] if command == "dry" else ["in"]
+    monkeypatch.setattr(
+        sys, "argv", ["towel", command, *positionals, "--progress", "detail", "--quiet"]
+    )
+    cli.main()
+    captured = capsys.readouterr()
+    assert captured.out == "Result: unchanged\n"
+    assert captured.err == "Warning: unreadable source\n"
+
+
+def test_detail_counts_the_same_files_as_analysis(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Audit 7: detail excludes environments, hidden directories, probes and --exclude names."""
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "included.py").write_text("def only():\n    return 1\n")
+    for name in [".hidden", "environment", "excluded", "__pycache__"]:
+        directory = root / name
+        directory.mkdir()
+        (directory / "ignored.py").write_text("def unused():\n    return 1\n")
+    (root / "environment" / "pyvenv.cfg").write_text("home = /python\n")
+    (root / "_towel_probe_test.py").write_text("pass\n")
+    engine = UnificationRefactorEngine(excluded_directories=("excluded",))
+    assert len(engine._find_python_files(str(root))) == 1
+    with caplog.at_level(logging.INFO, logger="towel"):
+        engine.refactor_directory_to_fixed_point(
+            str(root), str(tmp_path / "out"), progress="detail"
+        )
+    counts = [
+        record.getMessage() for record in caplog.records if "Analyzing " in record.getMessage()
+    ]
+    assert counts == ["[towel] Analyzing 1 file(s)..."]
+
+
+def test_non_detail_progress_does_not_walk_files_to_count_them(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit 7: a hidden count must not walk a virtual environment on every pass."""
+    from towel.unification.fixed_point import _ApplyProgress
+
+    def unexpected_walk(directory: str) -> list[str]:
+        raise AssertionError("non-detail display walked the project")
+
+    reporter = _ApplyProgress("auto")
+    reporter.announce_analysis(tmp_path, unexpected_walk)
+    reporter.close()

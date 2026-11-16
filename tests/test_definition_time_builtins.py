@@ -21,12 +21,28 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Mapping
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_parameterize_builtins import _helpers, _refactor, _run, _write
 from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.semantic_safety import builtin_mapping_reads
+
+
+def _refactor_useful(path: Path, flag: bool) -> Mapping[str, int]:
+    """Python ruling: lexical safety does not certify reversed frame cleanup."""
+    before = path.read_bytes()
+    applied, declined = _refactor(path, flag)
+    if lifetime_order_certified():
+        assert applied > 0
+    else:
+        assert applied == 0
+        assert "lifetime_order_uncertified" in declined
+        assert path.read_bytes() == before
+    return declined
+
 
 BODY = """\
     x = len(data)
@@ -173,8 +189,7 @@ def test_wildcard_mapping_replacement_keeps_nonbuiltin_extraction_useful(
     _assert_original_blocks_have_no_mapping_reads(source)
     _write(tmp_path, {"replacement.py": WILDCARD_REPLACEMENT, "m.py": source})
     expected = _run(tmp_path, "m.py")
-    applied, _ = _refactor(tmp_path / "m.py", flag)
-    assert applied > 0
+    _refactor_useful(tmp_path / "m.py", flag)
     assert _run(tmp_path, "m.py") == expected
 
 
@@ -246,8 +261,7 @@ def test_custom_builtin_spelling_keeps_genuinely_lexical_extraction_useful(
     _assert_original_blocks_have_no_mapping_reads(source)
     _write(tmp_path, {"m.py": source})
     assert _run(tmp_path, "m.py") == expected
-    applied, _ = _refactor(tmp_path / "m.py", flag)
-    assert applied > 0
+    _refactor_useful(tmp_path / "m.py", flag)
     assert _run(tmp_path, "m.py") == expected
 
 
@@ -260,8 +274,7 @@ def test_shared_builtin_mapping_mutation_preserves_useful_extraction(
     _write(tmp_path, {"m.py": _source(after=after)})
     expected = _run(tmp_path, "m.py")
     assert expected == ("306 306\n" if mutation else "9 9\n")
-    applied, declined = _refactor(tmp_path / "m.py", flag)
-    assert applied > 0
+    declined = _refactor_useful(tmp_path / "m.py", flag)
     assert "builtin_mapping_replaced" not in declined
     assert _run(tmp_path, "m.py") == expected
 
@@ -281,8 +294,7 @@ def test_no_builtin_reads_and_local_shadowing_keep_useful_extraction(
     _assert_original_blocks_have_no_mapping_reads(source)
     _write(tmp_path, {"m.py": source})
     expected = _run(tmp_path, "m.py")
-    applied, _ = _refactor(tmp_path / "m.py", flag)
-    assert applied > 0
+    _refactor_useful(tmp_path / "m.py", flag)
     assert _run(tmp_path, "m.py") == expected
 
 
@@ -362,8 +374,7 @@ def test_local_builtins_assignment_does_not_disable_ordinary_module_extraction(
     )
     _write(tmp_path, {"m.py": source})
     expected = _run(tmp_path, "m.py")
-    applied, declined = _refactor(tmp_path / "m.py", False)
-    assert applied > 0
+    declined = _refactor_useful(tmp_path / "m.py", False)
     assert "builtin_mapping_replaced" not in declined
     assert _run(tmp_path, "m.py") == expected
 
@@ -419,8 +430,7 @@ def test_builtin_cluster_cannot_join_a_safe_locally_bound_pair(tmp_path: Path, f
     _write(tmp_path, {"m.py": source})
     expected = _run(tmp_path, "m.py")
     assert expected == "27 30 306\n"
-    applied, _ = _refactor(tmp_path / "m.py", flag)
-    assert applied > 0
+    _refactor_useful(tmp_path / "m.py", flag)
     assert _run(tmp_path, "m.py") == expected
     functions = {
         node.name: node
@@ -469,7 +479,6 @@ def test_closure_shadowed_builtin_keeps_its_captured_local_value(tmp_path: Path)
     _write(tmp_path, {"m.py": source})
     expected = _run(tmp_path, "m.py")
     assert expected == "(27, 27)\n"
-    applied, declined = _refactor(tmp_path / "m.py", False)
-    assert applied > 0
+    declined = _refactor_useful(tmp_path / "m.py", False)
     assert "builtin_mapping_replaced" not in declined
     assert _run(tmp_path, "m.py") == expected

@@ -10,7 +10,7 @@
 
 """Verify completed, hash-bound local release evidence without running or publishing it.
 
-Schema 1 is documented in docs/RELEASING.md. Records are observations, not signed
+Schema 1 is documented in docs/maintainers/RELEASING.md. Records are observations, not signed
 attestations: this catches incomplete/stale/inconsistent evidence, not fabrication
 by someone who can rewrite all records. No retained command is ever executed.
 """
@@ -49,7 +49,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import ecosystem_check as ecosystem  # noqa: E402
 
-VERSIONS = ("3.11", "3.12", "3.13")
+VERSIONS = ("3.11", "3.12", "3.13", "3.14", "3.15")
 REQUIRED_RECORDS = (
     "source.json",
     "run-matrix.sh",

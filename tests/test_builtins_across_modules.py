@@ -33,7 +33,8 @@ from typing import Dict, Mapping, Optional, Tuple
 
 import pytest
 
-from tests.test_helpers import module_functions, refactor_to_fixed_point_silently
+from tests.test_helpers import lifetime_order_certified
+from tests.test_helpers import module_functions
 from towel.unification.builtins import BUILTIN_NAMES
 from towel.unification.namespace_writes import builtin_rebinding, scan_project_writes
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -86,7 +87,7 @@ def _refactor(
     project: Path, *, parameterize_builtins: bool = False
 ) -> Tuple[int, Mapping[str, int]]:
     """Refactor ``project/pkg`` in place; how many refactorings applied, and why pairs were declined."""
-    # Every pair here spans modules, which is opt-in (docs/DECISIONS.md).
+    # Every pair here spans modules, which is opt-in (docs/design/DECISIONS.md).
     engine = UnificationRefactorEngine(
         # These minimal binding cases test semantics, independently of the
         # product's default readability filter.
@@ -133,6 +134,14 @@ def _helper(package: Path) -> ast.FunctionDef:
     return helper
 
 
+def _assert_lifetime_refusal(
+    project: Path, before: Mapping[str, bytes], applied: int, declined: Mapping[str, int]
+) -> None:
+    assert applied == 0
+    assert declined.get("lifetime_order_uncertified", 0) > 0
+    assert _python_files(project) == before
+
+
 def _assert_declined(tmp_path: Path, files: Mapping[str, str], reason: str) -> None:
     project = tmp_path / "proj"
     _write(project, files)
@@ -140,7 +149,14 @@ def _assert_declined(tmp_path: Path, files: Mapping[str, str], reason: str) -> N
     applied, declined = _refactor(project)
     assert applied == 0
     assert _python_files(project) == before
-    assert reason in declined, declined
+    # Lifetime certification precedes cross-module placement; earlier mapping
+    # and binding guards still report their original reasons on every runtime.
+    expected_reason = (
+        "lifetime_order_uncertified"
+        if reason == "builtin_may_differ_by_module" and not lifetime_order_certified()
+        else reason
+    )
+    assert expected_reason in declined, declined
 
 
 REPRODUCER_CHECK = """
@@ -155,9 +171,13 @@ def test_the_reproducer_is_declined_and_keeps_its_behaviour(tmp_path: Path) -> N
     before, after = tmp_path / "before", tmp_path / "after"
     _write(before, files)
     _write(after, files)
+    original = _python_files(after)
     applied, declined = _refactor(after)
     assert applied == 0
-    assert "builtin_may_differ_by_module" in declined
+    if lifetime_order_certified():
+        assert "builtin_may_differ_by_module" in declined
+    else:
+        _assert_lifetime_refusal(after, original, applied, declined)
     assert _run(after, "check.py") == _run(before, "check.py")
     assert "10001" in _run(after, "check.py")
 
@@ -521,9 +541,13 @@ NOT_EVIDENCE = {
 def test_unrelated_or_reflective_writes_leave_the_pair_alone(tmp_path: Path, case: str) -> None:
     project = tmp_path / "proj"
     _write(project, _project(extra={"tests/test_other.py": NOT_EVIDENCE[case]}))
-    applied, _ = _refactor(project, parameterize_builtins=True)
-    assert applied > 0
-    assert not {argument.arg for argument in _helper(project / "pkg").args.args} & BUILTIN_NAMES
+    before = _python_files(project)
+    applied, declined = _refactor(project, parameterize_builtins=True)
+    if lifetime_order_certified():
+        assert applied > 0
+        assert not {argument.arg for argument in _helper(project / "pkg").args.args} & BUILTIN_NAMES
+    else:
+        _assert_lifetime_refusal(project, before, applied, declined)
 
 
 MODULE_NAME_BLOCK = """
@@ -586,9 +610,13 @@ def test_a_module_name_is_still_passed_so_patching_it_reaches_each_caller(
 ) -> None:
     """Strict mode hands over a lookup, so the helper reads ``join`` where the block did."""
     before, after = _patched_module_name_project(tmp_path)
-    applied, _ = _refactor(after)
-    assert applied > 0
-    assert _passes_join(after, deferred=True)
+    original = _python_files(after)
+    applied, declined = _refactor(after)
+    if lifetime_order_certified():
+        assert applied > 0
+        assert _passes_join(after, deferred=True)
+    else:
+        _assert_lifetime_refusal(after, original, applied, declined)
     assert _run(after, "check.py") == _run(before, "check.py")
 
 
@@ -622,27 +650,36 @@ def test_a_same_module_helper_is_unchanged_by_a_patch_of_its_module(tmp_path: Pa
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
         _write(root, {"m.py": SAME_MODULE, "check.py": SAME_MODULE_CHECK})
-    final, applied = refactor_to_fixed_point_silently(
-        str(after / "m.py"), min_lines=3, skip_trivial_helpers=False
-    )
-    assert applied == 1
-    (after / "m.py").write_text(final)
-    helpers = [f for name, f in module_functions(final).items() if name.startswith("__extracted")]
-    # The complete body also carries its header tag and final argument owner;
-    # len remains an ordinary lookup in this same module.
-    assert [argument.arg for argument in helpers[0].args.args] == [
-        "__param_0",
-        "name",
-        "rows",
-        "_towel_owner",
-    ]
-    assert (
-        sum(
-            isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len"
-            for node in ast.walk(helpers[0])
+    original = _python_files(after)
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False)
+    with contextlib.redirect_stdout(io.StringIO()):
+        final, applied, _ = engine.refactor_to_fixed_point(str(after / "m.py"), max_iterations=0)
+    if lifetime_order_certified():
+        assert applied == 1
+        helpers = [
+            f for name, f in module_functions(final).items() if name.startswith("__extracted")
+        ]
+        # The complete body also carries its header tag and final argument owner;
+        # len remains an ordinary lookup in this same module.
+        assert [argument.arg for argument in helpers[0].args.args] == [
+            "__param_0",
+            "name",
+            "rows",
+            "_towel_owner",
+        ]
+        assert (
+            sum(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "len"
+                for node in ast.walk(helpers[0])
+            )
+            == 2
         )
-        == 2
-    )
+    else:
+        _assert_lifetime_refusal(after, original, applied, engine.declined_pairs)
+        assert final == SAME_MODULE
+    (after / "m.py").write_text(final)
     assert _run(after, "check.py") == _run(before, "check.py")
 
 
@@ -650,8 +687,12 @@ def test_a_same_module_helper_is_unchanged_by_a_patch_of_its_module(tmp_path: Pa
 def test_reflective_patching_does_not_refuse_extraction(tmp_path: Path, case: str) -> None:
     project = tmp_path / "proj"
     _write(project, _project(extra={"tests/test_exports.py": REFLECTIVE_PATCHES[case]}))
+    before = _python_files(project)
     applied, declined = _refactor(project, parameterize_builtins=True)
-    assert applied > 0
+    if lifetime_order_certified():
+        assert applied > 0
+    else:
+        _assert_lifetime_refusal(project, before, applied, declined)
     assert "builtin_may_differ_by_module" not in declined
 
 
@@ -676,8 +717,12 @@ def test_reflection_in_a_participating_module_does_not_refuse_extraction(
 ) -> None:
     project = tmp_path / "proj"
     _write(project, _project(REFLECTIVE_PRELUDES[case]))
+    before = _python_files(project)
     applied, declined = _refactor(project, parameterize_builtins=True)
-    assert applied > 0
+    if lifetime_order_certified():
+        assert applied > 0
+    else:
+        _assert_lifetime_refusal(project, before, applied, declined)
     assert "builtin_may_differ_by_module" not in declined
 
 

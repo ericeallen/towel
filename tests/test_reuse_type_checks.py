@@ -31,6 +31,8 @@ import sys
 
 import pytest
 
+from tests.test_helpers import child_mode_flags, lifetime_order_certified
+from tests.test_cli_integration import LITERAL_DUPLICATES
 from towel.type_inference import CheckFailure, MypyInferrer
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -92,6 +94,7 @@ def test_default_cli_preserves_strict_types_of_whole_body_duplicates(
             "--no-interactive",
             "--progress",
             "none",
+            *child_mode_flags(),
         ],
         cwd=tmp_path,
         env={**os.environ, "TOWEL_WORKERS": "1"},
@@ -123,7 +126,10 @@ def test_default_cli_preserves_strict_types_of_whole_body_duplicates(
         assert callable(original_function) and callable(changed_function)
         arguments = (-3, 0, 2, 1.5) if name == "second" and second_type == "float" else (-3, 0, 2)
         assert [changed_function(x) for x in arguments] == [original_function(x) for x in arguments]
-    if second_type == "int":
+    if second_type == "int" and not lifetime_order_certified():
+        assert output.read_text() == original
+        assert "lifetime_order_uncertified" in run.stdout + run.stderr
+    elif second_type == "int":
         assert "__extracted_func" in output.read_text(), "the shared body is extracted"
         assert "return first(x)" not in output.read_text()
 
@@ -131,7 +137,7 @@ def test_default_cli_preserves_strict_types_of_whole_body_duplicates(
 def test_a_checker_failure_is_not_taken_for_acceptance(tmp_path: Path) -> None:
     pytest.importorskip("mypy")
     path = tmp_path / "source.py"
-    original = _source("int")
+    original = LITERAL_DUPLICATES.replace("():", "() -> int:")
     path.write_text(original)
     checker = MypyInferrer()
     checker.close()

@@ -48,7 +48,7 @@ from tests.test_next_validation_documentation import (
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "tests/release_evidence/post-1772-corrected-validation"
-DOCUMENT = ROOT / "docs/proposals/next-validation-final.md"
+DOCUMENT = ROOT / "docs/design/proposals/next-validation-final.md"
 COMMIT = "3af8c4bfe8acd56c204f5e31c7cf80f4f028b654"
 RUNTIME = "78c8c6ea954f370a1afa8846a41988856589acc5"
 TESTS = "63c2bb4b75e17dbe12947d83dc9219346eecd6af"

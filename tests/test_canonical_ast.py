@@ -28,7 +28,7 @@ import ast
 import copy
 from pathlib import Path
 import sys
-from typing import Callable, List, Sequence, Type, TypeVar
+from typing import Callable, List, Mapping, Sequence, Type, TypeVar, cast
 
 import pytest
 
@@ -182,15 +182,51 @@ def _repository_trees() -> List[ast.AST]:
     return trees
 
 
+# Derived from CPython v3.13.7, Lib/ast.py, dump():
+# https://github.com/python/cpython/blob/v3.13.7/Lib/ast.py
+# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
+# The upstream license is retained in tests/licenses/CPython-3.13.7.LICENSE.
+# Changes: type annotations and specialization to the default-format path.
+def _reference_313_dump(value: object) -> str:
+    """The default-format rules in CPython 3.13.7's Lib/ast.py.
+
+    Keep this oracle independent of Towel's normalization: CPython consults
+    class defaults and field types, whereas Towel handles absent fields too.
+    Native 3.13 and 3.14 validate it over the whole repository below. Native
+    3.15 additionally omits Load contexts, so its default dump is no longer
+    the reference for Towel's deliberately stable spelling.
+    """
+    if isinstance(value, ast.AST):
+        kind = type(value)
+        field_types = cast(Mapping[str, object], getattr(kind, "_field_types"))
+        fields: List[str] = []
+        for name in value._fields:
+            try:
+                field = getattr(value, name)
+            except AttributeError:
+                continue
+            if field is None and getattr(kind, name, ...) is None:
+                continue
+            if field == [] and getattr(field_types.get(name, object), "__origin__", ...) is list:
+                continue
+            fields.append(f"{name}={_reference_313_dump(field)}")
+        return f"{kind.__name__}({', '.join(fields)})"
+    if isinstance(value, list):
+        return f"[{', '.join(_reference_313_dump(item) for item in value)}]"
+    return repr(value)
+
+
 @pytest.mark.skipif(sys.version_info < (3, 13), reason="the 3.13 dump is the reference")
 def test_the_spelling_is_the_313_dump_of_every_node() -> None:
     compared = 0
     for tree in _repository_trees():
         for node in ast.walk(tree):
             try:
-                expected = ast.dump(node)
+                expected = _reference_313_dump(node)
             except ValueError:
                 continue  # An int too wide for repr; see the test below.
+            if sys.version_info[:2] in ((3, 13), (3, 14)):
+                assert expected == ast.dump(node)
             assert canonical_dump(node) == expected
             compared += 1
     assert compared > 100_000
@@ -202,7 +238,24 @@ def test_the_spelling_is_the_313_dump_of_every_node() -> None:
 )
 def test_the_spelling_is_the_313_dump_of_every_built_node(built: Callable[[], ast.AST]) -> None:
     node = built()
-    assert canonical_dump(node) == ast.dump(node)
+    expected = _reference_313_dump(node)
+    if sys.version_info[:2] in ((3, 13), (3, 14)):
+        assert expected == ast.dump(node)
+    assert canonical_dump(node) == expected
+
+
+@pytest.mark.parametrize("context", [ast.Load, ast.Store, ast.Del])
+def test_native_dump_context_defaults_are_separate_from_canonical_spelling(
+    context: Type[ast.expr_context],
+) -> None:
+    node = ast.Name(id="x", ctx=context())
+    expected = f"Name(id='x', ctx={context.__name__}())"
+    assert canonical_dump(node) == expected
+    if sys.version_info[:2] == (3, 15) and context is ast.Load:
+        assert ast.dump(node) == "Name(id='x')"
+        assert ast.dump(node, show_empty=True) == expected
+    else:
+        assert ast.dump(node) == expected
 
 
 @pytest.mark.parametrize(

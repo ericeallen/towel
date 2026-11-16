@@ -25,7 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_cli_integration import DUPLICATES, HELPER, invoke
+from tests.test_cli_integration import HELPER, invoke
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
 from tests.test_recovery_journal import _interrupted_transaction
 
 
@@ -33,6 +34,7 @@ def test_recover_restores_the_journal_targets_and_exits_cleanly(tmp_path: Path) 
     files, journal = _interrupted_transaction(tmp_path)
     result = invoke(["recover", str(journal)])
     assert result.status == 0
+    assert result.stdout == "Restored 1 file; journal removed.\n"
     assert all(path.read_bytes() == b"value = 1\n" for path in files)
     assert not journal.exists()
 
@@ -71,35 +73,44 @@ def test_dry_with_nothing_to_extract_says_so_and_copies_the_input(
     )
     result = invoke(["dry", str(target), str(out), "--no-interactive", "--progress", "none"])
     assert result.status == 0, result.stderr
+    # 2.0 (audit finding 3): file and directory runs say the same thing, in plain words.
+    assert "\nNo repeated code found in 1 file.\n" in result.stdout
+    assert "Termination" not in result.stdout
     if layout == "file":
-        assert "\nNo refactorings found!\n" in result.stdout
         assert out.read_text() == module.read_text()
     else:
-        assert "\nNo refactorings found! Termination: fixed_point\n" in result.stdout
         assert (out / "m.py").read_text() == module.read_text()
 
 
 @pytest.mark.parametrize(
-    "flag, answer, analyzed",
+    "flag, answer, written",
     [
         ("--interactive", "n\n", False),
-        ("--interactive", "y\ny\n", True),
+        ("--interactive", "y\n", True),
         ("--interactive", "", False),
         ("--no-interactive", "", True),
     ],
     ids=["declined", "accepted", "closed-stdin", "no-interactive-never-asks"],
 )
-def test_input_without_a_py_suffix_is_analyzed_only_on_confirmation(
-    tmp_path: Path, flag: str, answer: str, analyzed: bool
+def test_input_without_a_py_suffix_is_analyzed_and_written_only_on_confirmation(
+    tmp_path: Path, flag: str, answer: str, written: bool
 ) -> None:
-    """Asked only when interactive: round 4's D5 found ``--no-interactive`` still prompting."""
+    """A named file without .py is analysed, with a warning on stderr (audit finding 7).
+
+    Round 4's D5 found ``--no-interactive`` still prompting. Since 2.0 the only
+    question comes after the analysis, before anything is written, and
+    ``--no-interactive`` never asks it.
+    """
     source = tmp_path / "r9p2_script"
     source.write_text(DUPLICATES)
     out = tmp_path / "out.py"
     result = invoke(["dry", str(source), str(out), flag, "--progress", "none"], stdin=answer)
-    assert result.status == (0 if analyzed else 1), result.stderr
-    assert f"Warning: '{source}' is not a Python file (.py)" in result.stdout
-    assert ("Analyze anyway?" in result.stdout) is (flag == "--interactive")
-    assert out.exists() is analyzed
-    assert ("Applied 1 refactoring(s)" in result.stdout) is analyzed
+    assert result.status == (0 if written else 1), result.stderr
+    assert f"Warning: '{source}' is not a Python file (.py)" in result.stderr
+    assert "not a Python file" not in result.stdout
+    assert "Analyze anyway?" not in result.stdout + result.stderr
+    assert ("Write these changes?" in result.stderr) is (flag == "--interactive")
+    assert out.exists() is written
+    assert ("Applied 1 refactoring(s)" in result.stdout) is written
+    assert ("Cancelled; nothing was written." in result.stderr) is not written
     assert source.read_text() == DUPLICATES

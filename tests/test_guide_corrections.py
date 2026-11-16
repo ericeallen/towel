@@ -28,7 +28,7 @@ import tomllib
 
 import pytest
 
-from tests.test_cli_integration import DUPLICATES, HELPER, invoke
+from tests.test_cli_integration import HELPER, LITERAL_DUPLICATES as DUPLICATES, invoke
 from tests.test_documentation_navigation import _prose
 from towel import cli
 from towel.api import UnificationRefactorEngine
@@ -423,7 +423,7 @@ def test_pip_recipes_cannot_fall_back_to_a_withdrawn_release() -> None:
     installing 1.0.4, whose `towel --version` prints 1.0.2. With a lower bound of
     1.414, the first release that is not yanked, the same pip exits 1.
     """
-    history = _compact(_guide("RELEASING.md"))
+    history = _compact(_guide("maintainers/RELEASING.md"))
     assert "versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are" in (
         history
     )

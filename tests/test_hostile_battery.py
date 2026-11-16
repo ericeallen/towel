@@ -21,7 +21,8 @@ pattern bindings. The battery asserts that the program's output is identical
 after refactoring, and that the module shows its importers the same public
 names bound to the same things (``module_faces``), and records per fixture
 whether the current engine transforms it or rejects it, so a change in either
-direction is visible.
+direction is visible. The lifetime-refusal profile preserves the same semantic
+assertions while requiring an explicit refusal on uncertified interpreters.
 
 A fixture in ``KNOWN_DEFECTS`` shows a defect an audit reported and is not
 yet fixed: it is expected to fail, strictly, and its transformed state is
@@ -45,10 +46,13 @@ from typing import Dict
 
 import pytest
 
+from tests.compiler_golden_profiles import lifetime_refusal_profile
 from tests.hostile_execution import ScopeWatch, fixture_named, fixture_sources, module_faces
 from tests.hostile_execution import observe, parsed_or_skipped
 from tests.hostile_refactoring import OWNERSHIP_BOOKKEEPING, refactor_script
 from tests.hostile_refactoring import with_known_defects
+from towel.unification.argument_ownership import _supported_runtime
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # The battery's pins are 1.949's: which fixtures strict mode transforms, and
 # which its ownership proof refuses. Relaxed mode, the default, has its own
@@ -541,6 +545,156 @@ TRANSFORMED = (
     "r79_list_display_in_loop",
 }
 
+# Reviewed Python 3.14/3.15 refusal profile: these fixtures previously used
+# a frame-order proof. Keep their behavioral assertions and certify the reason
+# explicitly; no known defect or lifetime assertion becomes a skip.
+UNCERTIFIED_OWNERSHIP_REFUSALS = frozenset(
+    {
+        "h01_side_effect_order",
+        "h03_loop_reeval",
+        "h10_short_circuit",
+        "h13_dunder_file",
+        "h26_match_capture",
+        "p01_static_helper_class_name_shadowed_by_parameter",
+        "p02_static_helper_class_deleted",
+        "p03_static_helper_mangled_class_name",
+        "p04_static_helper_class_decorator_returns_factory",
+        "p05_static_helper_class_global_rebound",
+        "p06_static_helper_called_while_class_body_runs",
+        "p07_static_methods_called_while_class_body_runs",
+        "p08_classmethod_never_using_cls",
+        "p09_static_helper_metaclass_hides_attribute",
+        "p10_one_line_exception_base",
+        "p11_one_line_base_docstring_and_assignment",
+        "p12_one_line_body_after_a_split_header",
+        "p13_protocol_default_methods",
+        "p14_protocol_common_ancestor",
+        "p18_known_class_decorators_keep_the_helper",
+        "p19_thunk_of_possibly_unbound_local",
+        "p20_thunk_of_loop_variable",
+        "p21_helper_placed_after_an_assignment_that_calls_it",
+        "r101_same_named_method_forces_module_helper",
+        "r102_whole_body_reuse",
+        "r104_walrus_target_spelling",
+        "r131_weakref_and_id_identity",
+        "r147_wide_int_literal",
+        "r152_definition_time_reads",
+        "r158_getattr_serves_unknown_names_from_data",
+        "r160_host_binds_any_before_its_last_import",
+        "r161_module_with_all_gains_no_public_name",
+        "r1792_formatting_destination_indentation",
+        "r1792_value_return_owner",
+        "r27_del_subscript",
+        "r47_lru_cache_method",
+        "r50_helper_name_collision",
+        "r54_with_binding_used_after",
+        "r55_chained_assign",
+        "r57_star_unpack",
+        "r60_local_import",
+        "r63_except_var_used_in_handler",
+        "r7bi_loop_capture_def_rebind_prebound",
+        "r7bi_loop_del_before_eager_read",
+        "r7c_unmangled_parameter_passed_by_keyword",
+        "r7d_plain_wrapper_applied_by_hand",
+        "r7d_plain_wrapper_decorator",
+        "r7fz_binding_dunder_name_file_samemodule",
+        "r7fz_binding_global_rebound_by_callee",
+        "r7fz_binding_loop_var_leak",
+        "r7fz_binding_module_getattr",
+        "r7fz_binding_unbound_local_handler",
+        "r7fz_builtins_mock_patch_module",
+        "r7fz_builtins_module_shadows_len",
+        "r7fz_cluster_K_cell",
+        "r7fz_cluster_generator_site",
+        "r7fz_cluster_local_K",
+        "r7fz_cluster_method_site",
+        "r7fz_ctrl_break_in_try_finally",
+        "r7fz_ctrl_match_class_pattern",
+        "r7fz_ctrl_nested_try",
+        "r7fz_ctrl_suppress_context",
+        "r7fz_ctrl_walrus_while",
+        "r7fz_directives_noqa_on_argument",
+        "r7fz_directives_pragma_branch",
+        "r7fz_directives_type_ignore_line",
+        "r7fz_extra_pragma_with_header",
+        "r7fz_prebound_for_else_prebound",
+        "r7fz_prebound_for_read_in_block",
+        "r7fz_prebound_for_tuple_target",
+        "r7fz_prebound_match_capture_prebound",
+        "r7fz_prebound_try_except_else_bind",
+        "r7fz_prebound_while_walrus_prebound",
+        "r7fz_srctext_bom",
+        "r7fz_srctext_cp1252_quotes",
+        "r7fz_srctext_crlf",
+        "r7fz_srctext_form_feed",
+        "r7fz_srctext_fstring_nested_quotes",
+        "r7fz_srctext_latin1_literals",
+        "r7fz_srctext_named_escape",
+        "r7fz_srctext_semicolons_continuations",
+        "r7fz_srctext_tabs_indent",
+        "r7fz_thunks2_dict_unhashable",
+        "r7fz_thunks2_dict_unpack",
+        "r7fz_thunks2_lambda_default",
+        "r7fz_thunks2_list_starred",
+        "r7fz_thunks2_plain_first",
+        "r7fz_thunks2_property_first",
+        "r7fz_thunks2_set_hash_effect",
+        "r7fz_thunks2_set_unhashable",
+        "r7fz_thunks2_tuple_starred",
+        "r7fz_thunks2_two_thunks_order",
+        "r7fz_thunks2_undefined_global",
+        "r7fz_thunks_call_arg_order",
+        "r7fz_thunks_dict_order",
+        "r7fz_thunks_match_guard",
+        "r7sp_block_starts_after_a_semicolon",
+        "r7sp_thunk_after_a_lambda_default",
+        "r7sp_thunk_after_a_raise",
+        "r7sp_thunk_after_a_set_display",
+        "r7sp_thunk_after_a_starred_display",
+        "r7sp_thunk_after_an_unbound_global_read",
+        "r80_inlined_leading_thunk",
+        "r81_conditionally_bound_free_variable",
+        "r83_tab_indented_class",
+        "r90_cluster_across_classes",
+        "r9dr_fmt_off_layout_moves_verbatim",
+        "r9sb_fstring_format_spec",
+        "rmypyoverlay_constructor_fields",
+        # The unify lane's matching of renamed locals made these four strict
+        # extractions, each through a certified ownership transfer, which an
+        # uncertified interpreter declines like the rest. (r9sb's lambda
+        # spelling, in turn, no longer unifies in either mode, so no lifetime
+        # refusal is left to observe there.)
+        "r108_clustered_sites_assign_the_returned_name",
+        "r156_created_objects_that_escape",
+        "r69_annassign",
+        "r7fz_grammar_u0417_augassign_after_block",
+    }
+)
+UNCERTIFIED_REFLECTION_REFUSALS = frozenset(
+    {
+        "p15_class_decorator_rebuilds_namespace",
+        "p16_class_decorator_wraps_every_function",
+        "p17_decorated_base_rebuilds_namespace",
+        "r159_frame_handle_before_a_nested_block",
+        "r7d_instrumenting_call_applied_by_hand",
+        "r7d_instrumenting_class_decorator",
+        "r7d_instrumenting_enclosing_function",
+        "r7d_instrumenting_function_decorator",
+        "r7d_metaclass_recompiles_methods",
+        "r84_warn_stacklevel",
+        "r9dc_stacked_decoration_by_hand",
+    }
+)
+
+if lifetime_refusal_profile():
+    OWNERSHIP_REFUSALS |= dict.fromkeys(
+        UNCERTIFIED_OWNERSHIP_REFUSALS, "lifetime_order_uncertified"
+    )
+    REFLECTION_OWNERSHIP_REFUSALS |= dict.fromkeys(
+        UNCERTIFIED_REFLECTION_REFUSALS, "lifetime_order_uncertified"
+    )
+    TRANSFORMED -= UNCERTIFIED_OWNERSHIP_REFUSALS
+
 KNOWN_DEFECTS: Dict[str, str] = {}
 """Fixtures whose defect is reported and not yet fixed, each with its reason from
 ``tests/audit_defects.py``. None is open: every round-3 P1 fixture passes."""
@@ -594,7 +748,13 @@ def _r102_transforms_on_this_compiler(fixture: Path) -> bool:
         assert actual_parameters == parameters[code.co_name]
         captures.append(bool(set(actual_parameters).intersection(code.co_cellvars)))
     assert all(captures) or not any(captures), "Unknown mixed r102 parameter-cell facts"
-    return not any(captures)
+    return not any(captures) and not lifetime_refusal_profile()
+
+
+def _assert_lifetime_order_refusal(script: Path) -> None:
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False)
+    engine.analyze_file(str(script))
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0, engine.declined_pairs
 
 
 def _run(script: Path) -> tuple[int, str, list[str]]:
@@ -636,6 +796,8 @@ def test_refactoring_preserves_program_output(case: str) -> None:
         if transformed:
             # No public name of the module appears, disappears, or changes meaning.
             assert module_faces(after.parent, ["m"]) == module_faces(before.parent, ["m"])
+        if lifetime_refusal_profile() and case in UNCERTIFIED_OWNERSHIP_REFUSALS:
+            _assert_lifetime_order_refusal(after)
         if case not in KNOWN_DEFECTS:
             expected = (
                 _r102_transforms_on_this_compiler(fixture)
@@ -664,7 +826,7 @@ RELAXED_OBSERVES_FINALIZATION: Dict[str, str] = {
 """Fixtures whose output differs in relaxed mode, each because it prints when an object is finalized.
 
 Relaxed mode assumes a program does not depend on when or in what order
-objects are finalized once it has stopped using them (docs/DECISIONS.md,
+objects are finalized once it has stopped using them (docs/design/DECISIONS.md,
 "Relaxed mode is the default; strict mode keeps exact lifetimes"). These
 fixtures were written to observe exactly that, so relaxed mode may reorder
 their finalizer lines; each entry says what the fixture watches. Any other
@@ -711,7 +873,13 @@ def test_relaxed_refactoring_preserves_program_output(case: str) -> None:
             status, output, error = _run(after)
             expected_status, expected_output, expected_error = _run(before)
             assert (status, error) == (expected_status, expected_error)
-            assert output != expected_output, "no longer differs: remove it from the list"
+            if RELAXED_OBSERVES_FINALIZATION[case] == _ORDER and not _supported_runtime():
+                # CPython 3.14 and later release a frame's variables in the
+                # reverse order of 3.11 to 3.13 (the Python ownership ruling),
+                # which here happens to restore the original order of release.
+                assert output == expected_output, "now differs on this interpreter"
+            else:
+                assert output != expected_output, "no longer differs: remove it from the list"
             # The same events in the end; only where the finalizers fall differs.
             assert _events(output) == _events(expected_output)
         else:
@@ -728,6 +896,8 @@ def test_reflection_does_not_veto_extraction(tmp_path: Path, case: str) -> None:
     shutil.copy(fixture, script)
     scopes = ScopeWatch()
     applied = refactor_script(script, file_finisher=scopes)
+    if lifetime_refusal_profile() and case in UNCERTIFIED_REFLECTION_REFUSALS:
+        _assert_lifetime_order_refusal(script)
     if case in REFLECTION_OWNERSHIP_REFUSALS:
         # Reflection has no veto: the same ordinary ownership guard applies.
         assert applied == 0, REFLECTION_OWNERSHIP_REFUSALS[case]

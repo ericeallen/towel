@@ -53,6 +53,21 @@ def _inner(module: ast.Module) -> ast.FunctionDef:
     )
 
 
+@pytest.mark.parametrize(
+    ("expression", "reads_owner"),
+    [("lambda: owner", True), ("lambda owner: owner", False), ("(x for x in owner)", True)],
+)
+def test_anonymous_scopes_keep_enclosing_captures_visible(
+    expression: str, reads_owner: bool
+) -> None:
+    """The Python 3.15 scope-name change must not hide a lambda's captured binding."""
+    before = f"def f():\n    owner = make()\n    return {expression}\n"
+    after = before.replace("    owner = make()\n", "")
+    assert scope_changes(before, before) == {}
+    expected = {"f#0": ["loses local owner, which it still reads"]} if reads_owner else {}
+    assert scope_changes(before, after) == expected
+
+
 def test_actual_generated_match_retention_keeps_the_original_binding_scope() -> None:
     before, after = _generated()
     assert scope_changes(before, after) == {}

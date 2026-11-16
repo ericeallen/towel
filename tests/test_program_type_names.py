@@ -37,6 +37,7 @@ import pytest
 
 from towel.type_inference import CheckSuccess, MypyInferrer, checker_module_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.argument_ownership import _supported_runtime
 
 # Small fixtures exercise semantic guards independently of the product usefulness policy.
 from towel.unification.type_bindings import (
@@ -741,7 +742,7 @@ observed += [Renderer(escape).block_html(html)
     )
 
 
-def _extract_first(path: Path) -> str:
+def _extract_first(path: Path, *, requires_lifetime_order: bool = False) -> str:
     """The first proposal applied under strict mypy, which must accept the result."""
     oracle = MypyInferrer()
     try:
@@ -751,7 +752,14 @@ def _extract_first(path: Path) -> str:
             reuse_existing_functions=False,
             type_oracle=oracle,
         )
+        original = path.read_text()
         proposals = engine.analyze_file(str(path))
+        if requires_lifetime_order and not _supported_runtime():
+            assert proposals == []
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert path.read_text() == original
+            assert oracle.check(str(path), original) == CheckSuccess()
+            return original
         assert proposals
         changed = engine.apply_refactoring(str(path), proposals[0])
         assert oracle.check(str(path), changed) == CheckSuccess(), changed
@@ -912,31 +920,33 @@ def highlight_words() -> int:
     return count
 """
     path.write_text(companion)
-    changed = _extract_first(path)
-    helper = _helper(changed)
-    kinds = {
-        parameter.arg: _annotation(parameter.annotation)
-        for parameter in helper.args.posonlyargs + helper.args.args
-        if parameter.arg != "self"
-    }
-    # Both values are evaluated at their original positions: the correlated
-    # rows exchange the module's Span constructor, a count, and literal text.
-    assert kinds == {
-        "__param_0": "_typing.Callable[[], _TowelT0]",
-        "__param_1": "_typing.Callable[[], _TowelT1]",
-    }, changed
-    assert (
-        _annotation(helper.returns) == "tuple[_typing.Callable[[Span], None], _TowelT0, _TowelT1]"
-    )
+    changed = _extract_first(path, requires_lifetime_order=True)
+    if _supported_runtime():
+        helper = _helper(changed)
+        kinds = {
+            parameter.arg: _annotation(parameter.annotation)
+            for parameter in helper.args.posonlyargs + helper.args.args
+            if parameter.arg != "self"
+        }
+        # Both values are evaluated at their original positions: the correlated
+        # rows exchange the module's Span constructor, a count, and literal text.
+        assert kinds == {
+            "__param_0": "_typing.Callable[[], _TowelT0]",
+            "__param_1": "_typing.Callable[[], _TowelT1]",
+        }, changed
+        assert (
+            _annotation(helper.returns)
+            == "tuple[_typing.Callable[[Span], None], _TowelT0, _TowelT1]"
+        )
 
-    assert "Any" not in changed, changed
-    helper_returns = [n for n in ast.walk(helper) if isinstance(n, ast.Return)]
-    assert len(helper_returns) == 1 and isinstance(helper_returns[0].value, ast.Tuple)
-    assert [ast.unparse(e) for e in helper_returns[0].value.elts] == [
-        "append_span",
-        "_Span",
-        "plain",
-    ]
+        assert "Any" not in changed, changed
+        helper_returns = [n for n in ast.walk(helper) if isinstance(n, ast.Return)]
+        assert len(helper_returns) == 1 and isinstance(helper_returns[0].value, ast.Tuple)
+        assert [ast.unparse(e) for e in helper_returns[0].value.elts] == [
+            "append_span",
+            "_Span",
+            "plain",
+        ]
     for program in (companion, changed):
         namespace: dict[str, object] = {}
         exec(

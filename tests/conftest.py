@@ -93,7 +93,7 @@ def _strict_by_default(patch: pytest.MonkeyPatch) -> None:
 def _strict_where_the_module_is_marked(request: pytest.FixtureRequest) -> Iterator[None]:
     """Make strict mode the default of a module that pins what only strict mode preserves.
 
-    Relaxed mode is the default (docs/DECISIONS.md, "Relaxed mode is the
+    Relaxed mode is the default (docs/design/DECISIONS.md, "Relaxed mode is the
     default; strict mode keeps exact lifetimes"), and strict mode is 1.949's
     behaviour exactly. The tests written before the switch pin that behaviour
     with the defaults of their day, so a module whose expectations depend on

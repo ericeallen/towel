@@ -49,18 +49,19 @@ towel rename-helpers path/to/cleaned --list --json > helpers.json
 
 Read each helper and its call sites. Copy the exact `rename_key` from the
 inventory into a JSON object whose values are your chosen names. For example,
-if the inventory reports these keys, `renames.json` can contain:
+on the quick start's output, `renames.json` can contain:
 
 ```json
 {
-  "charges.py:__extracted_func_0": "discounted_total_with_shipping",
-  "charges.py:__extracted_func_0.__param_0": "amount"
+  "charges.py:__extracted_func_0": "discounted_total_with_shipping"
 }
 ```
 
-Only include keys present in your inventory. The parameter entry is optional;
-a helper whose input is already named `amount` does not have that `__param_0`
-key. A single helper-name entry is a complete valid batch.
+Only include keys present in your inventory; an unknown key aborts the batch
+with exit status 2. When a helper also has generated parameters such as
+`__param_0`, include their inventory keys too (for example
+`"orders.py:__extracted_func_0.__param_0": "tax_rate"`). The quick start's
+helper already takes `amount`, so it has no `__param_0` key.
 
 ```bash
 towel rename-helpers path/to/cleaned --complete-scope --rename-file renames.json --preview
@@ -71,8 +72,7 @@ towel rename-helpers path/to/cleaned --complete-scope --rename-file renames.json
 You can prepare this mapping entirely by hand. A coding assistant can also
 suggest names after reading the inventory; review those suggestions before
 applying them. Towel's interactive mode prints a prompt and accepts pasted
-JSON, and calls no LLM service. The shared `towel-rename` skill in the
-agent-skills repository guides an assistant through the same review workflow.
+JSON, and calls no LLM service.
 
 ## What the inventory contains
 
@@ -168,8 +168,8 @@ references can abort the entire batch with a reason. A rejected name proposal
 changes nothing. File replacement and interrupted-write recovery have the
 [normal batch-application limits](CLI_GUIDE.md#output-and-in-place-changes).
 
-- `--preview` reports changes without writing; add `--json` for JSON output.
+- `--preview` prints a unified diff and change count without writing; add `--json` for JSON output.
+- `--format` runs the project's configured formatter (Ruff or Black) on touched files.
 - `--file` and `--function` are repeatable filters on the inventory.
-- `--llm claude|gpt|copilot|generic` adjusts the interactive assistant prompt.
 
 Run your project's tests after applying the names, as after the extraction.

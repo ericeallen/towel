@@ -54,7 +54,7 @@ BODY = (
     "    with_shipping = discounted + shipping\n    answer = with_shipping + tax\n"
 )
 MODULE = "".join(
-    f"def {name}(value: int) -> int:\n    print({name!r})\n"
+    f"def {name}() -> int:\n    print({name!r})\n    value = 1\n"
     + BODY.format(offset=offset)
     + "    return answer\n\n\n"
     for name, offset in (("first", 3), ("second", 4))

@@ -35,6 +35,7 @@ import sys
 import textwrap
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel import checker_project
 from towel.checker_project import _json_config
 from towel.type_inference import CheckFailure, PyrightOracle
@@ -219,8 +220,14 @@ class _SessionThenFailingCommandLine(PyrightOracle):
 
 
 @requires_pyright
-def test_a_confirmation_that_failed_quotes_the_checker(tmp_path: Path) -> None:
-    path = _project(tmp_path / "project", '{"typeCheckingMode": "basic"}')
+@pytest.mark.parametrize("owned", [True, False], ids=["owned", "literal"])
+def test_a_confirmation_that_failed_quotes_the_checker(tmp_path: Path, owned: bool) -> None:
+    # This test needs an actual warm-server answer before cold confirmation.
+    # Pyright's native 3.14/3.15 stub analysis falls back to the CLI instead.
+    path = _project(tmp_path / "project", '{"typeCheckingMode": "basic", "pythonVersion": "3.13"}')
+    if not owned:
+        # Exercise cold confirmation even where argument transfers are uncertified.
+        path.write_text(path.read_text().replace("value: int", "").replace("value + 1", "2"))
     before = path.read_bytes()
     oracle = _SessionThenFailingCommandLine(_failing_pyright(tmp_path))
     try:
@@ -230,10 +237,16 @@ def test_a_confirmation_that_failed_quotes_the_checker(tmp_path: Path) -> None:
             reuse_existing_functions=False,
             type_oracle=oracle,
         )
+        if owned and not lifetime_order_certified():
+            engine.refactor_to_fixed_point(str(path), progress="none")
+            assert "lifetime_order_uncertified" in engine.declined_pairs
+            assert path.read_bytes() == before
+            return
         with pytest.raises(RefactoringError) as refused:
             engine.refactor_to_fixed_point(str(path), progress="none")
     finally:
         oracle.close()
+    assert oracle.answered_from_a_session
     message = str(refused.value)
     assert "could not be confirmed" in message
     assert "could not be parsed. Verify that format is correct." in message

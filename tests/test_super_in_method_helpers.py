@@ -19,7 +19,7 @@ every function of a class body that loads ``super`` or ``__class__``, and the
 calling frame's first argument. A class-private helper compiled in the class
 that holds both duplicates, reached as ``self.__extracted_func_0()``, has the
 same cell and the same receiver first, so the code means there what it meant
-in the method (docs/DECISIONS.md, "A method helper lives in the class that
+in the method (docs/design/DECISIONS.md, "A method helper lives in the class that
 holds both duplicates"). Every other home is declined rather than taken: a
 module function has no cell, and a class that cannot keep a plain member, or
 a method whose receiver the helper would not share, gets nothing.
@@ -41,6 +41,8 @@ from types import CodeType
 from typing import List
 
 import pytest
+
+from tests.test_helpers import strict_lifetime_refusal
 
 from tests.test_helpers import method_helper_calls
 from tests.test_class_private_helpers import (
@@ -180,6 +182,16 @@ def _refactored(
     )
 
 
+def _assert_uncertified_refusal(outcome: _Outcome, source: str, *, whole_body: bool = True) -> None:
+    """The runtime observation already ran; pin why its owned frame stays whole."""
+    assert strict_lifetime_refusal()
+    assert outcome.applied == 0
+    assert "lifetime_order_uncertified" in outcome.reasons
+    assert outcome.source == (
+        _whole_body_companion(source) if whole_body else textwrap.dedent(source).lstrip("\n")
+    )
+
+
 def _helpers_in(source: str, host: str) -> List[ast.FunctionDef]:
     """Each generated helper defined in the body of class ``host``."""
     return [
@@ -277,6 +289,15 @@ def main():
     for obj in (D(), E()):
         print(obj.first("ab"), obj.second("cd"))
 """
+
+# The same diamond/class-cell behavior without fresh owned frame locals.
+# Both versions remain fixtures: the original now refuses on uncertified runtimes.
+DIAMOND_BORROWED = (
+    DIAMOND.replace("prefix", "self.prefix")
+    .replace("suffix", "self.suffix")
+    .replace("result", "self.result")
+)
+
 
 COOPERATIVE_INIT = """
 class Root:
@@ -426,6 +447,7 @@ NESTED_SCOPES_LOCAL_MARKER = NESTED_SCOPES.replace(
     [
         (SINGLE, "Child"),
         (DIAMOND, "D"),
+        (DIAMOND_BORROWED, "D"),
         (COOPERATIVE_INIT, "Both"),
         (CLASSMETHODS, "Square"),
         (NESTED_SCOPES, "Child"),
@@ -434,6 +456,7 @@ NESTED_SCOPES_LOCAL_MARKER = NESTED_SCOPES.replace(
     ids=[
         "single-inheritance",
         "diamond",
+        "borrowed-diamond",
         "cooperative-init",
         "classmethod",
         "nested-scopes",
@@ -459,6 +482,9 @@ def test_super_moves_into_a_helper_of_the_class_holding_both_duplicates(
         )
         assert _run(original, DRIVER, original) == _run(companion, DRIVER, companion)
     outcome = _refactored(tmp_path, source, caplog, whole_body=True)
+    if strict_lifetime_refusal() and source not in {COOPERATIVE_INIT, DIAMOND_BORROWED}:
+        _assert_uncertified_refusal(outcome, source)
+        return
     if source == NESTED_SCOPES:
         module_code = compile(textwrap.dedent(source), "<nested-super-fixture>", "exec")
         class_code = next(
@@ -475,7 +501,11 @@ def test_super_moves_into_a_helper_of_the_class_holding_both_duplicates(
             # Separate comprehension frames retain the original receiver cell;
             # the ownership handoff deliberately does not transfer such cells.
             assert outcome.applied == 0
-            assert "owned_binding_frame_boundary" in outcome.reasons
+            assert (
+                "lifetime_order_uncertified"
+                if strict_lifetime_refusal()
+                else "owned_binding_frame_boundary"
+            ) in outcome.reasons
             assert not _helpers_in(outcome.source, host)
             assert not _module_helpers(outcome.source)
             return
@@ -491,11 +521,16 @@ def test_super_moves_into_a_helper_of_the_class_holding_both_duplicates(
     assert "__class__" not in [argument.arg for argument in helper.args.args]
 
 
+@pytest.mark.parametrize("source", [DIAMOND, DIAMOND_BORROWED], ids=["owned", "borrowed"])
 def test_a_helper_reads_the_class_cell_bare_and_the_call_passes_nothing_for_it(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, source: str
 ) -> None:
     """``__class__`` beside ``super()`` is the helper's own cell, not an argument of the call."""
-    text = _refactored(tmp_path, DIAMOND, caplog, whole_body=True).source
+    outcome = _refactored(tmp_path, source, caplog, whole_body=True)
+    if strict_lifetime_refusal() and source == DIAMOND:
+        _assert_uncertified_refusal(outcome, source)
+        return
+    text = outcome.source
     tree = ast.parse(text)
     (helper,) = _helpers_in(text, "D")
     assert "__class__" not in [argument.arg for argument in helper.args.args]
@@ -572,7 +607,11 @@ def test_only_methods_of_the_class_with_the_same_receiver_share_the_helper(
     ``super()`` in ``fourth`` reads whatever ``self`` holds when it runs, and in
     ``Two`` it starts after ``Two``; each keeps its own code.
     """
-    text = _refactored(tmp_path, CLUSTER, caplog, whole_body=True).source
+    outcome = _refactored(tmp_path, CLUSTER, caplog, whole_body=True)
+    if strict_lifetime_refusal():
+        _assert_uncertified_refusal(outcome, CLUSTER)
+        return
+    text = outcome.source
     helpers = _class_helpers(text)
     assert len(helpers["One"]) == 1 and not helpers["Two"] and not _module_helpers(text)
     methods = {
@@ -975,7 +1014,10 @@ def test_super_is_declined_where_no_helper_of_its_class_can_hold_it(
     )
     assert outcome.applied == 0, outcome.source
     assert outcome.source == expected
-    assert any(key.partition("[")[0] == reason for key in outcome.reasons), outcome.reasons
+    if strict_lifetime_refusal() and use_companion:
+        _assert_uncertified_refusal(outcome, source)
+    else:
+        assert any(key.partition("[")[0] == reason for key in outcome.reasons), outcome.reasons
 
 
 @pytest.mark.parametrize("source", [DECORATED, METACLASS, INIT_SUBCLASS, GETATTRIBUTE])
@@ -983,6 +1025,9 @@ def test_class_decorators_and_hooks_allow_super_in_private_method_helpers(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, source: str
 ) -> None:
     outcome = _refactored(tmp_path, source, caplog, whole_body=True)
+    if strict_lifetime_refusal():
+        _assert_uncertified_refusal(outcome, source)
+        return
     assert outcome.applied > 0
     assert len(_class_helpers(outcome.source)["One"]) == 1
     assert not _module_helpers(outcome.source)
@@ -1019,7 +1064,11 @@ def test_super_naming_its_class_and_object_still_moves_to_a_module_function(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """``super(One, self)`` reads no cell: sibling classes share a module function for it."""
-    text = _refactored(tmp_path, EXPLICIT, caplog, whole_body=True, max_parameters=6).source
+    outcome = _refactored(tmp_path, EXPLICIT, caplog, whole_body=True, max_parameters=6)
+    if strict_lifetime_refusal():
+        _assert_uncertified_refusal(outcome, EXPLICIT)
+        return
+    text = outcome.source
     assert len(_module_helpers(text)) == 1
     assert not any(_class_helpers(text).values())
 
@@ -1129,8 +1178,16 @@ def test_a_super_helper_passes_mypy_strict_and_pyright_strict(tmp_path: Path) ->
             _, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "ledger.py"))
     finally:
         oracle.close()
-    assert applied == 1
     source = (tmp_path / "ledger.py").read_text()
+    if strict_lifetime_refusal():
+        assert applied == 0
+        assert "lifetime_order_uncertified" in engine.declined_pairs
+        assert source == _whole_body_companion(TYPED)
+        assert _run(tmp_path, driver, tmp_path) == before
+        for tool in ("mypy", "pyright"):
+            assert _strict_errors(tool, tmp_path / "ledger.py") == [], (tool, source)
+        return
+    assert applied == 1
     (helper,) = _helpers_in(source, "Ledger")
     assert is_class_private(helper.name) and helper.returns is not None, source
     assert "super().label(" in ast.unparse(helper), source
@@ -1166,8 +1223,12 @@ def test_original_owned_super_partials_remain_refused(
         else DRIVER
     )
     outcome = _refactored(tmp_path, source, caplog, driver=driver)
-    assert "owned_binding_frame_boundary" in outcome.reasons
-    if not whole_bodies:
+    assert (
+        "lifetime_order_uncertified"
+        if strict_lifetime_refusal()
+        else "owned_binding_frame_boundary"
+    ) in outcome.reasons
+    if not whole_bodies or strict_lifetime_refusal():
         assert outcome.applied == 0
         assert outcome.source == textwrap.dedent(source).lstrip("\n")
         return

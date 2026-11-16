@@ -38,6 +38,7 @@ from towel.type_inference import (
     Subtyping,
 )
 from towel.unification.annotations import annotation_from_revealed, unwritten_as_any
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.probe_answers import answer_probes
 
@@ -106,7 +107,10 @@ def test_a_file_that_cannot_be_read_is_left_alone_and_the_typed_run_goes_on(
     """D7: ``Cannot read original source`` refused the run; ``--no-types`` completed it."""
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "__init__.py").write_text("")
-    (tmp_path / "pkg" / "m.py").write_text(TWINS)
+    source = TWINS
+    if not argument_ownership._supported_runtime():
+        source = source.replace("(value: int)", "()").replace("total = value + 1", "total = 2")
+    (tmp_path / "pkg" / "m.py").write_text(source)
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "latin.py").write_bytes(LATIN)
     oracle = _Fixed()

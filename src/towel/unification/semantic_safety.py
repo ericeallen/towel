@@ -354,7 +354,7 @@ def needs_class_body(nodes: Iterable[ast.AST]) -> bool:
     has the method's receiver first; a module-level function has no cell,
     and its ``super()`` raises ``RuntimeError``. Such code may therefore move
     only into a method helper of the class that holds it, and placement
-    declines every other home (docs/DECISIONS.md, "A method helper lives in
+    declines every other home (docs/design/DECISIONS.md, "A method helper lives in
     the class that holds both duplicates").
 
     A call of ``super`` with a leading positional argument names its class

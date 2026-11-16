@@ -158,7 +158,13 @@ def parse_failure(path: Path) -> Optional[UnparsedFile]:
 def _complaint(data: bytes, path: Path) -> Optional[str]:
     try:
         text = decode_source(data)
-    except (UnicodeError, SyntaxError, LookupError):
+    except SyntaxError as error:
+        # Newer decode_source rejects null bytes before ast.parse sees them.
+        # Only text that would decode without them is a source with a null
+        # byte, as 3.11 to 3.13 see it; anything else (UTF-16 without a
+        # cookie, say) is not text in its declared encoding, and is skipped.
+        return _described(error) if b"\0" in data and _text_without_nulls(data) else None
+    except (UnicodeError, LookupError):
         return None  # Not text in its declared encoding, or the cookie names no codec.
     try:
         ast.parse(text, filename=str(path))
@@ -166,6 +172,15 @@ def _complaint(data: bytes, path: Path) -> Optional[str]:
         # ValueError: a null byte, before 3.12 made that a SyntaxError.
         return _described(error)
     return None
+
+
+def _text_without_nulls(data: bytes) -> bool:
+    """Whether ``data`` would decode as source once its null bytes are removed."""
+    try:
+        decode_source(data.replace(b"\0", b""))
+    except (UnicodeError, SyntaxError, LookupError):
+        return False
+    return True
 
 
 def _described(error: BaseException) -> str:

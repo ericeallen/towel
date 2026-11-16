@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import re
 
 import pytest
 
@@ -74,7 +75,10 @@ def test_relaxed_import_notice_is_once_per_run(
         'Cannot find implementation or library stub for module named "absent_dependency"',
         1,
     )
-    engine = UnificationRefactorEngine(type_oracle=_Oracle(lambda _: CheckSuccess((missing,))))
+    # Relaxed mode's notice, whatever the suite's default mode.
+    engine = UnificationRefactorEngine(
+        type_oracle=_Oracle(lambda _: CheckSuccess((missing,))), strict=False
+    )
     proposal = engine.analyze_file(str(path))[0]
     for _ in range(2):
         engine.apply_refactoring(str(path), proposal)
@@ -126,9 +130,12 @@ def test_signature_comments_keep_the_import_gate(
 ) -> None:
     """Typed round 2 finding 2: signature comments are checked bodies, never bare callers."""
     path = tmp_path / "program.py"
-    source = "import absent_dependency\n" + _source(typed=False).replace(
-        "def first(value):", "def first(value):\n    # type: (int) -> int"
-    ).replace("def second(value):", "def second(value):\n    # type: (int) -> int")
+    # The python lane's fixture takes no argument where strict lifetimes are uncertified.
+    source = "import absent_dependency\n" + re.sub(
+        r"(def (?:first|second)\((value)?\):)",
+        lambda found: found[1] + f"\n    # type: ({'int' if found[2] else ''}) -> int",
+        _source(typed=False),
+    )
     assert "# type:" in source
     path.write_text(source)
     missing = TypeDiagnostic(

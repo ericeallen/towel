@@ -113,6 +113,7 @@ from typing import (
 
 from .analysis_sources import memoized_source_analysis
 from .reachability import ProbePlan, probe_plan
+from .reason_sentences import TYPE_CHECKING_REMEDIES, UNTYPED_REMEDY
 from .type_inference import RevealKey, RevealRequest, TypeDiagnostic
 from .unification.lexical_scopes import NESTED_SCOPES, ScopeNames, nested_scope_names
 from .unification.statement_facts import bindings_of
@@ -140,13 +141,6 @@ __all__ = [
     "unchanged_lines",
     "unlooked_warning",
 ]
-
-UNTYPED_REMEDY = "To proceed without type verification, use --no-types."
-
-TYPE_CHECKING_REMEDIES = (
-    "To proceed without type verification, use --no-types; for a typed run, "
-    "install the project's dependencies where Towel runs (including their type stubs)."
-)
 
 
 def resolved_path(path: str) -> str:

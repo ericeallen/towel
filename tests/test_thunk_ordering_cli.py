@@ -26,6 +26,7 @@ import subprocess
 import sys
 
 import pytest
+from tests.test_helpers import lifetime_order_certified
 from tests.test_helpers import child_mode_flags
 import towel
 from towel.unification.structural_memo import load_substitution, store_substitution
@@ -241,8 +242,11 @@ def _extract(
     assert original.read_text() == source
     assert configuration.read_text() == config
     transformed = (output / "case.py").read_text()
-    if case.refusal:
+    if case.refusal == "module_data_lookup" or (lifetime_order_certified() and case.refusal):
         assert case.refusal in ran.stdout
+        assert transformed == source
+    elif not lifetime_order_certified():
+        assert "lifetime_order_uncertified" in ran.stdout
         assert transformed == source
     elif budget == 5:
         assert sum(map(int, re.findall(r"Applied (\d+) refactoring\(s\)", ran.stdout))) > 0
@@ -304,51 +308,54 @@ def test_ordered_cli_arguments_preserve_complete_observations(
             for node in ast.walk(helper)
         )
     ]
-    if not case.refusal:
-        assert store_helpers, "the actual extraction must include the assignment"
-    if case.refusal:
-        assert not helpers
-    elif case.deferred:
-        if case.name == "unsafe_cluster":
-            original_third = ast.parse(_source(case)).body[-1]
-            written_third = ast.parse(transformed).body[-1]
-            assert ast.dump(written_third) == ast.dump(original_third)
-        else:
-            assert any(_thunks(helper) for helper in store_helpers)
+    if not lifetime_order_certified():
+        assert helpers == []
     else:
-        assert len(store_helpers) == 1
-        helper = store_helpers[0]
-        assert not _thunks(helper)
-        assert [argument.arg for argument in helper.args.posonlyargs[:2]] == [
-            "__param_1",
-            "__param_0",
-        ]
-        calls = [
-            node
-            for node in ast.walk(ast.parse(transformed))
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == helper.name
-        ]
-        assert len(calls) == len(case.statements)
-        assert all(
-            not isinstance(argument, ast.Lambda) for call in calls for argument in call.args[:2]
-        )
-    if case.name == "unsafe_cluster":
-        optimized = [helper for helper in store_helpers if not _thunks(helper)]
-        assert len(optimized) == 1
-        callers = {
-            function.name
-            for function in ast.parse(transformed).body
-            if isinstance(function, ast.FunctionDef)
-            and any(
-                isinstance(node, ast.Call)
+        if not case.refusal:
+            assert store_helpers, "the actual extraction must include the assignment"
+        if case.refusal:
+            assert not helpers
+        elif case.deferred:
+            if case.name == "unsafe_cluster":
+                original_third = ast.parse(_source(case)).body[-1]
+                written_third = ast.parse(transformed).body[-1]
+                assert ast.dump(written_third) == ast.dump(original_third)
+            else:
+                assert any(_thunks(helper) for helper in store_helpers)
+        else:
+            assert len(store_helpers) == 1
+            helper = store_helpers[0]
+            assert not _thunks(helper)
+            assert [argument.arg for argument in helper.args.posonlyargs[:2]] == [
+                "__param_1",
+                "__param_0",
+            ]
+            calls = [
+                node
+                for node in ast.walk(ast.parse(transformed))
+                if isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id == optimized[0].name
-                for node in ast.walk(function)
+                and node.func.id == helper.name
+            ]
+            assert len(calls) == len(case.statements)
+            assert all(
+                not isinstance(argument, ast.Lambda) for call in calls for argument in call.args[:2]
             )
-        }
-        assert callers == {"left", "right"}
+        if case.name == "unsafe_cluster":
+            optimized = [helper for helper in store_helpers if not _thunks(helper)]
+            assert len(optimized) == 1
+            callers = {
+                function.name
+                for function in ast.parse(transformed).body
+                if isinstance(function, ast.FunctionDef)
+                and any(
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == optimized[0].name
+                    for node in ast.walk(function)
+                )
+            }
+            assert callers == {"left", "right"}
     for helper in helpers:
         assert len(helper.args.posonlyargs) + len(helper.args.args) <= 5
     before_functions = {

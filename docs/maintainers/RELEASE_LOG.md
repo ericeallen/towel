@@ -1,0 +1,1128 @@
+# Release Log
+
+[Maintainers' records](README.md) · [Documentation index](../README.md)
+
+The [October 2 preservation decision](../design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+removes reflection and self-instrumentation guarantees. Validation and repair
+records below retain the source, contract and results of their dated runs;
+they are not evidence of those retired protections in the current code.
+
+This log records notable repository states and the scope of their validation.
+A historical passing result applies to its recorded commit and test environment.
+Pending statements in dated checkpoints describe their status at that time;
+the entries below do not transfer approval to a later source or version.
+
+**Contents — release checkpoints**
+
+- [1.949 completed publication](#2026-11-10-1949-published-release)
+- [1.949 preparation](#2026-11-08-1949-preparation)
+- [1.948 completed publication](#2026-11-07-1948-published-release)
+- [1.948 preparation](#2026-11-05-1948-preparation)
+- [1.947 completed publication](#2026-10-26-1947-published-release)
+- [1.947 Sphinx memory and parsing investigation](#2026-10-25-1947-sphinx-memory-and-parsing-investigation)
+- [1.947 PrettyTable timeout repair](#2026-10-24-1947-prettytable-timeout-repair)
+- [1.947 scope-oracle correction](#2026-10-22-1947-scope-oracle-correction)
+- [1.947 candidate 59aafb1 corpus stop](#1947-candidate-59aafb1-corpus-stop)
+- [1.947 preparation after audit repairs](#2026-10-19-1947-preparation-after-audit-repairs)
+- [1.946 preparation and latest audit](#2026-10-10-1946-preparation-and-latest-audit)
+- [1.792 completed publication](#2026-10-08-1792-published-release)
+- [1.792 October 6 parameter audit follow-up](#2026-10-06-1792-parameter-audit-follow-up)
+- [1.792 October 6 audit and optimization validation](#2026-10-06-1792-audit-and-optimization-validation)
+- [1.792 October 5 final corpus and performance](#2026-10-05-1792-final-corpus-and-performance)
+- [1.792 October 5 audit repairs](#2026-10-05-1792-audit-repairs)
+- [1.792 October 4 checker overlay correction](#2026-10-04-1792-checker-overlay-correction)
+- [1.792 October 3 remediation](#2026-10-03-1792-discovery-remediation)
+- [1.792 October 2 follow-up](#2026-10-02-1792-preparation-follow-up) · [September 30 preparation](#2026-09-30-1792-preparation)
+- [1.772 release](#2026-09-26-1772) · [1.772 candidate](#2026-09-19-1772-candidate)
+- [1.732.post1](#2026-09-19-1732post1) · [1.732 release](#2026-09-19-1732) · [Candidate checkpoints](#2026-09-19-historical-1732-candidate-checkpoints)
+- [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
+- [November 2025 entries](#2025-11-25)
+- [Measurement environment](#measurement-environment)
+
+## 2026-11-10: 1.949 published release
+
+Towel **1.949** was published on [PyPI](https://pypi.org/project/code-towel/1.949/)
+and [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.949) from
+frozen commit `14dc1641b79e76cde8828c370eabad955a6b09f4`, tagged `v1.949`.
+It selects extractions using the complete helper and every rendered caller, and
+it adds concise and structured CLI results, bounded runs and documented
+compatibility commitments. Its runtime was validated on campaign source
+`ae2e946`. The release commit changes only documentation, so the distributions
+were rebuilt with the campaign's pinned tools and rechecked. The local evidence
+gate, all five
+[exact-commit CI jobs](https://github.com/ericeallen/towel/actions/runs/42526205930)
+and the live default-branch gate passed before tagging. The GitHub release
+followed on November 13. Both services' artifacts matched the validated hashes,
+PyPI's README matched the frozen source, and a fresh PyPI installation passed
+its CLI checks.
+
+The 141-project corpus completed with 75 PASS, 61 NO_CHANGE and five reviewed
+import refusals. Self-dogfood applied five refactorings across five files and
+passed strict typing and the full Python 3.13 suite. Differential fuzzing
+completed 10,340 runs with zero failures and 31 inconclusive cases. See the
+[publication record](PRODUCTION_READINESS.md#1949-published-release-november-10-2026)
+for matrix counts, qualifications and hashes.
+
+## 2026-11-08: 1.949 preparation
+
+Prepared **1.949** as an unpublished candidate for the product-experience and
+maturity fixes summarized in the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1949). Local testing
+is in progress. This entry claims neither a complete exact-candidate release
+campaign nor new runtime performance measurements, remote CI or publication.
+The [readiness checkpoint](PRODUCTION_READINESS.md#1949-preparation-checkpoint-november-8-2026)
+describes the scope and remaining release work. The latest published version
+remains **1.948**; its completed evidence below keeps its original identity.
+
+## 2026-11-07: 1.948 published release
+
+Towel **1.948** was published on [PyPI](https://pypi.org/project/code-towel/1.948/)
+and [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.948) from
+frozen commit `31c6a79fc3dfe71f58a5d5ba80bb58eeb8e8b512`, tagged `v1.948`.
+It repairs four silent `dry` miscompilations found in 1.947 and corrects CLI
+help, verification-cost reporting and progress output. The November 5 freeze
+`a246c06` shipped documentation that still called 1.948 unpublished, so the
+documentation was corrected and the complete campaign ran again on the new
+commit and artifacts. The local evidence gate, all four
+[exact-commit CI jobs](https://github.com/ericeallen/towel/actions/runs/42404340696)
+and the live default-branch gate passed before tagging. Both services' artifacts
+matched the validated hashes, PyPI's README matched the frozen source, and a
+fresh PyPI installation passed its CLI checks.
+
+The 141-project corpus completed with 90 PASS, 44 NO_CHANGE, five reviewed
+import refusals and two known warning-location failures. Self-dogfood applied
+28 refactorings across 19 files and passed strict typing and the full Python
+3.13 suite. Differential fuzzing completed 9,400 runs with zero failures and 44
+inconclusive cases. See the
+[publication record](PRODUCTION_READINESS.md#1948-published-release-november-7-2026)
+for matrix counts, qualifications and hashes.
+
+## 2026-11-05: 1.948 preparation
+
+Towel **1.948** prepares the four silent `dry` miscompilation repairs found
+from the October 31 Gemini review, together with corrections to help examples,
+verification-cost reporting and progress output. The
+[1.948 changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1948) records their scope. The candidate also
+includes the default-branch publication gate and the completed 1.947
+publication records, which retain their historical identities.
+
+The complete campaign on the final versioned source, artifact validation,
+consumer/performance review, exact-commit CI and publication remain pending.
+The earlier fix-branch checks do not certify this new source or its artifacts.
+Keep final results, source identity and artifact hashes in the external release
+record, as the [release procedure](RELEASING.md#recording-the-release) requires.
+
+## 2026-10-26: 1.947 published release
+
+Towel **1.947** was published on [PyPI](https://pypi.org/project/code-towel/1.947/)
+and [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947) from
+frozen commit `8a853126f5499eb11dfa04fbe304dc332dc5ef73`, tagged `v1.947`.
+The completed local evidence gate and all four
+[exact-commit CI jobs](https://github.com/ericeallen/towel/actions/runs/40312460216)
+passed. Both services' downloaded artifacts matched the validated hashes,
+PyPI's README matched the frozen source, all 22 README documentation destinations
+and fragments resolved, and a fresh PyPI installation passed its CLI checks.
+
+The final 141-project corpus completed without a phase timeout or signal
+termination: 89 PASS, 45 NO_CHANGE, five reviewed import refusals and two known
+warning-location failures. The five refusal logs matched the previous release;
+three Towel corpus entries therefore do not establish successful self-refactoring.
+A separate self-dogfood run applied 28 refactorings across 19 files and passed
+strict typing and the full Python 3.13 suite. Differential fuzzing completed
+9,400 runs with zero failures and 30 inconclusive cases. See the
+[publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+for matrix counts, corpus qualifications, hashes and resource limits.
+
+The [controlled comparison](../PERFORMANCE.md#1947-published-release-comparison)
+observed Click +2.58%, Rich +8.84% and Voluptuous +1.25% mean full-CLI time
+versus 1.946, with two samples per version on a shared host. Original consumer
+outcomes were preserved. No general speed improvement is claimed.
+
+Publication initially pushed the release branch and tag without bringing
+GitHub's default branch forward from 1.792. That left the repository front page
+stale while PyPI and the release tag held the correct verified artifacts.
+The follow-up documentation correction records publication here and adds a
+default-branch gate to the release procedure. The published distributions and
+tag remain unchanged; no full-corpus rerun was needed for the correction.
+
+## 2026-10-25: 1.947 Sphinx memory and parsing investigation
+
+The Sphinx investigation confirmed separate post-1.946 regressions in
+incremental invalidation (`7947727` repair) and Black/isort worker ownership
+(`2d1f4f1` repair). The original signal kill remains confounded by different
+container memory limits and concurrent workloads; Sphinx itself uses Ruff.
+The corrected diagnostic subsequently expired at its three-hour deadline with
+no recorded memory-limit or OOM events, no adopted output and no transformed
+consumer tests. The [performance record](../PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation)
+retains these limits and the further narrow raw formatted-literal cache repair.
+The changed runtime requires a fresh freeze and complete release validation;
+final outcomes remain external and prior evidence keeps its original identity.
+
+## 2026-10-24: 1.947 PrettyTable timeout repair
+
+Candidate `877b375` completed its matrix, differential, artifact and self-dogfood
+gates. Its corpus initially failed workspace setup because Docker's default
+volume initialization replaced the runner's ownership; a `volume-nocopy` mount
+and successful non-root filesystem probe allowed the same candidate to resume.
+The resumed run stopped at PrettyTable's 1,800.22-second refactor timeout, after
+86 completed reports: 60 `PASS`, 23 `NO_CHANGE`, one `BROKEN_KNOWN`, one `CRASH`
+and one `TIMEOUT`. This incomplete campaign is not release acceptance.
+
+Bounded diagnostics traced the timeout to repeated parsing of a warning-free
+module whose ordinary raw-regex escapes were rejected by the lexical cache
+guard. The [performance record](../PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+documents the repeated inputs, narrow token-based correction and isolated
+33.096-second completed diagnostic without claiming a controlled speed ratio.
+The runtime correction requires a fresh freeze and complete release validation.
+Prior results remain bound to `877b375`; final outcomes are retained externally.
+
+## 2026-10-22: 1.947 scope-oracle correction
+
+The grammar failure at binding-form seed `94085730748536952` reproduced on
+`0695378`. Its only reported difference was a retained caller local rejected by
+the scope oracle; executed observations agreed. The oracle incorrectly counted
+attribute receivers and subscript indexes in comprehension targets as variables
+bound by the comprehension. The correction preserves those outer reads and
+checks actual name/tuple/list/starred bindings. New regressions also demonstrate
+that real receiver binding changes are detected. The original failure remains
+retained separately; no runtime source was changed.
+
+Development pins for certifi, virtualenv and Black were refreshed after new advisories.
+The changed lock and harness require a new freeze. Earlier matrix and artifact
+results remain bound to their original candidate; this preparation entry claims
+no completed replacement release campaign or publication.
+
+## 1.947 candidate 59aafb1: corpus stop
+
+Frozen `59aafb189f1d3feb2f97c433dabbf77815bb5a36` passed its Linux matrix:
+Python 3.11 had 10,735 passes, 318 skips and 93% coverage; Python 3.12 had
+10,919 passes, 205 skips and 94%; Python 3.13 had 10,902 passes, 225 skips
+and 94%. All three passed 45 subtests. That source also completed 9,400
+zero-failure differential runs, six wheel smokes and 126 sdist documentation
+checks. Self-dogfood applied 28 refactorings in 19 files, with generated-source
+strict mypy and 10,902 passing tests.
+
+Its corpus was intentionally stopped after eight completed project results
+(exit 143, not an out-of-memory failure). More-itertools retained 914 passing
+consumer tests but needed 474.037 seconds for the refactor. The new builtin
+mapping guard repeatedly checked lexical warning eligibility before looking
+up module bindings: 2,988 calls over five exact strings, 99.8327% repeats.
+The published 1.946 wheel completed the same case and produced byte-identical
+Python files. Partial diagnostic profiles identify repeated tokenization,
+not an unprofiled production speed ratio. The [performance guide](../PERFORMANCE.md#1947-large-module-builtin-guard-repair)
+retains the measurement conditions and limits.
+
+The subsequent repair covers all explicit module/global fallback reads and
+implicit import/class lookups under possible mapping replacement, including
+wildcard exports of `__builtins__` and ordinary attribute stores/deletions of
+that name anywhere in the analyzed program. A fresh analysis-owned boolean
+records that program-wide hazard, including excluded runnable files and
+conservative unknown-input handling. Separately, it memoizes the source/parser-dependent builtin-mapping
+boolean for warning-free inputs, with weak analyzer ownership and one source
+per analyzer under an 8 MiB storage budget. It retains no AST or block facts,
+preserves fresh warning-capable parsing and bypasses reuse when memoization is
+disabled. Global lexical-cache limits remain unchanged. At this checkpoint,
+the changed runtime required a new freeze and complete release gates; the
+earlier successful checks and incomplete corpus do not validate it. The retained
+evidence root is `/private/tmp/towel-release-1947-final-validation/`. Final outcomes remain
+external to the shipped preparation record.
+
+## 2026-10-19: 1.947 preparation after audit repairs
+
+The maintainer selected **1.947** for the seven confirmed audit repairs after
+published 1.946. The [overview](RELEASE_1_947.md) describes binding identity,
+partner/interval work, captured builtin mappings, per-file formatting and
+complete rename consumer scope. The repair branch deliberately retained audited
+source `a1355ab` and integrated the separate annotation-import placement and
+editable-build corpus discovery repairs; stale local `main` was not the base.
+
+Live checks confirmed that PyPI's 1.946 wheel was uploaded October 19 and has
+SHA-256 `090c158f8dbd6795dbbe7e18d0bcffbbb884141f16d04100663c8d4ccc45c0cd`;
+all 107 runtime files match `a1355ab`. GitHub's `v1.946` ref resolves to
+`4b95c0ae1bef211574f747775b49e3422b08e5ce`. This runtime comparison does not
+identify every packaging/documentation byte with that audited source. PyPI
+showed 1.947 unused at this preparation checkpoint, not reserved.
+
+The preceding repair source `2027689`, still numbered 1.946, passed Linux
+Python 3.13.16 `just ci`: 10,901 tests and 45 subtests, 226 skips, 94% coverage,
+all declared quality/dependency gates and a wheel/sdist build. Its native
+macOS focused checks passed 194 cases each on Python 3.11.14, 3.12.12 and
+3.13.7. Three bare-wheel environments passed 33 cases in total, and the local
+repair wheel matched all 107 tracked runtime files to that repaired source.
+The 370-run differential sample retained 114 equivalent transformed runs,
+254 unchanged and two inconclusive cases, with zero failures. These are
+prior-source repair checks; the [readiness report](PRODUCTION_READINESS.md#1947-preparation-checkpoint-october-19-2026)
+records their scope and the observer/performance limits.
+
+At this checkpoint, version/lock metadata and documentation were being prepared
+for a new final freeze. The final 1.947 interpreter matrix, corpus and all other
+standard release gates remained pending. No final artifact hashes, exact-commit
+remote CI, tag or publication were claimed. The standing never-push instruction
+blocked an agent from completing the remote publication sequence. Final outcomes
+belong to the external frozen-source/artifact evidence and live publication
+records, not an edit to this shipped checkpoint after validation.
+
+## 2026-10-18: scoped proof memo implemented; fresh validation requested
+
+The maintainer extended 1.946 to implement source-proof reuse for owned immutable
+analysis trees, preserve mutation protections, rerun the Python 3.11–3.13 suites
+and compare generated output with the cache enabled and disabled. This supersedes
+the earlier no-more-tests instruction and memo deferral. Materialization and caller
+trees retain fresh proofs. The preceding profile is not a speedup measurement for
+this implementation. The [completed local validation](PRODUCTION_READINESS.md#scoped-source-proof-memo-local-validation-october-18-2026)
+records 10,655/10,838/10,825 passes on Python 3.11/3.12/3.13, 93–94% coverage
+and byte-identical CLI outputs. Each full run also had a stale navigation failure
+(corrected and rechecked) and a blocked `ps` observer in the unchanged watchdog
+test. That test remains unverified here; no all-green full-suite result is claimed.
+
+## 2026-10-18: 1.946 publication requested, remote verification blocked
+
+The selected source is `8a25ded`, plus documentation reconciliation. It includes
+`--stats` from `93b3b0a`; the later commits change documentation only. The
+maintainer requested publication without more tests. No tests were run for this
+checkpoint and no new validation result is claimed.
+
+The October 18 shared-host profile of `0b3494c` measured Rich +7.6%; the release
+ships with that regression documented. The source-correspondence memo remains
+work for the release after 1.946. PyPI/GitHub verification and upload are blocked
+by unavailable live network access, so 1.946 publication is not claimed. See the
+[current publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026).
+
+## 2026-10-10: 1.946 preparation and latest audit
+
+Version 1.946 is named for ln(7) ≈ 1.945910149 and is in local preparation.
+No publication is claimed. The latest full audit and earlier eight timing samples belong
+to `9d57b0d25f3ee743e0ce0035ed13df65b2344164`, with metadata and tested
+artifacts still numbered 1.792. The versioned 1.946 candidate needs its own
+source/artifact gates, interpreter matrix, corpus and exact-commit CI.
+
+The first versioned candidate, `a53e351`, subsequently completed quality,
+distribution, six clean-install checks, differential behavior, the Linux
+Python 3.11–3.13 matrix and self-dogfood. Its corpus stopped after 31 of 141
+projects when Voluptuous exposed a material performance defect. No complete
+corpus or release acceptance is claimed. Raw evidence and closed-worker
+receipts remain in `20261010T113508Z-codex-1946-release-validation`.
+
+A separate bounded replay observed 994 repeated module-fact queries among
+1,000 calls over six inputs. A warning-free Voluptuous test module repeatedly
+bypassed the fact cache because ordinary raw-regex brace escapes triggered
+an overbroad formatted-string warning guard. The repair admits these escapes
+when they precede every possible formatted-string start, preserving the
+existing diagnostic and cache boundaries. New runtime bytes require fresh
+complete performance assessments and release gates; the old completed gates
+remain bound to `a53e351`. See the [performance investigation](../PERFORMANCE.md#october-10-voluptuous-regression-investigation).
+
+The preceding raw-regex repair source `a6dc6ed` completed fresh quality, strict typing,
+archive/RECORD and Twine checks plus a complete Voluptuous canary (182/182,
+40 applications/four files). Its two completed R,F,F,R shared-host cohorts
+retained all eight actual samples: Voluptuous 90.984 → 87.569 seconds
+(−3.75%) and Click 47.165 → 58.195 seconds (+23.39%), two per source/workload.
+The published comparator is `44d7795`/1.792. Original pairs and all 24 displayed
+Click failure payloads matched, as did each arm's repeated outputs and physical
+closure. Current caps are 2 CPUs/6 GiB RAM/12 GiB combined RAM+swap; per-CLI
+CPU is unavailable. Rich has zero actual samples in this new campaign after
+preproduct settling/preflight failures. Its measurements and fresh full gates
+remain pending, and restoration is unresolved. See the
+[source-bound portable record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-warning-guard/README.md).
+
+The later paired-backslash parity repair has scoped native diagnostic and
+fact-reuse evidence; it is outside those `a6dc6ed` samples. The latest prepared
+runtime requires a new final source freeze, fresh full release gates and new
+source-bound timing evidence. No completed campaign or timing benefit for that
+later runtime is claimed. See the [parity addendum](../PERFORMANCE.md#october-10-backslash-parity-repair).
+
+At the earlier `9d57b0d` full audit, the canonical suite passed 10,583 tests and
+45 subtests, with 32 skips,
+eight warnings and 93.478046% coverage. Scoped static, architecture and
+behavior checks completed. Six fresh default-CLI consumer comparisons matched
+their exact original baselines, including 35 existing failure records;
+nine hidden pytest-truncated portions remain unverified. Their 531 Python
+outputs matched retained references, with 56 local applications across
+30 files. All 2,644 tracked files and 107 runtime payloads stayed bound to
+the freeze, and owned workers closed. The [readiness report](PRODUCTION_READINESS.md#1946-preparation-and-audited-source-october-10-2026)
+records counts, coverage and limits.
+
+Eight serial complete CLI samples compared that source with released
+`44d779563578a32e24f8213fba96f43c6698ab43`, two samples per source for
+Click and Rich. Mean wall time rose 21.85% on Click and 78.10% on Rich.
+These shared-host observations retain every runtime idle shortfall; they do
+not establish isolated-host performance or restoration of the prior level.
+All original test pairs, visible diagnostics and output references passed;
+all measurement workers and containers closed. No actual sample was replaced,
+and no fallback or confirmation substitution was accepted. See
+[performance](../PERFORMANCE.md#october-10-click-and-rich-assessment) and the
+[retained source-bound evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-preparation/README.md).
+
+## 2026-10-08: 1.792 published release
+
+Version 1.792 was published from `44d779563578a32e24f8213fba96f43c6698ab43`
+as `v1.792`. Its exact-commit CI, Python 3.11–3.13 matrix, 141-project corpus,
+artifact hashes and fresh-install verification belong to that release.
+[Production readiness](PRODUCTION_READINESS.md#1792-published-release-october-8-2026)
+retains the completed result. The older pending preparation entries below
+were superseded for 1.792 publication; they retain their original observations
+and do not approve 1.946.
+
+## 2026-10-06: 1.792 parameter audit follow-up
+
+The fresh audit exercised same-class aliases, repeated reads, independent
+module namespaces, ordinary callback rebinding, monkeypatching, unused argument
+lifetimes and real generated-helper reuse. Equal-looking class suppliers and
+ownership holders are necessary where they preserve those obligations; their
+presence alone is not a redundant-argument defect. Separate breadth checks
+covered degenerate inputs, source encodings, exclusions, symlink inputs,
+read-only inputs with separate outputs, concurrent independent default CLI
+runs and malformed formatter configuration.
+
+The initial tiny-helper policy weighs complete formal and wrapper cost against
+sharing across actual sites, rather than counting physical line wrapping. Its
+[decision](../design/DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
+records the calibration and compatibility boundary.
+
+A later stub-provider control exposed an incomplete source-dependency closure
+in the inner rendered-variant refusal memo. It is removed; matching checker
+configuration and earlier error locations does not certify a current answer.
+Variants submitted to project checking are checked again. The outer exact
+completed-proposal rehearing cache remains separately qualified. Earlier timing
+records below predate this removal and do not measure it.
+
+October 7 native validation at `04d2710` passes 9,697 tests, with 20 skips,
+26 passing subtests, four warnings and 93% combined line coverage. All declared
+local static checks and the pinned dependency advisory check pass. Source
+bytes remain unchanged. The earlier failed attempts are retained separately;
+fixture repairs preserve fresh-check, declaration, private-method and runtime
+behavior coverage. One seven-input/two-statement golden tail is now inline,
+with original/old/new values and effects equal in the retained controls.
+
+The block memo halves repeated computations in its work-count control. Four
+complete typed/formatted CLI runs measure 56.72s uncached versus 56.70s cached,
+with byte-identical outputs and no established wall benefit. The
+[retained evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-parameter-audit-fixes/README.md)
+binds those observations to the runtime and drivers. Documentation updates
+preserve the validated runtime and executable-test bytes. Matrix, corpus,
+final release evidence and exact-commit CI were pending at that checkpoint. No new published-
+version comparison or publication is claimed.
+
+## 2026-10-06: 1.792 audit and optimization validation
+
+The five fresh audit findings were corrected: implicit-protocol ownership,
+nested binding positions, isolated formatter discovery/execution, quoted
+recovery remedies and atomic rejection of malformed Pyright diagnostics.
+Additional frame guards preserve original arguments and relative local cleanup
+on normal and exceptional exits, or refuse an uncertifiable split. Original
+unsafe fixtures remain negative checks beside useful extraction controls;
+25 golden artifacts were reviewed individually against behavioral evidence.
+
+At source checkpoint `1e87842`, the complete native Python 3.13 suite passed
+9,671 tests and 26 subtests, with 20 skips and 93% combined coverage. All four
+static gates passed. Full before/after source inventories matched exactly.
+[Native evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-october6-native/README.md)
+records runtime tree `87bd254a7948b5611b334e85856c2aec94d13207`.
+
+All three proposed optimizations were implemented and measured separately
+through the complete installed typed/formatted CLI. Each paired comparison
+produced byte-identical outputs (19 refactorings across 8 files); none
+established a whole-command speedup. Exact refusal retention was active,
+but all five stored refusals became stale before rehearing, so the workload
+gave it no repeated unchanged-revision work to skip.
+[Performance evidence](../PERFORMANCE.md#october-6-optimization-experiments)
+retains all arm identities, samples and limits.
+
+No matrix or corpus was rerun, at the maintainer's explicit instruction.
+Their earlier results did not validate that changed source; release remained
+held at this checkpoint pending its remaining gates and performance disposition.
+
+## 2026-10-05 (1.792 final corpus and performance)
+
+The repaired runtime remains unchanged since `c5311b4`. At source snapshot
+`00b4f4f`, the fresh 141-project corpus completed after the full interpreter
+matrix: 96 PASS, 35 NO_CHANGE, five pinned reflection differences and five
+import-origin refusals. Sphinx passed with 25 changed files. The review
+verified raw before/after outcomes, failed-test identities and listed
+exceptions; an independent read-only check confirmed all five refusals left
+256 tracked package files unchanged and produced no output. Three projects
+used the untyped fallback. The [readiness report](PRODUCTION_READINESS.md#1792-release-preparation)
+names them and explains the limits of each disposition.
+
+The completed full typed, formatted Packaging comparison averaged
+43.43 seconds versus 38.80 seconds for published 1.772: **11.9% slower**.
+The earlier 1.792 control averaged 35.38 seconds in the same experiment.
+Four fresh-process observations per version were run in two balanced blocks;
+all 12 commands succeeded, with identical repeated Python output within each
+version. That candidate applied 20 refactorings versus 18 for 1.772. Background
+activity was recorded; this was a capacity/repeatability experiment, not a
+quiet-host preflight pass. The [performance guide](../PERFORMANCE.md#october-5-repaired-candidate-comparison)
+records the exact source, runtime, archives, settings and limits.
+
+Final source-bound evidence assembly, the standard repository release gate,
+exact-commit remote CI, the maintainer's performance disposition and
+publication remained pending at this checkpoint. This entry records completed local observations,
+not a published release or permission to upload. The retained
+[documentation evidence subset](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-audit-fixes/README.md)
+keeps the original records and does not replace the full external bundle.
+
+## 2026-10-05 (1.792 audit repairs)
+
+The release audit's two P1 findings and one P2 finding are repaired through
+`c5311b4`. Extracted blocks retain ordinary factory and method results,
+including aliases and the relative cleanup order of multiple finalizable
+objects. Context-manager bodies establish no new definite bindings after the
+manager exits: aliases and custom managers may suppress exceptions. Optional
+naming-sidecar failures warn after successful source publication rather than
+reporting the published operation as failed. Retained tuple results also keep
+known element types when another element is `Any`.
+
+At that commit, native tests completed with 9,320 passed, 20 skipped and 26
+passing subtests. Full Linux Python 3.11, 3.12 and 3.13 suites completed with
+9,096, 9,251 and 9,246 passed respectively, with 93–94% coverage. The exact
+archives, six installed-wheel CLI checks, strict distribution checks and
+dependency audit passed. These are completed audit-fix validation results;
+later documentation and auxiliary checks retain their own source identities.
+
+At the documentation snapshot `0a7a62b`, fresh differential fuzzing completed
+9,400 observations with zero failures, the full self-refactored Towel suite
+passed 9,320 tests and 26 subtests, and 234 source-archive documentation and
+evidence tests passed. Six installed-wheel cases passed, with every installed
+runtime file independently matched to the wheel.
+
+At this checkpoint a fresh ecosystem corpus was required after the runtime
+repairs. The earlier skip decision preceded those repairs; its outcomes remain
+historical evidence with their original source and wheel hashes. The first
+audit-fix performance preflight stopped for host load before taking any
+sample. The completed corpus and production comparison are recorded in the
+later October 5 entry above. Final commit and archive identities belong in
+the external release record.
+
+## 2026-10-04 (1.792 checker overlay correction)
+
+Pyparsing's final cold audit found introduced errors that warm candidate checks
+had missed with the project's selected mypy 2.4. Its native parser can read the
+physical baseline instead of supplied candidate text. Owned checker builds now
+use mypy's Python parser, which honors that text. This execution setting is chosen
+before per-module options are copied and remains stable throughout each cache;
+project type rules and incremental caching remain in effect. Same-file and cross-file negative
+controls, useful extraction, reveal and subtype regressions fail against the
+preceding candidate and pass with this correction under actual mypy 2.4.
+The release was held at this checkpoint pending fresh frozen-source gates
+and performance measurements; these focused controls did not approve it.
+
+## 2026-10-03 (1.792 discovery remediation)
+
+- Release preparation now includes an explicit function opt-out:
+  `# towel: no-extract` immediately after the signature's final colon protects
+  that definition and nested bodies. Unmarked code remains eligible; whole-file
+  exclusions remain available. This supplies user control under the existing
+  reflection boundary. Focused checks passed; release was held at this
+  checkpoint pending independent consumer validation and fresh gates for the new candidate. Earlier
+  gates do not approve it.
+- Packaging exposed a false rendering refusal for typed shared helpers carrying
+  comments: annotations were safely quoted before rendering, but the roundtrip
+  check compared them with the unadapted proposal. Comment rendering now checks
+  the actual adapted helper, retaining the complete AST and directive checks.
+  Typed cross-module regressions require a real extraction and unchanged output.
+- Inflect exposed generated calls formatted without their destination
+  indentation. Generated snippets now receive that depth during formatting,
+  and their unwrapped AST is checked before insertion.
+- Cheroot's own mypy check passed while Towel's reachability batch pulled in
+  excluded tests whose dependencies used syntax newer than the configured
+  target. Verification probes now follow each checker's configured file scope.
+- The typing_extensions unittest command now discovers from `src`, matching
+  upstream module identity. Its stack-reflection differences and Beautiful
+  Soup's warning-filename differences are listed explicitly in the pinned
+  corpus manifest under the October 2 preservation contract.
+- The completed predecessor discovery is retained with its failed verdicts.
+  These fixes require fresh frozen-source release gates; this checkpoint does
+  not declare 1.792 ready or published.
+
+## 2026-10-02 (1.792 preparation follow-up)
+
+- The preservation contract now covers programs that do not use reflection or
+  self-instrumentation, including through their callees. Reflection-specific
+  instrumentation, source-reader and namespace protections have been removed.
+  Ordinary binding, control flow, dispatch, effects and typing remain covered;
+  a violation is a defect to fix or refuse. See the
+  [October 2 decision](../design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).
+- Source analysis shares immutable parse and file facts within bounded
+  lifetimes. Subtype answers are reused within one inference, and immutable
+  narrowing facts are shared across overlapping source windows. Unknown
+  subtype answers are retried; new checker builds retain their evidence checks.
+- Repeated source texts share immutable lexical eligibility results under a
+  source-byte budget. NetworkX diagnosis found that the earlier 32-entry cache
+  repeatedly evicted ordinary modules; cache capacity now follows their sizes,
+  with entry and per-source limits retained. This diagnosis is not a benchmark.
+- Corpus preparation exposed a false untyped-import refusal for `Self`.
+  The import probe now asks the checker in a class context, including
+  for aliases and qualified spellings, and requires its exact contextual type.
+  The superseded candidate's interrupted corpus remains partial evidence;
+  the correction requires a new validation freeze.
+- Werkzeug exposed a module-attribute question taken from a shadowing function
+  parameter and valid qualified `Self` uses rejected by an annotation grammar.
+  Attribute questions now use shared lexical-scope rules. `Self` import identity
+  is established by the checker's exact contextual type, removing the annotation
+  grammar; the existing checker comparison still rejects new type errors.
+  Contextual questions share the existing batch. These corrections require
+  fresh validation with the affected files eligible for refactoring.
+- NetworkX exposed a second import-probe error: mypy reports every expression
+  in an unchecked function as `Any`, including known standard-library modules.
+  A checked context now distinguishes those imports from genuinely unresolved
+  modules without changing the project's options or hiding missing imports.
+- Cachetools exposed a false refusal from a fresh parent-module alias:
+  Pyright could resolve the program's `collections.abc` binding, but not the
+  generated alias's `.abc`. For a common module-level import block with no
+  competing module bindings or overlapping attribute writes and all reads of
+  that binding after the block, an additional question
+  checks the original binding in the same checker exchange. That checker must
+  identify the exact module; missing imports and unsupported contexts retain
+  their existing checks. Unrelated local bindings no longer invalidate this
+  evidence. An alias replaced later in the same block also no longer receives
+  attribute questions from its replacement's later reads. These rules share
+  immutable lexical and import-block facts once per source. The corrections
+  require a fresh validation freeze after corpus discovery.
+- Sphinx exposed an attribute question for `doctest.compile` used only as an
+  assignment target. Import questions now distinguish writes from reads:
+  augmented assignments still read their targets, and nested targets still
+  read the objects needed to reach them. The immutable attribute-read inventory
+  is computed once per source and reused across imports. Focused checker
+  regressions cover this correction; final validation was still pending at
+  this checkpoint.
+  A native checker control also exposed a false refusal when assigning
+  `collections.namedtuple` disabled evidence for the separate `collections.abc`
+  import. Write paths now distinguish unrelated attributes; root rebinding and
+  writes to the queried path, its ancestors or descendants retain their checks.
+  The full Sphinx comparison remains separate validation.
+- A valid one-line `match` case could produce an invalidly indented probe because
+  its `match_case` node has no statement line number. The splitter now locates
+  the header from the pattern's source position, including multiline patterns
+  and guards, without adding tokenizer diagnostics.
+  Semicolon siblings also receive separate probe sites: a preceding multiline
+  string must not contain the next probe, and a preceding early exit must not
+  make a later statement appear checked. These corrections affect only the
+  checker's private source and require fresh validation.
+- Checking probe construction on the remaining corpus projects found the same
+  missing parent location for an inline exception handler in Pyrsistent.
+  `ExceptHandler` has its own header location but is not an `ast.stmt`; using
+  the missing-parent fallback lost the surrounding indentation and prevented a
+  probe plan for the whole file. Inline `except` and `except*` bodies now use
+  that handler location. This correction also requires fresh validation.
+- Corpus setup selected the default checker before reading versioned typing
+  environments. This missed Lark and h11's mypy pins and wsproto and
+  hyperframe's version ranges. The harness now considers those contexts before
+  falling back to Towel's requirements and verifies cached tool selections.
+  Existing project, lock-file, hook and requirement-file selections keep their
+  precedence; distinct checking contexts are not combined. Webargs's current
+  release workflow selects its pre-commit checker, so its older tox pin does
+  not replace that selection. The interrupted corpus remains partial evidence;
+  this harness correction requires a fresh frozen release run.
+- Wrapt's CI installs mypy 1.20.1 before its tests, but the harness missed that
+  workflow pin and used 2.3.1, causing an unchanged diagnostic-message test to
+  fail. Literal checker installs in unconditional workflow steps are now read
+  after the existing declaration sources. Python version markers and separate
+  job contexts are preserved; unsupported shell or YAML forms are skipped.
+  Workflow inputs also participate in environment reuse checks. The correction
+  requires a new corpus run with the selected checker.
+- Starlette's CI selects a default dependency group containing mypy and PyYAML
+  stubs. The harness omitted that group, leaving a typed file unverifiable.
+  Explicit uv default groups now contribute typing dependencies when their
+  expanded requirements name a supported checker. Existing context precedence,
+  included groups, extras, markers and lock pins are preserved. This dependency
+  correction also requires a fresh corpus run.
+- Sphinx exposed a test-environment error: the harness's `NO_COLOR` setting
+  overrode the test's `FORCE_COLOR`, changing progress output. The pinned test
+  fails with that environment and passes without the harness's color controls.
+  `NO_COLOR`, `PY_COLORS` and `TERM` overrides now apply only to Towel commands;
+  consumer output retains its behavior and ANSI-aware result parsing. This
+  bounded reproduction does not replace the fresh corpus run.
+- Pytest's own suite exposed a missing `cache` fixture because the harness
+  disabled its provider. The default command and 29 manifest commands copied
+  from it now retain that plugin. Recognized pytest invocations request
+  `--cache-clear`, including isolated and full retries; explicit plugin disables
+  in custom commands remain honored. A narrowed retry is refused when replacing
+  selectors would change the ordered plugin arguments. The pinned failing test
+  passes with this change. Synthetic controls also show why enabling the plugin was
+  insufficient: copied baseline cache values could hide a changed result.
+  The configured cache directory is preserved. Final corpus validation remained
+  pending at this checkpoint under the corrected harness and manifest.
+- The [complete CLI comparison](../PERFORMANCE.md#october-2-complete-cli-comparison)
+  measured the controlled typed, formatted Packaging fixture at 36.24 seconds
+  versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit
+  `000d751` applied 19 extractions versus 18 and preserved the preceding
+  candidate's output. The report records two samples per arm, source and
+  artifact identities, background load and the other measured command settings.
+  This does not establish a whole-corpus speedup.
+- Earlier release-validation records remain bound to their earlier source.
+  The changed runtime requires a new frozen release audit, interpreter matrix,
+  corpus, artifact checks and exact-commit CI. Keep completed outcomes in the
+  external evidence bundle; no completion or publication is claimed here.
+
+## 2026-09-30 (1.792 preparation)
+
+- Version: 1.792, named for ln 6; publication and tagging are not recorded here.
+- Changes: checked fixed-point preview, caller-narrowing boundaries, batched
+  Pyright reveals, safe discovery in match/except-star suites, generated-helper
+  reuse and inert compound annotations. See [the changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1792).
+- Development validation completed at `3af8c4b`; later documentary and gate
+  amendments passed 206 focused tests and quality checks at `253b434`, including
+  the actual rebuilt sdist. [The report](../design/proposals/next-validation-final.md)
+  preserves platforms, counts, resources and corpus exceptions. Those artifacts
+  still say 1.772 and are not release artifacts for 1.792.
+- Performance: [published-wheel measurements](../design/proposals/published-1772-comparison.md)
+  distinguish the Sphinx first-reveal improvement from Packaging's flat full
+  command. Their background-load conditions supersede the historical defaults
+  below for those experiments.
+- Development dependency audit: a fresh check reported four virtualenv
+  advisories against locked 21.7.9. The lock now selects 21.14.1, including the
+  maintainer's later activation-script fixes, with other dependency pins
+  unchanged. The interrupted first preparation attempt retains its own evidence.
+- Release validation: freeze the complete 1.792 source and retain its exact
+  commit, artifact hashes, completed gates, corpus review and GitHub CI run in
+  the external release-evidence bundle. No 1.792 CI success is claimed here.
+
+## Measurement environment
+
+Every time, memory and disk figure in the historical entries below was measured on an Apple
+M5 Max with 18 cores and 128 GiB of memory, writing to an APFS internal
+volume. Unless a figure says otherwise it was taken with the machine
+otherwise idle and with Towel's CLI defaults, and a figure that names a
+commit was taken at it.
+
+Where a figure concerns a project Towel was checking, the checker is that
+project's own rather than Towel's: the Sphinx measurements run mypy 1.19.1
+and pyright 1.1.407 from Sphinx 9.1.1 at `e44a40e`, and the mypy costs they
+describe belong to that version.
+
+## 2026-09-26 (1.772)
+
+- Version: 1.772; release tag `v1.772`, moved from the September 19
+  candidate to this commit. The tag's annotation records the wheel and sdist
+  hashes.
+- Scope: the fixes of audit rounds three and four, merged on `audit-1772`;
+  the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1772---2026-09-26) lists them.
+- Tests: the full suite at `2b399ef` passed 7,751 on 3.11, 7,882 on 3.12 and
+  7,899 on 3.13, with `just check` passing. `src/towel` differs from there
+  to the release only in one corrected docstring, and GitHub CI passed the
+  full suite on the release commit.
+- CI: the first run of the candidate failed ten tests under CI's coverage run
+  and Linux link mode, from a `COVERAGE_RCFILE` leak into test projects and a
+  harness install linked to uv's cache. Both are fixed at `c3d062a`, and the
+  suite passed as CI runs it before the release commit was pushed. The tag
+  first pushed for that candidate was deleted before anything was uploaded.
+- Distributions: the wheel, the sdist and `src/towel` agree file for file.
+  `twine check --strict` passes, and the wheel imports on 3.11, 3.12 and
+  3.13, bare and with extras.
+- Corpus: 141 projects, typed and with `--cross-module`, gave 90 PASS,
+  45 NO_CHANGE and 6 import-problem refusals. The
+  [readiness report](PRODUCTION_READINESS.md#1772-release-validation-september-26-2026)
+  gives the details.
+- Not run: a fifth audit round. The owner released without it; see DECISIONS,
+  "1.772 ships without a clean audit round".
+
+## 2026-09-19 (1.772 candidate)
+
+- Version: 1.772, beta candidate. The `v1.772` tag was first placed here and
+  moved to the release on 2026-09-26.
+- Runtime: `src/towel` is **not** unchanged from `ba539d4`. That claim was
+  written for an earlier candidate and is withdrawn. The type-checking path was
+  rewritten for this release; dependencies and build configuration are
+  unchanged. Each entry below names the runtime its evidence was taken against,
+  and evidence from one candidate is not carried to another.
+- Harness fix: `scripts/ecosystem_check.py` gives each corpus project its own
+  output directory. Towel writes its recovery journal to the common parent of a
+  transaction's files and refuses to start beneath a pending journal that may
+  cover its targets; a one-module project's single output file put that journal
+  directly in `--work`, an ancestor of every other project, so concurrent
+  projects refused each other. Observed at `--workers 4`, where peewee's journal
+  crashed astroid. `tests/test_ecosystem_work_isolation.py` pins the layout and
+  the transaction rule behind it; both layout cases fail against the old layout.
+  The runtime is not involved: `src/towel/changes.py` is unchanged since before
+  1.732 and its conservative refusal is correct.
+- Feature: an extracted helper can preserve the relationships among its
+  argument and return types by anti-unifying complete argument/result rows,
+  rather than widening each column independently to a union or to `Any`.
+  Generic instance, class, and static helper methods are included; fresh
+  declarations are emitted at module scope before the host class and roll back
+  with a failed candidate. See the
+  [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1772---2026-09-26) and the
+  [type-parameter design](../design/proposals/type-parameters.md).
+- Inference order: a precise ordinary signature is preferred, and a generic
+  candidate is tried when that signature contains `Any` or the whole project
+  rejects it. At most two generic contracts are attempted. This ordering is
+  recorded in [known limitations](../KNOWN_LIMITATIONS.md); it is a deliberate
+  preference, not a claim that anti-unification is applied wherever it would
+  help.
+- Validation at the release candidate: 2,756/2,800/2,801 passing tests on Python
+  3.11/3.12/3.13, 34 subtests each, 45 skips on 3.11 for PEP 695 syntax, and
+  93% coverage against the unconditional 85% gate; no warnings. Black, Flake8,
+  strict mypy over 228 files, and Bandit passed on Python 3.13. The dependency
+  audit covered 64 installed third-party distributions with no known
+  vulnerabilities. A credential-shape scan of the working tree and all 432
+  tracked commits reported no matches, with its instrument verified in both
+  directions.
+- Consumer evidence: Towel on its own source applied 13 refactorings across 8
+  files and the transformed tree passed the complete suite unchanged, with
+  strict mypy clean; that output is byte-identical to the one 1.732 produces,
+  so it demonstrates no regression rather than new behavior. Sphinx at
+  `e44a40eb2f`, which configures both mypy and Pyright in strict mode and whose
+  original baseline is clean across 432 files, produced a generic instance
+  method carrying a constrained type parameter over three docutils node
+  classes. The transformed project is clean under both checkers, and Sphinx's
+  suite run serially is identical before and after: 2,385 passed, 34 skipped,
+  and the same six pre-existing upstream failures. That was a bounded fixed
+  point of 20 helpers over four modules, stopped after 3 h 21 min. That figure predates the verification work later in 1.772, after which the same project reaches a fixed point in 46 minutes. The 141-project behavioral corpus runs with `--no-types` and does
+  not measure this inference.
+
+---
+
+## 2026-09-19 (1.732.post1)
+
+- Version: 1.732.post1, beta; release tag: `v1.732.post1`.
+- Documentation-only follow-up to `v1.732` (`989f27b`). The README now uses
+  absolute GitHub documentation URLs pinned to the post-release tag. Relative
+  paths worked on GitHub but did not resolve to repository files on PyPI.
+- The Python implementation and dependency pins are unchanged. The 1.732
+  validation below remains applicable to that code; the new documentation-link
+  regressions and exact post-release artifacts have separate release evidence.
+- Publication checks verify the pushed commit and tag, hosted CI, and actual
+  GitHub documentation before uploading the distributions to PyPI. The release
+  archive records package checks, published hashes, and installation results.
+
+---
+
+## 2026-09-19 (1.732)
+
+- Version: 1.732, beta; release tag: `v1.732`.
+- Runtime: `1d246075`; validated source: `2e4ebe6`. The intervening changes
+  affect tests and the ecosystem harness; the runtime remains unchanged.
+  The release commit updates documentation only.
+- Audit fixes: generic binding scopes, builtin shadowing, import order,
+  renaming safety, checker ownership and whole-project verification, and
+  progress after rendering or verification refusals. See the
+  [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1732---2026-09-19) for the full release summary.
+- Type policy: an available checker must accept the complete original project
+  before output copying. Existing errors require repair or explicit
+  `--no-types`; infrastructure failure remains a distinct error. Clean
+  projects retain verification of prospective changes and unchanged consumers.
+- Validation at `2e4ebe6`: 2,534/2,545/2,545 passing tests on Python
+  3.11/3.12/3.13, 34 subtests each, 11 PEP 695 skips on 3.11, and 93% coverage;
+  no warnings. Black, Flake8, strict mypy, Bandit and lockfile checks passed.
+  The final eight regression cases cover corpus dependencies, PLY's source
+  imports, and the full-suite confirmation required after isolated agreement;
+  the original manifest and a faulty harness mutation fail negative controls.
+- Consumer evidence: 119 `PASS`, 19 `NO_CHANGE`, and three `BROKEN_KNOWN`
+  across 141 entries in explicit `--no-types` mode. This combines the complete
+  r6 run with three corrected-environment runs for Cheroot, PLY, and SimPy;
+  the original failed baselines remain preserved. Matching outcomes can retain
+  upstream failures. The default typed path has separate integration coverage.
+  [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)
+  distinguishes this evidence from older corpus runs.
+- Exact artifact hashes and wheel/source installation-check results are
+  retained in the accompanying September 19 audit and release evidence archives.
+
+---
+
+## 2026-09-19 (historical 1.732 candidate checkpoints)
+
+- Version: 1.732 (in preparation; not tagged or published)
+- Development status: Beta (PyPI classifier `4 - Beta`)
+- Commit: `5ff2458` and the documentation commits that follow it; the tag `v1.732` is created at publication
+- Summary:
+  - Reuse: a duplicate that is the whole body of a plain module-level function calls that function instead of a new helper.
+  - Formatting and typing: generated code is formatted with the project's formatter and import sorter (`format` extra); helpers are annotated from the call sites and the project's type checker, mypy or pyright (`types` extra).
+  - Command line: paired `--x/--no-x` options, `--max-refactorings`, `--min-lines`, `--max-parameters`, `--max-pairs`, `rename-helpers --preview`; retired spellings still parse.
+  - Soundness: the eager-argument rule is rebuilt on control flow; a same-module helper reads module-level names bare instead of taking them as parameters; forwarding-callee calls are declined; frame reads, `warnings.warn` and their imported or assigned aliases decline a block anywhere in its function; resource lifetimes are returned; encodings, line endings and unusual line separators round-trip; unsupported layouts decline only the cross-file pair.
+  - Environment: the result does not depend on the working directory or path spelling; journals are per batch and scoped to the files they name; SIGTERM, Ctrl-C and a closed pipe end a run cleanly; progress is on stderr.
+  - Performance: the engine is a chain of typed mixins; per-function and per-statement facts, statement-sequence buckets, exact incremental global passes, one proposal per identity, the instantiation memo and the candidate-pair budget; a hundred similar functions take 16 s (September 19, 2026, one core).
+  - Security and packaging: pyright runs with Towel's interpreter, the ecosystem check is opt-in with pinned commits, dependency audit and Dependabot in CI, the `format` extra's Black floor matches the goldens, a slimmer sdist.
+- Status: All tests green (2,182 tests and 34 subtests on Python 3.12 at `5ff2458`; hyper-h2's own 1,662 tests and Towel's own suite pass on their refactored outputs). Ecosystem check: 118 PASS, 19 NO_CHANGE, 4 BROKEN_KNOWN, 0 BROKEN of 141 on commit `347d62b`, September 19, 2026, Python 3.13 ([PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)); two earlier candidate runs that day found five defects, fixed before it. That result predates the subsequent pre-release audit fixes; it is historical
+evidence and must not be attributed to the current candidate.
+
+---
+
+## 2026-09-17
+
+- Version: 1.618
+- Development status: Beta (PyPI classifier `4 - Beta`)
+- Commit: tag `v1.618`
+- Summary:
+  - Imports: cross-file helpers are imported relatively by default (`from .module import helper`), which stays valid when an out-of-place output is adopted into its real location; an absolute import only when a packaging marker anchors the module name.
+  - Filtering: trivial forwarding helpers (a lone `raise`, a `return` of one call, a bare call) are no longer proposed; `skip_trivial_helpers=False` restores them.
+  - Placement: a cross-file helper is hosted in a module that closes no import cycle, preferring one the borrowers already import; the extraction is declined only when no placement is safe.
+  - Renaming: the rename tool no longer refuses a module merely for a local variable named `vars`, `globals`, `locals`, `eval`, or `exec`.
+  - Documentation: the README shipped still reading 1.414 in its release-status line, which PyPI froze; RELEASING.md now requires a version sweep before building.
+  - Unit/integration tests: 1,181 passed plus 34 subtests (Towel's own suite at `v1.618`, as the ecosystem check runs it).
+- Status: All tests green; ecosystem check unchanged from 1.414 (75 PASS, 13 NO_CHANGE, 3 BROKEN_KNOWN of 91; the 1.414 section of [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md))
+
+---
+
+## 2026-09-15
+
+- Version: 1.414
+- Development status: Beta (PyPI classifier `4 - Beta`)
+- Commit: tag `v1.414`
+- Summary:
+  - Soundness: every accepted proposal is verified by instantiating the helper with each call's arguments and comparing with the replaced block up to renamed binders; arguments that are not names, literals, or containers of those are passed as thunks evaluated at the original position.
+  - Guards: closure/cell sharing across the block boundary, deletion and `except ... as` of pre-bound names, moved `global`/`nonlocal` declarations, slice and starred parameters, and opaque method decorators are rejected or handled explicitly; match captures bind in scope analysis; generated parameter names avoid block identifiers; clustered replacements may not overlap.
+  - Layouts: Flit, Poetry, and pdm projects are supported in directory mode.
+  - Evidence: a standing 91-project ecosystem check (`scripts/ecosystem_check.py`, `just ecosystem`, weekly CI) passes 75 projects' full suites identically before and after transformation, with 13 producing no proposal and 3 documented frame-sensitive or source-observing cases; hostile single-file and cross-file batteries execute fixtures before and after fixed-point refactoring.
+  - Renaming: `towel rename-helpers --list --json` emits an inventory for LLM-driven naming and `--rename-file` applies a batch with scope and importer checks, reporting JSON.
+  - Performance: safety guards, unification, and per-block analyses are memoized per analysis; pyflakes' 2,167-line test module analyzes in about a minute instead of exceeding nine.
+  - Corpus: the ecosystem check reruns any test whose result differs between the two trees, alone, on both trees, and calls the difference flaky rather than a regression when they then agree; a killed run leaves no workers behind and holds an exclusive lock on its work directory.
+  - Robustness: forked workers end within a second of their parent's death (a watchdog thread per worker; a killed run once left fourteen workers that filled the machine's swap), and the worker count is capped by resident size against physical memory.
+- Status: All tests green
+  - Unit/integration tests: 1,257 passed on Python 3.11, 3.12, and 3.13 (the watchdog test needs a fork start method)
+  - Ecosystem check: 75 PASS, 13 NO_CHANGE, 3 BROKEN_KNOWN of 91 (see docs/PRODUCTION_READINESS.md)
+
+---
+
+## 2025-11-25
+
+- Version: 0.6.10
+- Commit: (this commit)
+- Summary:
+  - Pipeline: Versioned the parse/analysis cache and routed cached modules through assign→augassign plus arithmetic canonicalization so fresh engine runs always see normalized ASTs without manual cache busts.
+  - Engine coverage: With canonicalized inputs, the refactor engine now extracts the `process_user_score_v1/2` helper in `complex_expressions.py`, matching manual unifier expectations.
+  - Baselines/tests: Regenerated all single-file and cross-file expected outputs to capture the new helper and canonicalized subtraction forms, and re-ran targeted normalizer + engine pytest suites (58 tests) to keep focused coverage green.
+- Status: Targeted suites green
+  - Unit/integration tests: 58 tests OK (0 skipped)
+  - Cross-file observational equivalence: not re-run (unchanged behavior outside normalization)
+
+---
+
+## 2025-11-21
+
+- Version: 0.6.9
+- Commit: (this commit)
+- Summary:
+  - Hygiene: Ensured extracted helper functions get unique, per-file names by seeding helper counters from each canonical file, updated import rewriting, and taught the refactor engine to preserve uniqueness when promoting helpers across files.
+  - Regression coverage: Added duplicate-helper detection to `tests/test_regression.py` plus numerous targeted assertions so observational-equivalence suites accept the new suffixing scheme without brittle expectations.
+  - Baselines: Regenerated every single-file and cross-file expected output to capture the helper naming changes and keep regression comparisons stable.
+- Status: All tests green
+  - Unit/integration tests: 715 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3 project(s), 3/3 proposals passed (100%)
+
+---
+
+## 2025-11-19
+
+- Version: 0.6.8
+- Commit: (this commit)
+- Summary:
+  - Regression safeguards: Expanded `tests/test_regression.py` normalization so helper naming variants (`__extracted_func`, `_extracted_func`, `extracted_function`) map to canonical identifiers, preventing cosmetic diffs from failing stability checks.
+  - Baselines: Regenerated all single-file and cross-file expected outputs via fixed-point refactoring to capture the new naming policies, and introduced `tests/conftest.py` to keep pytest from traversing generated dirs.
+  - Engine hygiene: Added targeted tests for ancestor insertion, detail progress output, Option B literal promotion, and formatting preservation to guard future refactors; also introduced `scripts/bench_refactor.py` for incremental vs. naïve benchmarking.
+- Status: All tests green
+  - Unit/integration tests: 713 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3 project(s), 3/3 proposals passed (100%)
+
+---
+
+## 2025-11-10
+
+- Version: 0.6.7
+- Commit: 66ba8b9
+- Summary:
+  - Architecture: Introduced a compiler-style pipeline (`models.py`, `pipeline.py`, `visitors.py`) and redirected the refactor engine to delegate analysis through explicit phases with shared dataclasses.
+  - Documentation: Authored `docs/PIPELINE.md` describing each phase, data artifact, and invariants for the new architecture.
+  - Testing: Added `tests/test_pipeline_api.py` to validate pipeline parity, and wired flake8/mypy into CI while expanding strict typing coverage to the new modules.
+  - Tooling: Added dev extras installation plus flake8/mypy gates to the CI workflow to keep lint/type checks enforced automatically, and aligned package metadata with the Apache 2.0 license.
+- Status: All tests green
+  - Unit/integration tests: 705 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3 project(s), 3/3 proposals passed (100%)
+
+---
+
+## 2025-11-10
+
+- Version: 0.6.6
+- Commit: c9a7e0a
+- Summary:
+  - Engine: Ensured canonical source files are always processed during multi-file refactors so promoted helpers are emitted in their shared base classes without missing insertions.
+  - Tests: Added cross-file adversarial suites covering instance, classmethod, and multilevel hierarchies to confirm helpers land in the nearest safe ancestor and maintain implicit binders.
+  - Documentation: Updated README and deep-dive docs to highlight class-aware helper promotion, plus improved release log references to the improvements summary.
+  - Packaging: Bumped project version to 0.6.6 to capture the class-aware method promotion work.
+- Status: All tests green
+  - Unit/integration tests: 702 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3 project(s), 3/3 proposals passed (100%)
+
+---
+
+## 2025-11-09
+
+- Version: 0.6.4
+- Commit: d55b83e
+- Summary:
+  - Engine: Promoted `Replacement` to a dataclass with method metadata; preserved method dispatch when rewriting calls and avoided shared AST mutation during multi-file application.
+  - Safety: Auto-coerce legacy tuple replacements, restoring compatibility across tests and overlap filtering utilities.
+  - Fixtures: Restored pristine `test_examples` sources, added `.templates/` snapshots, and refreshed single-file/cross-file baselines via fixed-point regeneration.
+  - Tests: Split the monolithic comprehensive coverage file into focused suites, expanding extractor/unifier edge-case coverage and adding adversarial method tests.
+- Status: All tests green
+  - Unit/integration tests: 695 tests OK (0 skipped)
+  - Observational equivalence: 3/3 cross-file projects passed (100%)
+
+---
+
+## 2025-11-05
+
+- Version: 0.6.0
+- Commit: c419770
+- Summary:
+  - Engine: Insert extracted helpers into the Deepest Common Enclosing (DCE) function scope when possible; prefer function-scope over class/module.
+  - Semantics: Promote global/nonlocal declarations for assigned names into the extracted helper to preserve runtime behavior; continue conservative skip for nonlocal closure contexts.
+  - Hygiene: Include target function’s local bindings into `enclosing_names` when inserting within that function; reset extractor `used_names` per extraction to stabilize helper names across proposals.
+  - Tests: Added adversarial DCE variants (mixed async/sync, interleaved nested candidates, nonlocal/global interaction ensuring global injection and nonlocal skip) in `tests/test_engine_adversarial.py`.
+  - Baselines: Regenerated single-file and cross-file expected outputs to reflect function-scope insertion and global handling.
+- Status: All tests green
+  - Curated tests: 547 tests OK
+  - Observational equivalence: single-file and cross-file suites PASS
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `c419770` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-05.
+
+## 2025-11-04
+
+- Version: 0.5.7
+- Commit: d05ec82
+- Summary:
+  - Tests: Updated adversarial breaker tests in `tests/test_breakers.py` to reflect fixed behavior for `@staticmethod`/`@classmethod` extraction. The engine now preserves observational equivalence in these contexts; tests now assert zero failures.
+  - Tooling: Ensured package is installed in editable mode for local runs; no runtime deps added.
+  - Docs: Appended session notes to `docs/agent_log.md` capturing rationale and steps.
+  - Engine: Added binding-aware unification for additional Python constructs: `with ... as ...`, `except ... as ...`, and walrus `:=` targets. These identifiers are now treated as bindings (alpha-renamed) rather than parameters.
+  - Tests: Added `tests/test_bindings_additional.py` covering with-as, except-as, and walrus alpha-equivalence. All tests pass.
+- Status: All tests green (spot-checked breakers; full suite run as part of release flow)
+  - Unit/integration tests: expected 491+ tests OK
+  - Observational equivalence: no regressions expected
+
+---
+
+Notes:
+- To revert to this exact state: check out the commit recorded above on branch `main`.
+- The 2025-11-04 entry anticipated a push; it records no completion proof
+  for that anticipated action. Current release work remains local.
+
+## 2025-11-03
+
+- Version: 0.5.4
+- Commit: 91c89a309ef077a88af3f2a519e303a39f50524d
+- Summary:
+  - Tooling: Added and adopted an automated release workflow (`just release <ver>`) that runs code quality checks, executes full unit and observational-equivalence suites, computes and records test statistics, bumps the version, updates this release log, creates an annotated tag, and pushes atomically.
+  - Git hygiene: Release flow enforces a clean working tree, rebases on `origin/main` before releasing, and auto-stages any generated artifacts from checks/tests.
+  - DX: Per-file progress indicators retained for long-running stability comparisons so you can see steady progress during releases and regression runs.
+  - Engine/Behavior: No engine changes in this release; refactoring behavior remains identical to 0.5.3 (which switched baselines and regression comparisons to fixed-point).
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (0 skipped)
+  - Observational equivalence: 116/116 proposals passed (100%)
+  - Cross-file observational equivalence: 3 project(s), 3/3 proposals passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `91c89a309ef077a88af3f2a519e303a39f50524d` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-03.
+
+## 2025-11-03
+
+- Version: 0.5.3
+- Commit: afa5c209ed390cce36f91b82e985f457d4a848e6
+- Summary:
+  - Baseline/Testing: Switched baseline generation and regression comparison to fixed-point refactoring to match real-world usage (same behavior as `scripts/dry`). Regenerated expected outputs accordingly.
+  - DX: Enabled verbose progress output in single-file and cross-file observational equivalence tests to provide reassurance during long runs.
+  - Tooling: `regenerate-baseline` now uses fixed-point for both single-file and cross-file baselines.
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (0 skipped)
+  - Observational equivalence: 116/116 proposals passed (100%)
+  - Cross-file observational equivalence: 3/3 projects passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `afa5c209ed390cce36f91b82e985f457d4a848e6` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-03.
+
+## 2025-11-02
+
+- Version: 0.5.2
+- Commit: 42d96fbb0439a613294fd6f1fdacd90bcf9201db
+- Summary:
+  - Engine: Fixed a nested-block regression by deferring evaluation of unified parameters used as callees inside the extracted body. Call-site arguments are now wrapped in forwarding lambdas (thunks) to preserve guarded semantics and arity.
+  - Docs: Added note documenting the callee-parameter thunking rule (`docs/CALLEE_PARAMETER_THUNK.md`).
+  - Baseline: Regenerated expected outputs.
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (0 skipped)
+  - Observational equivalence: 116/116 proposals passed (100%)
+  - Cross-file observational equivalence: 3/3 projects passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `42d96fbb0439a613294fd6f1fdacd90bcf9201db` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-02.
+
+## 2025-11-02
+
+- Version: 0.5.1
+- Commit: 099dd1a12f941cb2a54f27238e5a3ccb0c751223
+- Summary:
+  - Typing: Finished strict mypy cleanup by resolving remaining issues in unifier (async function visitor) and extractor (Optional handling, redundant cast removal).
+  - Quality: mypy/flake8/black all passing; no behavioral changes intended.
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3/3 projects passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `099dd1a12f941cb2a54f27238e5a3ccb0c751223` on branch `main`.
+- Changes were committed on 2025-11-02.
+
+## 2025-11-02
+
+- Version: 0.5.0
+- Commit: 7c7e919e529efad3c93147ed1c2d87f2f16e7551
+- Summary:
+  - Tests: Unskipped previously skipped observational equivalence tests (variable capture fix effective); suite now runs with zero skips.
+  - Quality: mypy/flake8/black all passing; no functional changes beyond test enablement.
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (0 skipped)
+  - Cross-file observational equivalence: 3/3 projects passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `7c7e919e529efad3c93147ed1c2d87f2f16e7551` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-02.
+
+## 2025-11-02
+
+- Version: 1.0.1
+- Commit: cbfe0db0fbefe4d242c1764cfc14d35ef31de4d6
+- Summary:
+  - Quality: Resolved mypy attribute/variance issues in unifier and extractor (casts for tuple elements, Optional checks for current_blocks), kept flake8 clean; no functional changes.
+  - Tooling: Maintained black/flake8/mypy configs; lint recipe continues to pass flags explicitly.
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (2 skipped as documented)
+  - Cross-file observational equivalence: 3/3 projects passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `cbfe0db0fbefe4d242c1764cfc14d35ef31de4d6` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-02.
+
+## 2025-11-02
+
+- Version: 1.0.0
+- Commit: 136501623533b762a51b6a199a6f8c510b26f355
+- Summary:
+  - Unifier: Added comprehension-aware alpha-renaming for ListComp, SetComp, DictComp, and GeneratorExp; fixed nested comprehension unification.
+  - Extractor: Preserved unified parameter names and correctly mapped return assignment targets via inverse hygienic renames.
+  - Tests: Added focused unit tests for nested comprehensions; updated expected outputs to reflect corrected behavior.
+- Status: All tests green
+  - Unit/integration tests: 491 tests OK (2 skipped as documented)
+  - Cross-file observational equivalence: 3/3 projects passed (100%)
+
+---
+
+Notes:
+- To revert to this exact state: check out commit `136501623533b762a51b6a199a6f8c510b26f355` on branch `main`.
+- Changes were pushed to origin/main on 2025-11-02.

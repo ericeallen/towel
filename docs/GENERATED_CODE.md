@@ -22,7 +22,7 @@ On this page:
 ## Extracting a shared helper
 
 Towel uses *anti-unification*, following the work of
-[Reynolds and Plotkin](ARCHITECTURE.md#references). It computes the
+[Reynolds and Plotkin](design/ARCHITECTURE.md#references). It computes the
 least-general generalization of matching blocks: their shared structure
 becomes the helper body, and differences become parameters.
 
@@ -88,7 +88,7 @@ captures, runtime type-parameter cells, parameter rebinding and unavailable
 cleanup evidence cause refusal. Annotation-only native type parameters remain
 on the original function. Custom formatters must preserve the generated AST.
 The final holder counts against the helper parameter budget. See the
-[ownership implementation](ARCHITECTURE.md).
+[ownership implementation](design/ARCHITECTURE.md).
 
 Eligibility can differ across Python versions. In
 `[(x, y) for x in xs for y in ys]`, Python 3.11 captures the parameter `ys`
@@ -300,7 +300,7 @@ repay the same interface. Differing caller expressions can make this estimate
 conservative. It is a readability heuristic, not a proof of maintainability or a
 promise to minimize source lines.
 
-The [recorded calibration](DECISIONS.md#2026-11-08-complete-extractions-must-repay-their-generated-syntax)
+The [recorded calibration](design/DECISIONS.md#2026-11-08-complete-extractions-must-repay-their-generated-syntax)
 gives the exact cost and sharing rule. The existing Python API
 `skip_trivial_helpers=False` bypasses this output-quality filter, while semantic
 and unconditional no-logic checks remain active. The CLI has no new opt-out.
@@ -424,4 +424,4 @@ behavior, receiver semantics and effects remain within the usual checks.
 A private helper avoids accidental overrides; it does not hide a new name from
 namespace scans or preserve lookup logging or stack depth. See the
 [reflection and instrumentation reference](KNOWN_LIMITATIONS.md#reflection-over-a-namespace-and-stack-depth)
-and the [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).
+and the [October 2 decision](design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).

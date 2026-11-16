@@ -21,14 +21,15 @@ cannot tell: it lists every module of every platform, and only those of the
 Python Towel runs on.
 
 ``PLATFORM_ONLY`` is read from the Availability notes of the documentation
-sources (``Doc/library/*.rst``) of CPython 3.11.15, 3.12.13 and 3.13.7: a
-module's ``:platform:`` option and a note of its own, and the note in the
-description of each function, class, exception and data item at a module's
+sources (``Doc/library/*.rst``) of CPython 3.11.15, 3.12.13, 3.13.7,
+3.14.7 and 3.15.2: a module's ``:platform:`` option and a note of its own,
+and the note in the description of each function, class, exception and data item at a module's
 top level. An entry lists, for each version whose documentation notes it, the
-desktop platforms of Windows, macOS and Linux the note names, and it is here
+desktop platforms of Windows, macOS and Linux the note permits, and it is here
 only where that leaves one out. ``Unix`` and ``POSIX`` name macOS and Linux
 (the documentation says a Unix note holds for macOS unless it says
 otherwise), and a minimum release (``Linux >= 3.9``) counts as the platform.
+A purely negative note (``not macOS``) rules out only the named platform.
 
 Left out, and so never known to be missing:
 
@@ -39,9 +40,11 @@ Left out, and so never known to be missing:
 - an object whose description holds several notes, one per parameter:
   ``subprocess.Popen``, ``os.pidfd_open``;
 - a note the running interpreters contradict, which the documentation
-  places on Linux or iOS alone and CPython 3.11 to 3.13 has on macOS too:
+  places on Linux or iOS alone and CPython 3.11 to 3.15 has on macOS too:
   ``os.preadv``, ``os.pwritev``, the ``sys`` stack-trampoline functions and
   ``importlib.machinery.AppleFrameworkLoader``;
+- the 3.14 note for ``errno.ENOTCAPABLE``: the macOS 3.14.7 build has it,
+  despite the note naming only WASI and FreeBSD;
 - availability stated in prose rather than a note, such as the ``os.O_*``
   constants' "only available on Windows", and undocumented private modules
   (``_winapi``, ``nt``).
@@ -77,7 +80,7 @@ class PlatformOnly:
     """Its dotted name: ``msvcrt``, ``os.startfile``, or a pattern of names such as ``socket.CAN_*``."""
     is_module: bool
     present_on: Mapping[str, FrozenSet[str]]
-    """For each version (``"3.11"``) whose documentation notes it, the desktop platforms it names."""
+    """For each version (``"3.11"``) whose documentation notes it, the desktop platforms it permits."""
     source: str
     """The documentation file whose note it is, below ``Doc/library``."""
 
@@ -105,7 +108,7 @@ def _attributes(
 PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     *_modules(
         "codecs.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "encodings.mbcs",
     ),
     *_modules(
@@ -115,23 +118,23 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_modules(
         "curses.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "curses",
     ),
     *_modules(
         "dbm.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "dbm.gnu",
         "dbm.ndbm",
     ),
     *_modules(
         "fcntl.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "fcntl",
     ),
     *_modules(
         "grp.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "grp",
     ),
     *_modules(
@@ -141,7 +144,7 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_modules(
         "msvcrt.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "msvcrt",
     ),
     *_modules(
@@ -161,27 +164,27 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_modules(
         "posix.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "posix",
     ),
     *_modules(
         "pty.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "pty",
     ),
     *_modules(
         "pwd.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "pwd",
     ),
     *_modules(
         "readline.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "readline",
     ),
     *_modules(
         "resource.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "resource",
     ),
     *_modules(
@@ -191,43 +194,43 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_modules(
         "syslog.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "syslog",
     ),
     *_modules(
         "termios.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "termios",
     ),
     *_modules(
         "tty.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "tty",
     ),
     *_modules(
         "winreg.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "winreg",
     ),
     *_modules(
         "winsound.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "winsound",
     ),
     *_attributes(
         "asyncio-eventloop.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "asyncio.ProactorEventLoop",
     ),
     *_attributes(
         "asyncio-policy.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "asyncio.WindowsProactorEventLoopPolicy",
         "asyncio.WindowsSelectorEventLoopPolicy",
     ),
     *_attributes(
         "asyncio-stream.rst",
-        {"3.12": "LM", "3.13": "LM"},
+        {"3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "asyncio.open_unix_connection",
         "asyncio.start_unix_server",
     ),
@@ -239,7 +242,7 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "ctypes.rst",
-        {"3.12": "W", "3.13": "W"},
+        {"3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "ctypes.DllCanUnloadNow",
         "ctypes.DllGetClassObject",
         "ctypes.FormatError",
@@ -249,7 +252,7 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
         "ctypes.WINFUNCTYPE",
         "ctypes.WinDLL",
         "ctypes.WinError",
-        "ctypes.find_msvcrt",
+        "ctypes.util.find_msvcrt",
         "ctypes.get_last_error",
         "ctypes.oledll",
         "ctypes.set_last_error",
@@ -257,12 +260,12 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "errno.rst",
-        {"3.11": "-", "3.12": "-", "3.13": "-"},
+        {"3.11": "-", "3.12": "-", "3.13": "-", "3.15": "-"},
         "errno.ENOTCAPABLE",
     ),
     *_attributes(
         "os.rst",
-        {"3.11": "L", "3.12": "L", "3.13": "L"},
+        {"3.11": "L", "3.12": "L", "3.13": "L", "3.14": "L", "3.15": "L"},
         "os.EFD_CLOEXEC",
         "os.EFD_NONBLOCK",
         "os.EFD_SEMAPHORE",
@@ -298,7 +301,7 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "os.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "os.CLD_CONTINUED",
         "os.CLD_DUMPED",
         "os.CLD_EXITED",
@@ -366,7 +369,6 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
         "os.ctermid",
         "os.fchdir",
         "os.fchown",
-        "os.fdatasync",
         "os.fork",
         "os.forkpty",
         "os.fpathconf",
@@ -382,8 +384,6 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
         "os.getpgid",
         "os.getpgrp",
         "os.getpriority",
-        "os.getresgid",
-        "os.getresuid",
         "os.getsid",
         "os.getuid",
         "os.initgroups",
@@ -398,10 +398,6 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
         "os.openpty",
         "os.pathconf",
         "os.pathconf_names",
-        "os.pipe2",
-        "os.plock",
-        "os.posix_fadvise",
-        "os.posix_fallocate",
         "os.posix_spawn",
         "os.posix_spawnp",
         "os.pread",
@@ -417,8 +413,6 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
         "os.setpgrp",
         "os.setpriority",
         "os.setregid",
-        "os.setresgid",
-        "os.setresuid",
         "os.setreuid",
         "os.setsid",
         "os.setuid",
@@ -438,19 +432,40 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "os.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LMW"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "L", "3.15": "L"},
+        "os.fdatasync",
+        "os.getresgid",
+        "os.getresuid",
+        "os.plock",
+        "os.posix_fadvise",
+        "os.posix_fallocate",
+        "os.setresgid",
+        "os.setresuid",
+    ),
+    *_attributes(
+        "os.rst",
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "L", "3.15": "LM"},
+        "os.pipe2",
+    ),
+    *_attributes(
+        "os.rst",
+        {"3.11": "LM", "3.12": "LM", "3.13": "LMW", "3.14": "LMW", "3.15": "LMW"},
         "os.fchmod",
+    ),
+    *_attributes(
+        "os.rst",
+        {"3.11": "LM", "3.12": "LM", "3.13": "LMW", "3.14": "MW", "3.15": "MW"},
         "os.lchmod",
     ),
     *_attributes(
         "os.rst",
-        {"3.11": "LM", "3.12": "LMW", "3.13": "LMW"},
+        {"3.11": "LM", "3.12": "LMW", "3.13": "LMW", "3.14": "LMW", "3.15": "LMW"},
         "os.get_blocking",
         "os.set_blocking",
     ),
     *_attributes(
         "os.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "os.P_DETACH",
         "os.P_OVERLAY",
         "os.add_dll_directory",
@@ -460,13 +475,13 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "os.rst",
-        {"3.12": "L", "3.13": "L"},
+        {"3.12": "L", "3.13": "L", "3.14": "L", "3.15": "L"},
         "os.setns",
         "os.unshare",
     ),
     *_attributes(
         "os.rst",
-        {"3.12": "M", "3.13": "M"},
+        {"3.12": "M", "3.13": "M", "3.14": "M", "3.15": "M"},
         "os.PRIO_DARWIN_BG",
         "os.PRIO_DARWIN_NONUI",
         "os.PRIO_DARWIN_PROCESS",
@@ -474,14 +489,14 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "os.rst",
-        {"3.12": "W", "3.13": "W"},
+        {"3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "os.listdrives",
         "os.listmounts",
         "os.listvolumes",
     ),
     *_attributes(
         "os.rst",
-        {"3.13": "L"},
+        {"3.13": "L", "3.14": "L", "3.15": "L"},
         "os.TFD_CLOEXEC",
         "os.TFD_NONBLOCK",
         "os.TFD_TIMER_ABSTIME",
@@ -494,7 +509,7 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "os.rst",
-        {"3.13": "LM"},
+        {"3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "os.grantpt",
         "os.posix_openpt",
         "os.ptsname",
@@ -507,12 +522,12 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "os.path.rst",
-        {"3.13": "W"},
+        {"3.13": "W", "3.14": "W", "3.15": "W"},
         "os.path.isreserved",
     ),
     *_attributes(
         "resource.rst",
-        {"3.11": "-", "3.12": "-", "3.13": "-"},
+        {"3.11": "-", "3.12": "-", "3.13": "-", "3.14": "-", "3.15": "-"},
         "resource.RLIMIT_KQUEUES",
         "resource.RLIMIT_NPTS",
         "resource.RLIMIT_SBSIZE",
@@ -521,7 +536,7 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "resource.rst",
-        {"3.11": "L", "3.12": "L", "3.13": "L"},
+        {"3.11": "L", "3.12": "L", "3.13": "L", "3.14": "L", "3.15": "L"},
         "resource.RLIMIT_MSGQUEUE",
         "resource.RLIMIT_NICE",
         "resource.RLIMIT_RTPRIO",
@@ -531,23 +546,23 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "select.rst",
-        {"3.12": "LM", "3.13": "LM"},
+        {"3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "select.PIPE_BUF",
     ),
     *_attributes(
         "shutil.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "shutil.chown",
     ),
     *_attributes(
         "signal.rst",
-        {"3.11": "L", "3.12": "L", "3.13": "L"},
+        {"3.11": "L", "3.12": "L", "3.13": "L", "3.14": "L", "3.15": "L"},
         "signal.SIGSTKFLT",
         "signal.pidfd_send_signal",
     ),
     *_attributes(
         "signal.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "signal.SIGALRM",
         "signal.SIGBUS",
         "signal.SIGCHLD",
@@ -573,21 +588,21 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "signal.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "signal.CTRL_BREAK_EVENT",
         "signal.CTRL_C_EVENT",
         "signal.SIGBREAK",
     ),
     *_attributes(
         "socket.rst",
-        {"3.11": "-", "3.12": "-", "3.13": "-"},
+        {"3.11": "-", "3.12": "-", "3.13": "-", "3.14": "-", "3.15": "-"},
         "socket.LOCAL_CREDS",
         "socket.LOCAL_CREDS_PERSISTENT",
         "socket.SCM_CREDS2",
     ),
     *_attributes(
         "socket.rst",
-        {"3.11": "L", "3.12": "L", "3.13": "L"},
+        {"3.11": "L", "3.12": "L", "3.13": "L", "3.14": "L", "3.15": "L"},
         "socket.AF_ALG",
         "socket.AF_CAN",
         "socket.AF_PACKET",
@@ -619,41 +634,41 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "socket.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "socket.CMSG_LEN",
         "socket.CMSG_SPACE",
         "socket.sethostname",
     ),
     *_attributes(
         "socket.rst",
-        {"3.11": "LMW", "3.12": "LMW", "3.13": "LM"},
+        {"3.11": "LMW", "3.12": "LMW", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "socket.recv_fds",
         "socket.send_fds",
     ),
     *_attributes(
         "socket.rst",
-        {"3.11": "M", "3.12": "M", "3.13": "M"},
+        {"3.11": "M", "3.12": "M", "3.13": "M", "3.14": "M", "3.15": "M"},
         "socket.AF_LINK",
     ),
     *_attributes(
         "socket.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "socket.fromshare",
     ),
     *_attributes(
         "socket.rst",
-        {"3.12": "-", "3.13": "-"},
+        {"3.12": "-", "3.13": "-", "3.14": "-", "3.15": "-"},
         "socket.AF_DIVERT",
         "socket.PF_DIVERT",
     ),
     *_attributes(
         "socket.rst",
-        {"3.12": "L", "3.13": "L"},
+        {"3.12": "L", "3.13": "L", "3.14": "L", "3.15": "L"},
         "socket.ETH_P_ALL",
     ),
     *_attributes(
         "socket.rst",
-        {"3.12": "LM", "3.13": "LM"},
+        {"3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "socket.ETHERTYPE_ARP",
         "socket.ETHERTYPE_IP",
         "socket.ETHERTYPE_IPV6",
@@ -661,7 +676,7 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "socket.rst",
-        {"3.12": "W", "3.13": "W"},
+        {"3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "socket.AF_HYPERV",
         "socket.HVSOCKET_ADDRESS_FLAG_PASSTHRU",
         "socket.HVSOCKET_CONNECTED_SUSPEND",
@@ -677,31 +692,31 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "ssl.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "ssl.enum_certificates",
         "ssl.enum_crls",
     ),
     *_attributes(
         "stat.rst",
-        {"3.13": "M"},
+        {"3.13": "M", "3.14": "M", "3.15": "M"},
         "stat.SF_SUPPORTED",
         "stat.SF_SYNTHETIC",
     ),
     *_attributes(
         "sys.rst",
-        {"3.11": "-", "3.12": "-", "3.13": "-"},
+        {"3.11": "-", "3.12": "-", "3.13": "-", "3.14": "-", "3.15": "-"},
         "sys._emscripten_info",
         "sys.getandroidapilevel",
     ),
     *_attributes(
         "sys.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "sys.getdlopenflags",
         "sys.setdlopenflags",
     ),
     *_attributes(
         "sys.rst",
-        {"3.11": "W", "3.12": "W", "3.13": "W"},
+        {"3.11": "W", "3.12": "W", "3.13": "W", "3.14": "W", "3.15": "W"},
         "sys._enablelegacywindowsfsencoding",
         "sys.dllhandle",
         "sys.getwindowsversion",
@@ -709,25 +724,25 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "sys.rst",
-        {"3.12": "LM", "3.13": "LM"},
+        {"3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "sys.abiflags",
     ),
     *_attributes(
         "time.rst",
-        {"3.11": "-", "3.12": "-", "3.13": "-"},
+        {"3.11": "-", "3.12": "-", "3.13": "-", "3.14": "-", "3.15": "-"},
         "time.CLOCK_HIGHRES",
         "time.CLOCK_PROF",
         "time.CLOCK_UPTIME",
     ),
     *_attributes(
         "time.rst",
-        {"3.11": "L", "3.12": "L", "3.13": "L"},
+        {"3.11": "L", "3.12": "L", "3.13": "L", "3.14": "L", "3.15": "L"},
         "time.CLOCK_BOOTTIME",
         "time.CLOCK_TAI",
     ),
     *_attributes(
         "time.rst",
-        {"3.11": "LM", "3.12": "LM", "3.13": "LM"},
+        {"3.11": "LM", "3.12": "LM", "3.13": "LM", "3.14": "LM", "3.15": "LM"},
         "time.CLOCK_MONOTONIC",
         "time.CLOCK_MONOTONIC_RAW",
         "time.CLOCK_PROCESS_CPUTIME_ID",
@@ -743,14 +758,131 @@ PLATFORM_ONLY: Tuple[PlatformOnly, ...] = (
     ),
     *_attributes(
         "time.rst",
-        {"3.11": "M", "3.12": "M", "3.13": "M"},
+        {"3.11": "M", "3.12": "M", "3.13": "M", "3.14": "M", "3.15": "M"},
         "time.CLOCK_UPTIME_RAW",
     ),
     *_attributes(
         "time.rst",
-        {"3.13": "M"},
+        {"3.13": "M", "3.14": "M", "3.15": "M"},
         "time.CLOCK_MONOTONIC_RAW_APPROX",
         "time.CLOCK_UPTIME_RAW_APPROX",
+    ),
+    *_attributes(
+        "ctypes.rst",
+        {"3.14": "W", "3.15": "W"},
+        "ctypes.COMError",
+        "ctypes.CopyComPointer",
+    ),
+    *_attributes(
+        "codecs.rst",
+        {"3.14": "W", "3.15": "W"},
+        "encodings.win32_code_page_search_function",
+    ),
+    *_attributes(
+        "os.rst",
+        {"3.15": "L"},
+        "os.AT_NO_AUTOMOUNT",
+        "os.AT_STATX_DONT_SYNC",
+        "os.AT_STATX_FORCE_SYNC",
+        "os.AT_STATX_SYNC_AS_STAT",
+        "os.RWF_ATOMIC",
+        "os.RWF_DONTCACHE",
+        "os.STATX_ATIME",
+        "os.STATX_BASIC_STATS",
+        "os.STATX_BLOCKS",
+        "os.STATX_BTIME",
+        "os.STATX_CTIME",
+        "os.STATX_DIOALIGN",
+        "os.STATX_DIO_READ_ALIGN",
+        "os.STATX_GID",
+        "os.STATX_INO",
+        "os.STATX_MNT_ID",
+        "os.STATX_MNT_ID_UNIQUE",
+        "os.STATX_MODE",
+        "os.STATX_MTIME",
+        "os.STATX_NLINK",
+        "os.STATX_SIZE",
+        "os.STATX_SUBVOL",
+        "os.STATX_TYPE",
+        "os.STATX_UID",
+        "os.STATX_WRITE_ATOMIC",
+        "os.statx",
+        "os.statx_result",
+    ),
+    *_attributes(
+        "os.rst",
+        {"3.14": "L", "3.15": "L"},
+        "os.ST_APPEND",
+        "os.ST_IMMUTABLE",
+        "os.ST_MANDLOCK",
+        "os.ST_NOATIME",
+        "os.ST_NODEV",
+        "os.ST_NODIRATIME",
+        "os.ST_NOEXEC",
+        "os.ST_RELATIME",
+        "os.ST_SYNCHRONOUS",
+        "os.ST_WRITE",
+    ),
+    *_attributes(
+        "resource.rst",
+        {"3.15": "-"},
+        "resource.RLIMIT_NTHR",
+        "resource.RLIMIT_PIPEBUF",
+        "resource.RLIMIT_THREADS",
+        "resource.RLIMIT_UMTXP",
+    ),
+    *_attributes(
+        "select.rst",
+        {"3.14": "-", "3.15": "-"},
+        "select.devpoll",
+    ),
+    *_attributes(
+        "select.rst",
+        {"3.14": "L", "3.15": "L"},
+        "select.epoll",
+    ),
+    *_attributes(
+        "select.rst",
+        {"3.14": "M", "3.15": "M"},
+        "select.kevent",
+        "select.kqueue",
+    ),
+    *_attributes(
+        "select.rst",
+        {"3.14": "LM", "3.15": "LM"},
+        "select.poll",
+    ),
+    *_attributes(
+        "signal.rst",
+        {"3.14": "LW", "3.15": "LW"},
+        "signal.SIGCLD",
+    ),
+    *_attributes(
+        "signal.rst",
+        {"3.14": "LM", "3.15": "LM"},
+        "signal.SIGPROF",
+        "signal.SIGQUIT",
+        "signal.SIGSTOP",
+        "signal.SIGVTALRM",
+        "signal.SIGXCPU",
+    ),
+    *_attributes(
+        "socket.rst",
+        {"3.14": "L", "3.15": "L"},
+        "socket.BDADDR_BREDR",
+        "socket.BDADDR_LE_PUBLIC",
+        "socket.BDADDR_LE_RANDOM",
+        "socket.HCI_CHANNEL_CONTROL",
+        "socket.HCI_CHANNEL_LOGGING",
+        "socket.HCI_CHANNEL_MONITOR",
+        "socket.HCI_CHANNEL_RAW",
+        "socket.HCI_CHANNEL_USER",
+        "socket.HCI_DEV_NONE",
+    ),
+    *_attributes(
+        "socket.rst",
+        {"3.14": "-", "3.15": "-"},
+        "socket.SO_REUSEPORT_LB",
     ),
 )
 """Every module and module attribute the documentation restricts to some desktop platforms."""
@@ -790,7 +922,6 @@ STDLIB_ON_EVERY_VERSION: FrozenSet[str] = frozenset(
         "_collections",
         "_collections_abc",
         "_compat_pickle",
-        "_compression",
         "_contextvars",
         "_csv",
         "_ctypes",
@@ -993,9 +1124,6 @@ STDLIB_ON_EVERY_VERSION: FrozenSet[str] = frozenset(
         "socket",
         "socketserver",
         "sqlite3",
-        "sre_compile",
-        "sre_constants",
-        "sre_parse",
         "ssl",
         "stat",
         "statistics",
@@ -1049,12 +1177,13 @@ STDLIB_ON_EVERY_VERSION: FrozenSet[str] = frozenset(
         "zoneinfo",
     }
 )
-"""The top-level names in ``sys.stdlib_module_names`` of CPython 3.11.15, 3.12.13 and 3.13.7 alike."""
+"""The shared top-level names in CPython 3.11.15, 3.12.13, 3.13.7, 3.14.7 and 3.15.2."""
 
 STDLIB_ON_SOME_VERSIONS: Mapping[str, FrozenSet[str]] = {
     "3.11": frozenset(
         {
             "_bootsubprocess",
+            "_compression",
             "_crypt",
             "_msi",
             "_sha256",
@@ -1080,6 +1209,9 @@ STDLIB_ON_SOME_VERSIONS: Mapping[str, FrozenSet[str]] = {
             "smtpd",
             "sndhdr",
             "spwd",
+            "sre_compile",
+            "sre_constants",
+            "sre_parse",
             "sunau",
             "telnetlib",
             "uu",
@@ -1088,6 +1220,7 @@ STDLIB_ON_SOME_VERSIONS: Mapping[str, FrozenSet[str]] = {
     ),
     "3.12": frozenset(
         {
+            "_compression",
             "_crypt",
             "_msi",
             "_pydatetime",
@@ -1110,6 +1243,9 @@ STDLIB_ON_SOME_VERSIONS: Mapping[str, FrozenSet[str]] = {
             "pipes",
             "sndhdr",
             "spwd",
+            "sre_compile",
+            "sre_constants",
+            "sre_parse",
             "sunau",
             "telnetlib",
             "uu",
@@ -1121,6 +1257,7 @@ STDLIB_ON_SOME_VERSIONS: Mapping[str, FrozenSet[str]] = {
             "_android_support",
             "_apple_support",
             "_colorize",
+            "_compression",
             "_interpchannels",
             "_interpqueues",
             "_interpreters",
@@ -1133,6 +1270,68 @@ STDLIB_ON_SOME_VERSIONS: Mapping[str, FrozenSet[str]] = {
             "_suggestions",
             "_sysconfig",
             "_wmi",
+            "sre_compile",
+            "sre_constants",
+            "sre_parse",
+        }
+    ),
+    "3.14": frozenset(
+        {
+            "_android_support",
+            "_apple_support",
+            "_ast_unparse",
+            "_colorize",
+            "_hmac",
+            "_interpchannels",
+            "_interpqueues",
+            "_interpreters",
+            "_ios_support",
+            "_opcode_metadata",
+            "_py_warnings",
+            "_pydatetime",
+            "_pylong",
+            "_pyrepl",
+            "_remote_debugging",
+            "_sha2",
+            "_suggestions",
+            "_sysconfig",
+            "_types",
+            "_wmi",
+            "_zstd",
+            "annotationlib",
+            "compression",
+            "sre_compile",
+            "sre_constants",
+            "sre_parse",
+        }
+    ),
+    "3.15": frozenset(
+        {
+            "_android_support",
+            "_apple_support",
+            "_ast_unparse",
+            "_colorize",
+            "_hmac",
+            "_interpchannels",
+            "_interpqueues",
+            "_interpreters",
+            "_ios_support",
+            "_math_integer",
+            "_opcode_metadata",
+            "_py_warnings",
+            "_pydatetime",
+            "_pylong",
+            "_pyrepl",
+            "_remote_debugging",
+            "_sha2",
+            "_suggestions",
+            "_sysconfig",
+            "_types",
+            "_wmi",
+            "_zstd",
+            "annotationlib",
+            "compression",
+            "profiling",
         }
     ),
 }

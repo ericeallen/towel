@@ -34,6 +34,7 @@ import pytest
 
 from towel.diagnostics import Settings
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification import argument_ownership
 from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.semantic_safety import module_resolved_names
 
@@ -133,15 +134,26 @@ def test_module_names_are_read_bare_inside_a_same_file_helper(tmp_path: Path) ->
     assert _trace(tmp_path, driver) == expected
     final, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     assert applied == 1
+    if not argument_ownership._supported_runtime():
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     path.write_text(final)
     assert _trace(tmp_path, driver) == expected
-    assert set(_helper_signature(final).split(", ")) == {
-        "text",
-        "flag",
-        "strip",
-        "ending",
-        "_towel_owner",
-    }
+    if argument_ownership._supported_runtime():
+        assert set(_helper_signature(final).split(", ")) == {
+            "text",
+            "flag",
+            "strip",
+            "ending",
+            "_towel_owner",
+        }
+    else:
+        # The safe suffix stays useful while the whole-frame transfer is refused.
+        assert set(_helper_signature(final).split(", ")) == {
+            "ending",
+            "flag",
+            "names",
+            "normalized",
+        }
     assert "json.loads(normalized)" in final and "helper(normalized)" in final
     assert "lambda" not in final
 
@@ -207,14 +219,22 @@ def test_a_cross_file_helper_still_takes_module_names(tmp_path: Path) -> None:
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path / "pkg"), str(tmp_path / "safe-out"), progress="none"
     )
-    assert sum(count for count, _ in results.values()) > 0
+    if argument_ownership._supported_runtime():
+        assert sum(count for count, _ in results.values()) > 0
+    else:
+        assert results == {}
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        for filename in ("a.py", "b.py"):
+            assert (tmp_path / "pkg" / filename).read_bytes() == (
+                tmp_path / "safe-out" / filename
+            ).read_bytes()
     for filename in ("a.py", "b.py"):
         (tmp_path / "pkg" / filename).write_text((tmp_path / "safe-out" / filename).read_text())
     assert _trace(tmp_path, driver) == expected
     rewritten = (tmp_path / "safe-out" / "a.py").read_text() + (
         tmp_path / "safe-out" / "b.py"
     ).read_text()
-    assert "lambda: scale" in rewritten
+    assert ("lambda: scale" in rewritten) is argument_ownership._supported_runtime()
 
 
 def test_module_resolution_stops_at_the_function_and_its_enclosing_functions() -> None:

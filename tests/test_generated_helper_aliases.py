@@ -27,6 +27,7 @@ from typing import TypedDict
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.exceptions import RefactoringError
 from towel.unification.function_index import FunctionIndex
 from towel.unification.models import RefactoringProposal, Replacement
@@ -218,7 +219,12 @@ def test_cross_module_input_functions_keep_independent_bindings(tmp_path: Path, 
     results, reason = engine.refactor_directory_to_fixed_point(
         str(origin), str(output), progress="none"
     )
-    assert results and reason == "fixed_point"
+    assert reason == "fixed_point"
+    if lifetime_order_certified():
+        assert results
+    else:
+        assert results == {}
+        assert engine.run_report.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     after = subprocess.run(
         [sys.executable, "-B", "-c", program],
         cwd=output,
