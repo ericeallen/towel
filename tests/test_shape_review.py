@@ -181,3 +181,83 @@ def test_patch_forms_preserve_independent_callers(
     output = tmp_path / "out"
     dry(source, output, strict)
     assert observe(output, "import client") == before
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_helper_merge_reads_sibling_keyword_callers(tmp_path: Path, strict: bool) -> None:
+    """Review 4a: merging a selected file must not invalidate a sibling's keywords."""
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "sample.py").write_text(
+        "def __extracted_func_0(add_attribute, function):\n"
+        "    if callable(function):\n        return add_attribute(function)\n"
+        "    return add_attribute\n\n"
+        "def __extracted_func_1(actual_decorator, message):\n"
+        "    if callable(message):\n        return actual_decorator(message)\n"
+        "    return actual_decorator\n"
+    )
+    client = "import sample; print(sample.__extracted_func_1(actual_decorator=str, message=42))"
+    (source / "caller.py").write_text(client)
+    before = observe(source, client)
+    output = tmp_path / "out"
+    output.mkdir()
+    dry(source / "sample.py", output / "sample.py", strict)
+    assert observe(output, client) == before
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_src_package_scans_consumers_outside_import_root(tmp_path: Path, strict: bool) -> None:
+    """Review 4b: src is an import root, not evidence of complete consumer scope."""
+    package = tmp_path / "src" / "pkg"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "mod.py").write_text(REDIRECT_SOURCE)
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    client = (
+        "import pkg.mod; pkg.mod.total = lambda o, l: l.append(0); print(pkg.mod.report([1, 2]))"
+    )
+    (tests / "test_mod.py").write_text(client)
+    before = observe(package.parent, client)
+    output = tmp_path / "out" / "pkg"
+    output.mkdir(parents=True)
+    (output / "__init__.py").write_text("")
+    dry(package / "mod.py", output / "mod.py", strict)
+    assert observe(output.parent, client) == before == "amount=6\n"
+
+
+def test_complete_scope_includes_siblings_of_every_selected_file(tmp_path: Path) -> None:
+    """Review 4c: selecting a second file must not hide sibling consumers."""
+    from towel.unification.rebinding import rebinding_scope
+
+    paths = [tmp_path / "a.py", tmp_path / "b.py"]
+    for path in paths:
+        path.write_text(REDIRECT_SOURCE)
+    client = tmp_path / "client.py"
+    client.write_text("import a; a.total = lambda o, l: l.append(0)\n")
+    complete, sources = rebinding_scope([str(path) for path in paths], declared_complete=True)
+    assert complete and str(client) in sources
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_quick_preview_reads_sibling_rebindings(tmp_path: Path, strict: bool) -> None:
+    """Review 4d: quick preview must use dry's consumer scope for redirects."""
+    path = tmp_path / "original.py"
+    path.write_text(REDIRECT_SOURCE)
+    (tmp_path / "client.py").write_text(
+        "import original; original.total = lambda o, l: l.append(0)\n"
+    )
+    result = invoke(
+        [
+            "preview",
+            "--quick",
+            str(path),
+            "--strict" if strict else "--no-strict",
+            "--complete-scope" if strict else "--no-types",
+            "--progress",
+            "none",
+        ]
+    )
+    assert result.status == 0, result
+    assert "Reuse total" not in result.stdout
+    assert "Found 0" not in result.stdout

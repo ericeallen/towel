@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from ..renaming import inferred_rename_root
+from ..project_layout import find_project_root
 from ..analysis_sources import parse_analysis_source
 from ..source_files import python_sources
 from ..source_text import try_read_source
@@ -38,23 +39,27 @@ def rebinding_scope(
 
     Project metadata and package ancestry establish the same scope as helper
     renaming. Without an anchor only the explicitly analyzed program is known.
-    A declared complete scope also includes siblings of a single file target.
+    Every selection includes sibling consumers, even without a complete scope.
     """
-    roots = {
-        inferred_rename_root(
-            Path(path),
-            project_root=program_root
-            or (project_roots[path] if project_roots is not None else None),
-        )
+    # Completeness belongs to the original project, not to a temporary
+    # staging directory whose name/layout may hide an unanchored src root.
+    project_scopes = {
+        path: project_roots[path] if project_roots is not None else find_project_root(Path(path))
         for path in paths
+    }
+    roots = {
+        inferred_rename_root(Path(path), project_root=root) for path, root in project_scopes.items()
     }
     complete = declared_complete or bool(roots and None not in roots)
     expanded = set(Path(path).resolve() for path in paths)
-    scan_roots = {root for root in roots if root is not None}
+    scan_roots = set(project_scopes.values())
+    # src is an import root. Its sibling tests and scripts are consumers too,
+    # even when no packaging metadata establishes completeness.
+    scan_roots.update(root.parent for root in project_scopes.values() if root.name == "src")
     if program_root is not None:
         scan_roots.add(program_root)
-    if declared_complete and len(paths) == 1:
-        scan_roots.add(Path(paths[0]).parent)
+    if declared_complete:
+        scan_roots.update(Path(path).parent for path in paths)
     sources: dict[str, str | None] = {}
     for root in sorted(scan_roots):
         try:

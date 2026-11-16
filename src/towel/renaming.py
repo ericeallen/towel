@@ -489,7 +489,7 @@ def inferred_rename_root(target: Path, *, project_root: Path | None = None) -> P
     ):
         return root
     directory = target if target.is_dir() else target.parent
-    return root if is_package_dir(directory) else None
+    return root if root.name != "src" and is_package_dir(directory) else None
 
 
 def plan_renames(

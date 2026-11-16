@@ -488,7 +488,12 @@ class FixedPointDrivers(Materialization):
         self, paths: Sequence[str], remaining: Optional[int] = None
     ) -> Dict[str, List[str]]:
         """Finish the run with one body per equal generated module helper group."""
-        _, program = rebinding_scope(paths, declared_complete=self.complete_scope)
+        _, program = rebinding_scope(
+            paths,
+            declared_complete=self._declared_complete_scope,
+            program_root=self._output_origin[1] if self._output_origin is not None else None,
+            project_roots={path: self._project_root_in_run(path) for path in paths},
+        )
         merged: Dict[str, List[str]] = {}
         for path in paths:
             if remaining is not None and remaining <= 0:
