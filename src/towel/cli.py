@@ -1170,9 +1170,13 @@ def _generated_code_formatter(
             return
         reported.add(choice.note)
         if choice.tool is None:
+            remedy = (
+                "Configure Ruff or Black in the project to format generated code."
+                if choice.note == "no formatter configured"
+                else 'Install the format extra (pip install "code-towel[format]") to format it.'
+            )
             print(
-                f"Note: {choice.note}, so generated code is inserted unformatted. "
-                'Install the format extra (pip install "code-towel[format]") to format it.',
+                f"Note: {choice.note}, so generated code is inserted unformatted. {remedy}",
                 file=sys.stderr,
             )
         elif "not installed" in choice.note:

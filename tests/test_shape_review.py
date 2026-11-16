@@ -330,3 +330,14 @@ def test_ruff_preserves_multiline_arguments_at_project_indentation(
     assert "formatter changed its code" not in result.stdout
     assert "__extracted_func_0" in (output / "mod.py").read_text()
     assert observe(output, driver) == before
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_unconfigured_formatter_note_offers_configuration(tmp_path: Path, strict: bool) -> None:
+    """Review 6b: installing an optional formatter does not configure the project."""
+    source = tmp_path / "mod.py"
+    source.write_text(REDIRECT_SOURCE)
+    result = dry(source, tmp_path / "out.py", strict)
+    assert "no formatter configured" in result.stderr
+    assert "Configure Ruff or Black" in result.stderr
+    assert "Install the format extra" not in result.stderr
