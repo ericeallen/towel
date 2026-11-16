@@ -2144,10 +2144,9 @@ itself when one of these holds for it at every call site.
    not covered by the assumptions: they may change what a later read gives,
    so they end the prefix, and an expression that does one is not plain.
    An `if` that only assigns names does not end such a
-   prefix. Neither does entering a `try` whose every handler names a builtin
-   exception class that cannot catch what a plain expression raises
-   (`except TimeoutError`, not `except Exception`, `except KeyError` or
-   `except RuntimeError`), and that has no `finally`. An expression that calls
+   prefix. Entering a `try` does: an expression with no side effects may
+   still raise anything (a property raising `OSError`), and raised at the
+   call it would escape a handler that caught it in the block. An expression that calls
    something is passed by value where no earlier statement of the helper can
    run code or fail, and its own statement has done nothing before it but
    read attributes and names that are sure to be bound

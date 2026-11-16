@@ -1309,40 +1309,6 @@ def _stable_names_bound_for(module: ast.Module, statement: ast.stmt) -> FrozenSe
 _STABLE_BOUND_FOR: "WeakKeyDictionary[ast.AST, Dict[int, FrozenSet[str]]]" = WeakKeyDictionary()
 
 
-def unshadowed_names(module: ast.Module, names: AbstractSet[str]) -> FrozenSet[str]:
-    """Of ``names``, those no code of ``module`` binds in any scope, so that each means a builtin.
-
-    None when the module imports with ``*``, which may bind anything.
-    """
-    bound: FrozenSet[str] = memoized_per_node(_NAMES_BOUND_ANYWHERE, module, _names_bound_anywhere)
-    return frozenset() if "*" in bound else frozenset(names) - bound
-
-
-_NAMES_BOUND_ANYWHERE: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
-
-
-def _names_bound_anywhere(module: ast.AST) -> FrozenSet[str]:
-    bound: Set[str] = set()
-    for node in ast.walk(module):
-        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
-            bound.add(node.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            bound.add(node.name)
-        elif isinstance(node, ast.arg):
-            bound.add(node.arg)
-        elif isinstance(node, ast.alias):
-            bound.add("*" if node.name == "*" else (node.asname or node.name.split(".")[0]))
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            bound.add(node.name)
-        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
-            bound.add(node.name)
-        elif isinstance(node, ast.MatchMapping) and node.rest:
-            bound.add(node.rest)
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            bound.update(node.names)
-    return frozenset(bound)
-
-
 def call_site_names(
     function: FunctionNode,
     block: Sequence[ast.stmt],

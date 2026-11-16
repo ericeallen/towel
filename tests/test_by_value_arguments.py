@@ -36,9 +36,8 @@ from typing import List
 
 import pytest
 
-from towel.unification.semantic_safety import stable_module_names, unshadowed_names
+from towel.unification.semantic_safety import stable_module_names
 from towel.unification.thunk_inlining import (
-    UNRELATED_HANDLERS,
     _evaluated_at_most_once,
     _plain,
 )
@@ -98,17 +97,21 @@ def test_strict_mode_still_defers_a_module_level_function(tmp_path: Path) -> Non
     assert same
 
 
-def test_a_differing_method_of_an_argument_is_passed_as_a_bound_method(tmp_path: Path) -> None:
+def test_a_differing_method_of_an_argument_is_passed_as_a_function_of_nothing(
+    tmp_path: Path,
+) -> None:
     """Audit case 21 (engine map D4): 1.949 declined it as ``forwarded_callee``.
 
-    The lookup is the first thing the block does, inside a ``try`` whose
-    handlers (``TimeoutError``, ``ConnectionError``) cannot catch what a
-    lookup raises, so the bound method is passed by value.
+    The lookup is the first thing the block does, but inside a ``try``: a
+    property may raise what the handlers catch (review of lane ``byvalue``,
+    defect 5), so the helper looks the method up where the block did. Never
+    ``lambda *args, **kwargs``.
     """
     generated, same = refactored_scenario(tmp_path, "by_value/try_log_callee")
-    assert "client.get_profile," in generated and "client.get_preferences," in generated
-    assert "lambda" not in generated
-    assert "response = __param_0(user_id)" in generated
+    assert "lambda: client.get_profile" in generated
+    assert "lambda: client.get_preferences" in generated
+    assert "response = __param_0()(user_id)" in generated
+    assert "**kwargs" not in generated
     assert same
 
 
@@ -882,37 +885,65 @@ except AttributeError as error:
 
 
 @pytest.mark.parametrize(
-    "handled, by_value",
-    [
-        ("TimeoutError", True),
-        ("(TimeoutError, OSError)", True),
-        ("AttributeError", False),
-        ("Exception", False),
-        ("RuntimeError", False),
-        ("NotImplementedError", False),
-    ],
+    "handled", ["TimeoutError", "(TimeoutError, OSError)", "AttributeError", "Exception"]
 )
-def test_a_lookup_leaves_a_try_only_past_handlers_that_cannot_catch_it(
-    tmp_path: Path, handled: str, by_value: bool
-) -> None:
-    """Raised at the call, an ``AttributeError`` would escape the handler that caught it before."""
+def test_a_lookup_never_leaves_its_try(tmp_path: Path, handled: str) -> None:
+    """Raised at the call, what the lookup raises would escape the handler that caught it before."""
     generated, same = refactored(tmp_path, LOOKUP_IN_A_TRY.replace("HANDLED", handled))
+    assert "lambda: client.get_profile" in generated
+    assert "response = __param_0()(user_id)" in generated
     assert same
-    if by_value:
-        assert "(client.get_profile, user_id)" in generated and "lambda" not in generated.replace(
-            "lambda user", ""
-        )
-    else:
-        assert "lambda: client.get_profile" in generated
-        assert "response = __param_0()(user_id)" in generated
 
 
-def test_a_handler_named_like_a_builtin_keeps_the_lambda(tmp_path: Path) -> None:
-    """A module that binds ``TimeoutError`` itself may mean any class by it."""
-    source = "class TimeoutError(AttributeError):\n    pass\n\n\n" + LOOKUP_IN_A_TRY.replace(
-        "HANDLED", "TimeoutError"
-    )
-    generated, same = refactored(tmp_path, source)
+PROPERTY_RAISING_OSERROR = """\
+class Client:
+    @property
+    def get_profile(self):
+        raise OSError("unavailable")
+
+    @property
+    def get_preferences(self):
+        raise OSError("unavailable")
+
+
+def fetch_profile(client, user_id):
+    try:
+        response = client.get_profile(user_id)
+    except OSError:
+        print("no such call", user_id)
+        return None
+    except ConnectionError as exc:
+        print("failed", user_id, exc)
+        return None
+    return response["data"]
+
+
+def fetch_preferences(client, user_id):
+    try:
+        response = client.get_preferences(user_id)
+    except OSError:
+        print("no such call", user_id)
+        return None
+    except ConnectionError as exc:
+        print("failed", user_id, exc)
+        return None
+    return response["data"]
+
+
+try:
+    print(fetch_profile(Client(), 7), fetch_preferences(Client(), 8))
+except OSError:
+    print("escaped OSError")
+"""
+
+
+def test_a_property_that_raises_what_a_handler_catches_stays_in_its_try(tmp_path: Path) -> None:
+    """Review of lane ``byvalue``, defect 5: a property without side effects may raise ``OSError``.
+
+    The block's ``except OSError`` handles it; read at the call, it escaped.
+    Plain values have no side effects; nothing says which exceptions they raise.
+    """
+    generated, same = refactored(tmp_path, PROPERTY_RAISING_OSERROR)
     assert "lambda: client.get_profile" in generated
     assert same
 
@@ -1105,32 +1136,6 @@ def later():
 del later
 """)
     assert stable_module_names(module) == {"json", "os", "D", "keep", "swapper", "Kept"}
-
-
-def test_a_builtin_name_means_the_builtin_only_where_no_code_binds_it() -> None:
-    names = frozenset({"TimeoutError", "OSError"})
-    assert unshadowed_names(ast.parse("def f(OSError):\n    pass\n"), names) == {"TimeoutError"}
-    assert unshadowed_names(ast.parse("from compat import *\n"), names) == frozenset()
-    assert unshadowed_names(ast.parse("x = 1\n"), names) == names
-
-
-def test_unrelated_handlers_catch_nothing_a_plain_expression_raises() -> None:
-    assert {"TimeoutError", "ConnectionError", "OSError", "FileNotFoundError"} <= UNRELATED_HANDLERS
-    assert not UNRELATED_HANDLERS & {
-        "Exception",
-        "BaseException",
-        "AttributeError",
-        "KeyError",
-        "LookupError",
-        "TypeError",
-        "ValueError",
-        "ZeroDivisionError",
-        "RuntimeError",
-        "NotImplementedError",
-        "ReferenceError",
-        "MemoryError",
-        "DeprecationWarning",
-    }
 
 
 def _expression(text: str) -> ast.expr:

@@ -51,13 +51,13 @@ value"). ``ValuePolicy`` carries what it assumes, and three more rules follow
 from it:
 
 - an expression with no call in it (``_plain``: attribute chains,
-  subscripts, operators, comparisons, f-strings, displays) is passed by
+  subscripts, operators, comparisons, displays) is passed by
   value when the helper evaluates it exactly once on every path and every
   step before it is quiet (``_quiet``): none calls anything, stores to an
   attribute or a subscript, deletes, or rebinds a name the expression reads,
-  so none can change what the expression gives. A ``try`` whose handlers
-  cannot catch what such an expression raises does not end the prefix, and
-  neither does an ``if`` that only assigns names;
+  so none can change what the expression gives. An ``if`` that only assigns
+  names does not end the prefix; a ``try`` does, since what the expression
+  raises at the call would escape a handler that caught it in the block;
 - an expression that calls something is passed by value, whatever its
   result, where no earlier statement of the helper can run code or fail
   and its own statement has done nothing before it but read attributes
@@ -73,7 +73,6 @@ from it:
 from __future__ import annotations
 
 import ast
-import builtins
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
@@ -125,40 +124,6 @@ Step = Union[ast.AST, _Operation]
 """One step of evaluation: a node, once its operands are evaluated, or an operation on a value."""
 
 
-_UNRELATED_FAILURES = (
-    OSError,
-    EOFError,
-    ImportError,
-    AssertionError,
-    BufferError,
-    StopIteration,
-    StopAsyncIteration,
-    SyntaxError,
-    SystemExit,
-    KeyboardInterrupt,
-    GeneratorExit,
-)
-
-UNRELATED_HANDLERS: FrozenSet[str] = frozenset(
-    name
-    for name, value in vars(builtins).items()
-    if isinstance(value, type) and issubclass(value, _UNRELATED_FAILURES)
-)
-"""Builtin exception classes that a plain expression does not raise.
-
-Reading an attribute, subscripting, comparing and arithmetic fail with
-``AttributeError``, a ``LookupError``, ``TypeError``, an ``ArithmeticError``,
-``ValueError`` or ``NameError``; an abstract property raises
-``NotImplementedError``, a dead weak proxy ``ReferenceError``, a deprecated
-attribute a warning that ``-W error`` turns into an exception, and a large
-string ``MemoryError``. The classes listed here, and their subclasses, are
-none of those and no base of them: ``except TimeoutError`` cannot catch what
-``client.get_profile`` raises, so that lookup may leave the ``try``.
-``except Exception``, ``except KeyError`` or ``except RuntimeError`` might,
-and such a ``try`` keeps its thunks.
-"""
-
-
 @dataclass(frozen=True)
 class ValuePolicy:
     """What a mode lets this pass assume when it turns a thunk back into a value.
@@ -176,8 +141,6 @@ class ValuePolicy:
     those it is sure to resolve, less module names a callee may rebind between reads."""
     renames: Sequence[Mapping[str, str]] = ()
     """Per block, the hygienic renames of its names to the helper's spelling."""
-    unrelated_handlers: FrozenSet[str] = frozenset()
-    """The names of ``UNRELATED_HANDLERS`` that mean the builtin where the helper stands."""
     certain_names: FrozenSet[str] = frozenset()
     """Relaxed: module-level and builtin names every site is sure to resolve, which the
     helper, standing in the sites' module, therefore reads without failing."""
@@ -292,7 +255,6 @@ class _PrefixScan:
         self.pure = True
         self.lookups = True
         self.rebound: Set[str] = set()
-        self.in_try = False
         self._own_names = _parameter_names(helper.args) | {
             node.id
             for node in ast.walk(helper)
@@ -307,15 +269,6 @@ class _PrefixScan:
             if isinstance(statement, (ast.Global, ast.Nonlocal, ast.Pass)):
                 continue
             if self.policy.plain_values:
-                if isinstance(statement, ast.Try) and self._handlers_unrelated(statement):
-                    # Entering a ``try`` runs nothing. What a plain expression
-                    # raises passes these handlers by, so it may be raised at
-                    # the call instead; what follows the ``try`` is reached
-                    # from a handler too.
-                    outer, self.in_try = self.in_try, True
-                    self.block(statement.body)
-                    self.in_try = outer
-                    return False
                 bound = _quiet_branch(statement)
                 if bound is not None:
                     self.pure = self.lookups = False
@@ -329,17 +282,6 @@ class _PrefixScan:
                 if not self._step(step):
                     return False
             if not complete:
-                return False
-        return True
-
-    def _handlers_unrelated(self, statement: ast.Try) -> bool:
-        """Whether no handler of ``statement`` can catch what a plain expression raises."""
-        if statement.finalbody or not statement.handlers:
-            return False
-        usable = self.policy.unrelated_handlers - self._own_names
-        for handler in statement.handlers:
-            caught = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
-            if not all(isinstance(kind, ast.Name) and kind.id in usable for kind in caught):
                 return False
         return True
 
@@ -377,7 +319,7 @@ class _PrefixScan:
         # prefix's own binding of it; strict mode's prefix was never asked.
         movable = not repeated and not (self.policy.plain_values and self._reads_rebound(name))
         if movable:
-            if first and not self.in_try:
+            if first:
                 if self.policy.any_result or _immutable_thunk_results(self.substitution, name):
                     # Strict mode keeps every inlined thunk in signature order.
                     unordered = plain and self.policy.plain_values

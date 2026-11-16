@@ -82,10 +82,9 @@ from .semantic_safety import (
     module_resolved_names,
     rebound_external_names,
     stable_module_names,
-    unshadowed_names,
     walk_own_scope,
 )
-from .thunk_inlining import UNRELATED_HANDLERS, ValuePolicy
+from .thunk_inlining import ValuePolicy
 from .if_binding_transfer import IfBindingTransfer, IfTransferSite, certify_if_binding_transfer
 from .return_source_uses import return_statement_usages
 from .statement_facts import loaded_names, memoized_per_node, statement_facts
@@ -851,11 +850,9 @@ class BlockAnalysis(EngineState):
         Each site gives its function, block, analyzer and the names its call
         resolves. A name is passed by value wherever the helper used it only
         if no callee can rebind it meanwhile (``_rebindable_module_names``).
-        A builtin exception class is one only where no module involved binds
-        its name. A name every site resolves is one the helper reads without
+        A name every site resolves is one the helper reads without
         failing, when it stands in the sites' one module.
         """
-        handlers = UNRELATED_HANDLERS
         by_value: List[FrozenSet[str]] = []
         # The helper of sites in one module stands in that module and reads
         # its names as they do.
@@ -867,18 +864,11 @@ class BlockAnalysis(EngineState):
                 module_resolved_names(function, analyzer, read), analyzer
             )
             by_value.append(frozenset(available) - rebindable)
-            module = analyzer.analyzed_tree
-            handlers = (
-                unshadowed_names(module, handlers)
-                if isinstance(module, ast.Module)
-                else frozenset()
-            )
         return ValuePolicy(
             any_result=not self.strict,
             plain_values=not self.strict,
             available=tuple(by_value),
             renames=tuple(renames),
-            unrelated_handlers=handlers if not self.strict else frozenset(),
             certain_names=certain if one_module and not self.strict else frozenset(),
         )
 
