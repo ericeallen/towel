@@ -67,11 +67,7 @@ from it:
   and of nothing else.
   It is not moved past a subscript, an operator or a comparison, whose
   failures programs catch, or past a name that may be unbound, and it
-  never leaves a ``try``;
-- a concatenation with a string literal, or a sign applied to a name
-  (``_simple``), is passed by value anywhere, provided the block reads the
-  names it reads nowhere else (``_Translation``): nothing in the block
-  then tests, validates or changes its operands before it.
+  never leaves a ``try``.
 """
 
 from __future__ import annotations
@@ -457,13 +453,12 @@ def _movable_anywhere(
       time it runs, and a call makes one too. Strict mode keeps it deferred:
       what the block adds to the object (``consume([0])`` appending one with
       a finalizer) would live until the helper returns, not until the
-      statement that used it ends;
-    - under ``plain_values``, a simple computation (``_simple``) on names
-      the block mentions nowhere else.
+      statement that used it ends.
+
+    Anything else that can fail is evaluated where the helper evaluates it,
+    unless the prefix scan finds it there exactly once on every path.
     """
     movable: List[str] = []
-    translation = _Translation(substitution, policy)
-    mentioned: Optional[Set[str]] = None
     for name, bound in substitution.function_params.items():
         expressions = substitution.param_expressions.get(name, ())
         if bound or not expressions:
@@ -481,13 +476,6 @@ def _movable_anywhere(
                 if once is None:
                     once = _single_use(helper, name) and _evaluated_at_most_once(helper, name)
                 if once:
-                    continue
-                break
-            if policy.plain_values and _simple(expression, available):
-                if mentioned is None:
-                    mentioned = _names_mentioned(helper)
-                elsewhere = translation.at_site(index, mentioned - {name})
-                if not (elsewhere & loaded_names(expression)):
                     continue
             break
         else:
@@ -527,49 +515,6 @@ def _constant_element(expression: ast.expr) -> bool:
     if isinstance(expression, ast.UnaryOp):
         return is_eagerly_evaluable(expression, frozenset())
     return isinstance(expression, ast.Constant) or _constant_display(expression)
-
-
-def _simple(expression: ast.expr, available: AbstractSet[str]) -> bool:
-    """Whether ``expression`` computes an immutable value from values that must be immutable.
-
-    Two forms. ``"text " + name`` (any chain of ``+`` holding a string or
-    bytes literal, over constants and names the site resolves): it gives a
-    value only if every operand is a string, strings do not change, and the
-    result is a new string. ``-name`` (also ``+`` and ``~``): a number's.
-    Either raises ``TypeError`` when an operand is of another type, so the
-    caller also requires that nothing else in the block reads the operands,
-    and so that nothing in it guards the computation (``if lang is not
-    None``). ``not name`` is left out: the truth of a list or a dict changes
-    as it is filled.
-    """
-    if is_eagerly_evaluable(expression, available):
-        return True
-    if isinstance(expression, ast.Tuple):
-        return all(_simple(element, available) for element in expression.elts)
-    if isinstance(expression, ast.UnaryOp):
-        return isinstance(expression.op, (ast.USub, ast.UAdd, ast.Invert)) and is_eagerly_evaluable(
-            expression.operand, available
-        )
-    operands = _concatenated(expression)
-    return (
-        len(operands) > 1
-        and any(
-            isinstance(operand, ast.Constant) and isinstance(operand.value, (str, bytes))
-            for operand in operands
-        )
-        and all(
-            isinstance(operand, (ast.Constant, ast.Name))
-            and is_eagerly_evaluable(operand, available)
-            for operand in operands
-        )
-    )
-
-
-def _concatenated(expression: ast.expr) -> List[ast.expr]:
-    """The operands of a chain of ``+``, left to right; the expression itself when it is not one."""
-    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
-        return [*_concatenated(expression.left), *_concatenated(expression.right)]
-    return [expression]
 
 
 _NOT_PLAIN = (
@@ -659,16 +604,6 @@ def _quiet_branch(statement: ast.stmt) -> Optional[FrozenSet[str]]:
         elif not isinstance(current, ast.Pass):
             return None
     return frozenset(bound)
-
-
-def _names_mentioned(helper: ast.FunctionDef) -> Set[str]:
-    """Every name the helper's body reads, binds or deletes."""
-    return {
-        node.id
-        for statement in helper.body
-        for node in ast.walk(statement)
-        if isinstance(node, ast.Name)
-    }
 
 
 def _evaluated_at_most_once(helper: ast.FunctionDef, name: str) -> bool:

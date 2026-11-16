@@ -2157,14 +2157,13 @@ itself when one of these holds for it at every call site.
    so does a call. This rests on the first assumption, and strict mode keeps
    the lambda: what the block adds to the list (`consume([0])` appending an
    object with a finalizer) would otherwise live until the helper returns.
-4. *It is a concatenation with a string literal, or a sign applied to a name,
-   and the block reads its operands nowhere else.* `'pybabel init -l ' + lang`
-   gives a value only if `lang` is a string, strings do not change, and a
-   block that never mentions `lang` otherwise neither tests it nor hands it to
-   anything. This case is not among the two assumptions; it is the least that
-   passes the audit's own example by value, and it is listed below with what
-   it gives up. `not name` is left out: the truth of a list changes as the
-   list is filled.
+
+A concatenation such as `'pybabel init -l ' + lang` meets the same test as
+any other expression and has no rule of its own: it can fail (`TypeError`
+when `lang` is `None`), so it keeps its lambda where the block evaluates it
+after a call, under `and`, `or` or a condition, or in a loop. The audit's
+microblog example is such a case: the block runs the extract command and
+may raise before it builds the string.
 
 **A lambda is kept** where none of those holds, which is where it is
 necessary: the expression contains a call, `await` or `yield` that would
@@ -2222,9 +2221,6 @@ called as `__param_0(value)` would read it, unbound, when `flag` is false.
 - *Two failures in one block.* If two plain expressions of one block would
   both fail, the one passed by value fails first. Each failure alone is raised
   as before, in the same place relative to every call.
-- *A concatenation whose operand is not a string* raises its `TypeError` at
-  the call, ahead of what the block did before it, in a block that never
-  tested the operand.
 
 A program that depends on any of these needs `--strict`.
 

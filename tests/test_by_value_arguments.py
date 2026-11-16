@@ -40,7 +40,6 @@ from towel.unification.thunk_inlining import (
     UNRELATED_HANDLERS,
     _evaluated_at_most_once,
     _plain,
-    _simple,
 )
 from tests.test_builtins_across_modules import (
     _passes_join,
@@ -155,20 +154,91 @@ except RuntimeError as error:
 """
 
 
-def test_the_microblog_command_string_is_passed_by_value(tmp_path: Path) -> None:
+@pytest.mark.parametrize("strict", [False, True])
+def test_the_microblog_command_string_follows_a_call_and_stays_a_lambda(
+    tmp_path: Path, strict: bool
+) -> None:
     """The newcomer's real project (``microblog-no-extras.diff``): ``lambda: 'pybabel init …' + lang``.
 
-    A concatenation with a string literal gives a value only from strings,
-    and the block reads ``lang`` nowhere else.
+    Review of lane ``byvalue``, defect 3: the string was passed by value
+    because the block reads ``lang`` nowhere else. But the block runs the
+    extract command first and raises if it fails; with ``init(None)``, by
+    value raises ``TypeError`` at the call instead, before that command.
+    The concatenation follows a call and a ``raise``, so it stays a lambda.
     """
-    generated, same = refactored(tmp_path, MICROBLOG)
-    assert helper_calls(generated) == [
-        "__extracted_func_0('pybabel init -i messages.pot -d app/translations -l ' + lang,"
-        " 'init command failed')",
-        "__extracted_func_0('pybabel update -i messages.pot -d app/translations',"
-        " 'update command failed')",
-    ]
-    assert "lambda" not in generated
+    generated, same = refactored(
+        tmp_path, MICROBLOG.replace('init("fail")', "init(None)"), strict=strict
+    )
+    assert "lambda: 'pybabel init -i messages.pot -d app/translations -l ' + lang" in generated
+    assert same
+
+
+CONCATENATION_IN_A_LOOP = """\
+def first(lang):
+    results = []
+    for item in range(2):
+        results.append("prefix-" + lang)
+    print("collected", len(results))
+    return results
+
+
+def second(lang):
+    results = []
+    for item in range(2):
+        results.append(lang)
+    print("collected", len(results))
+    return results
+
+
+values = first("suffix")
+print(values, second("x"))
+print("same object", values[0] is values[1])
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_concatenation_in_a_loop_stays_a_lambda(tmp_path: Path, strict: bool) -> None:
+    """Review of lane ``byvalue``, defect 3: by value, both iterations appended one string object.
+
+    The loop makes a new string each time; ``values[0] is values[1]`` is
+    false before and must stay so.
+    """
+    generated, same = refactored(tmp_path, CONCATENATION_IN_A_LOOP, strict=strict)
+    assert "results.append(__param_0())" in generated
+    assert same
+
+
+SHORT_CIRCUITED_CONCATENATION = """\
+def check_tagged(enabled, label, x):
+    print("checking")
+    if enabled and x > 0 and ("tag:" + label) != "skip":
+        return 1
+    print("rejected")
+    return 0
+
+
+def check_titled(enabled, title, x):
+    print("checking")
+    if enabled and x > 0 and title != "skip":
+        return 1
+    print("rejected")
+    return 0
+
+
+print(check_tagged(False, None, 4), check_titled(False, None, 4))
+print(check_tagged(True, "ok", 4), check_titled(True, "ok", 4))
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_short_circuited_concatenation_stays_a_lambda(tmp_path: Path, strict: bool) -> None:
+    """Review of lane ``expressions``, defect 1: ``"tag:" + label`` under ``and`` was hoisted.
+
+    With ``enabled`` false the block never builds the string; at the call,
+    ``"tag:" + None`` raises ``TypeError``.
+    """
+    generated, same = refactored(tmp_path, SHORT_CIRCUITED_CONCATENATION, strict=strict)
+    assert "lambda: 'tag:' + label" in generated
     assert same
 
 
@@ -812,12 +882,7 @@ print(init("de", []), update("de", []), init(None, []), update(None, []))
 
 
 def test_a_concatenation_the_block_guards_stays_a_lambda(tmp_path: Path) -> None:
-    """``if lang: run("init -l " + lang)``: at the call, ``"init -l " + None`` raises.
-
-    The block reads ``lang`` elsewhere, so something in it may be testing
-    the operand; the microblog block, which does not, passes its string by
-    value.
-    """
+    """``if lang: run("init -l " + lang)``: at the call, ``"init -l " + None`` raises."""
     generated, same = refactored(tmp_path, GUARDED_CONCATENATION)
     assert "lambda: 'init -l ' + lang" in generated
     assert same
@@ -1006,27 +1071,6 @@ def test_unrelated_handlers_catch_nothing_a_plain_expression_raises() -> None:
 
 def _expression(text: str) -> ast.expr:
     return ast.parse(text, mode="eval").body
-
-
-@pytest.mark.parametrize(
-    "text, simple",
-    [
-        ("'init -l ' + lang", True),
-        ("prefix + 'x' + lang", True),
-        ("b'x' + lang", True),
-        ("-lang", True),
-        ("('a' + lang, 1)", True),
-        ("lang + other", False),  # lists concatenate too, and lists change
-        ("'x' * lang", False),
-        ("'%s' % lang", False),  # formats any object
-        ("not lang", False),  # the truth of a container changes as it is filled
-        ("'x' + lang.name", False),
-        ("'x' + unknown", False),
-        ("'x' + f(lang)", False),
-    ],
-)
-def test_simple_computations_are_literal_concatenations_and_signs(text: str, simple: bool) -> None:
-    assert _simple(_expression(text), frozenset({"lang", "prefix", "other"})) is simple
 
 
 @pytest.mark.parametrize(
