@@ -47,27 +47,15 @@ That is the whole of strict mode's rule.
 
 Relaxed mode passes arguments by value and keeps a thunk only where one is
 clearly necessary (docs/DECISIONS.md, "Relaxed mode passes arguments by
-value"). ``ValuePolicy`` carries what it assumes, and three more rules follow
-from it:
-
-- an expression with no call in it (``_plain``: attribute chains,
-  subscripts, operators, comparisons, displays) is passed by
-  value when the helper evaluates it exactly once on every path and every
-  step before it is quiet (``_quiet``): none calls anything, stores to an
-  attribute or a subscript, deletes, or rebinds a name the expression reads,
-  so none can change what the expression gives. An ``if`` that only assigns
-  names does not end the prefix; a ``try`` does, since what the expression
-  raises at the call would escape a handler that caught it in the block;
-- an expression that calls something is passed by value, whatever its
-  result, where no earlier statement of the helper can run code or fail
-  and its own statement has done nothing before it but read attributes
-  and names that are sure to be bound
-  (``db.paginate(current_user.posts(), …)``): the call is evaluated ahead
-  of those reads, such as the lookup of the method it is an argument of,
-  and of nothing else.
-  It is not moved past a subscript, an operator or a comparison, whose
-  failures programs catch, or past a name that may be unbound, and it
-  never leaves a ``try``.
+value"). ``ValuePolicy`` carries what it assumes. The prefix rule is the
+same, with three differences: a thunk's result need not be immutable
+(``any_result``); a module-level or builtin name every site resolves is read
+without failing (``certain_names``); and an ``if`` whose tests and values
+can neither fail nor run code, and which only assigns names, does not end
+the prefix (``_quiet_branch``). Every site's expression must read only names
+its call site is sure to resolve. An expression, with or without a call, is
+never moved past a step that can fail: plain values have no side effects,
+but they can raise, and the exception the program raises must not change.
 """
 
 from __future__ import annotations
@@ -163,42 +151,21 @@ def inline_leading_thunks(
     thunk's result was a temporary). Relaxed mode adds the module
     docstring's rules.
 
-    A call's arguments are evaluated left to right, so a thunk that calls
-    something is inlined only while it follows, in the signature, every
-    thunk inlined before it, and an expression without a call only while it
-    follows every such thunk. Returns the inlined parameter names;
-    ``helper`` and ``substitution`` are updated in place.
+    A call's arguments are evaluated left to right, so a thunk is inlined
+    only while it follows, in the signature, every thunk inlined before it:
+    each may fail or run code, and must do so in the block's order.
+    Returns the inlined parameter names; ``helper`` and ``substitution``
+    are updated in place.
     """
     inlined: List[str] = []
-    last_call = -1
-    calls_allowed = True
-    for candidate in _leading_candidates(helper, substitution, policy):
-        position = param_order[candidate.name]
-        if candidate.calls:
-            if not calls_allowed or any(position <= param_order[name] for name in inlined):
-                break
-            last_call = position
-        elif position <= last_call:
-            # It stays a thunk, a step that can raise, ahead of what follows.
-            calls_allowed = False
-            continue
-        inlined.append(candidate.name)
+    for name in _leading_candidates(helper, substitution, policy):
+        if any(param_order[name] <= param_order[earlier] for earlier in inlined):
+            break
+        inlined.append(name)
     inlined.extend(
         name for name in _movable_anywhere(helper, substitution, policy) if name not in inlined
     )
     return _apply(helper, substitution, inlined)
-
-
-@dataclass(frozen=True)
-class _Candidate:
-    """A thunk of the helper's certified prefix.
-
-    ``calls`` when some site's expression calls something, or the mode does
-    not assume plain values: its place among the arguments then matters.
-    """
-
-    name: str
-    calls: bool
 
 
 def _eligible_leading_thunks(
@@ -208,20 +175,17 @@ def _eligible_leading_thunks(
 
     This discovery does not change the helper or substitution.
     """
-    return tuple(candidate.name for candidate in _leading_candidates(helper, substitution, policy))
+    return _leading_candidates(helper, substitution, policy)
 
 
 def _leading_candidates(
     helper: ast.FunctionDef, substitution: Substitution, policy: ValuePolicy
-) -> Tuple[_Candidate, ...]:
+) -> Tuple[str, ...]:
     """The thunks the helper evaluates exactly once, ahead of anything that could tell.
 
-    A thunk is a function parameter with no bound variables. One whose
-    expression calls something at any site must come before every step that
-    can run code or raise (under ``plain_values``, attribute reads of its
-    own statement aside), and its callers must prove an immutable result
-    unless the policy says ``any_result``. One whose every site is a plain
-    expression may, under ``plain_values``, follow quiet steps.
+    A thunk is a function parameter with no bound variables. It must come
+    before every step that can run code or raise, and its callers must
+    prove an immutable result unless the policy says ``any_result``.
     """
     thunks = {name for name, bound in substitution.function_params.items() if not bound}
     if not thunks:
@@ -246,14 +210,9 @@ class _PrefixScan:
         self.policy = policy
         self.thunks = thunks
         self.translation = _Translation(substitution, policy)
-        self.found: List[_Candidate] = []
+        self.found: List[str] = []
         self.bound: FrozenSet[str] = _parameter_names(helper.args)
-        # Whether every step so far that is not an accepted thunk can neither
-        # run code nor raise (``pure``), or at most reads an attribute, in
-        # the statement being scanned (``lookups``). The scan ends at the
-        # first step that is not quiet.
-        self.pure = True
-        self.lookups = True
+        # Names the prefix binds, which a site's expression must not read.
         self.rebound: Set[str] = set()
         self._own_names = _parameter_names(helper.args) | {
             node.id
@@ -269,14 +228,10 @@ class _PrefixScan:
             if isinstance(statement, (ast.Global, ast.Nonlocal, ast.Pass)):
                 continue
             if self.policy.plain_values:
-                bound = _quiet_branch(statement)
+                bound = _quiet_branch(statement, self.bound | self._certain)
                 if bound is not None:
-                    self.pure = self.lookups = False
                     self.rebound |= bound
                     continue
-            # A call is moved ahead of attribute reads of its own statement
-            # only: ``base = p.prop`` on the line above stays ahead of it.
-            self.lookups = self.pure
             steps, complete = _evaluation_prefix(statement)
             for step in steps:
                 if not self._step(step):
@@ -294,45 +249,39 @@ class _PrefixScan:
             self.bound = self.bound | _names_bound_by(step)
             self.rebound |= _names_bound_by(step)
             return True
-        if isinstance(step, ast.Name) and isinstance(step.ctx, ast.Load):
-            if step.id in self._certain:
-                return True
-        if self.policy.plain_values and _quiet(step):
-            self.pure = False
-            # A name not known to be bound raises ``NameError``, which the
-            # block would have raised before any call that follows it.
-            if not isinstance(step, ast.Attribute):
-                self.lookups = False
-            return True
-        return False
+        return (
+            isinstance(step, ast.Name)
+            and isinstance(step.ctx, ast.Load)
+            and step.id in self._certain
+        )
 
     def _thunk(self, name: str) -> bool:
-        expressions = [expr for _, expr in self.substitution.param_expressions.get(name, ())]
-        plain = bool(expressions) and all(
-            isinstance(expr, ast.expr) and _plain(expr) for expr in expressions
+        """Whether thunk ``name``, evaluated here, may be evaluated at the call; it ends the prefix if not."""
+        if name in self.found or not _single_use(self.helper, name):
+            return False
+        if self.policy.plain_values and (
+            self._reads_rebound(name) or not self._reads_only_available(name)
+        ):
+            # Relaxed mode also declines to move a read of a name past the
+            # prefix's own binding of it, or a read the call site might not
+            # resolve; strict mode's immutable results read no name.
+            return False
+        if not (self.policy.any_result or _immutable_thunk_results(self.substitution, name)):
+            return False
+        self.found.append(name)
+        return True
+
+    def _reads_only_available(self, name: str) -> bool:
+        """Whether every site's expression reads only names its call site is sure to resolve.
+
+        A free variable that may be unbound was made a thunk so that the
+        helper reads it where the block did (``thunk_of_possibly_unbound_local``).
+        """
+        available = self.policy.available
+        return all(
+            index < len(available) and loaded_names(expr) <= available[index]
+            for index, expr in self.substitution.param_expressions.get(name, ())
         )
-        repeated = any(candidate.name == name for candidate in self.found) or not _single_use(
-            self.helper, name
-        )
-        first = self.pure or (self.policy.plain_values and self.lookups)
-        # Relaxed mode also declines to move a read of a name past the
-        # prefix's own binding of it; strict mode's prefix was never asked.
-        movable = not repeated and not (self.policy.plain_values and self._reads_rebound(name))
-        if movable:
-            if first:
-                if self.policy.any_result or _immutable_thunk_results(self.substitution, name):
-                    # Strict mode keeps every inlined thunk in signature order.
-                    unordered = plain and self.policy.plain_values
-                    self.found.append(_Candidate(name, calls=not unordered))
-                    return True
-            elif plain and self.policy.plain_values:
-                self.found.append(_Candidate(name, calls=False))
-                return True
-        # It stays a thunk. One that calls nothing is a quiet step.
-        if plain and self.policy.plain_values:
-            self.pure = self.lookups = False
-            return True
-        return False
 
     def _reads_rebound(self, name: str) -> bool:
         """Whether a site's expression reads a name the prefix has bound before it."""
@@ -459,105 +408,55 @@ def _constant_element(expression: ast.expr) -> bool:
     return isinstance(expression, ast.Constant) or _constant_display(expression)
 
 
-_NOT_PLAIN = (
-    ast.Call,
-    ast.Await,
-    ast.Yield,
-    ast.YieldFrom,
-    ast.NamedExpr,
-    ast.Starred,
-    ast.ListComp,
-    ast.SetComp,
-    ast.DictComp,
-    ast.GeneratorExp,
-)
-
-
-def _plain(expression: ast.expr) -> bool:
-    """Whether ``expression`` calls nothing, awaits nothing, iterates, formats or hashes nothing.
-
-    What is left reads names, attributes and subscripts, applies operators
-    and comparisons and builds displays, which relaxed mode takes to have
-    no side effects. Formatting a value in an f-string runs its
-    ``__format__``, and a set or dict display hashes what is not a constant
-    with ``__hash__``: the assumptions do not cover those protocols. A
-    lambda without defaults is made, not run; one with defaults, or a
-    ``**`` in a dict display, is left out.
-    """
-    pending: List[ast.AST] = [expression]
-    while pending:
-        node = pending.pop()
-        if isinstance(node, _NOT_PLAIN):
-            return False
-        if isinstance(node, ast.Lambda):
-            if node.args.defaults or node.args.kw_defaults:
-                return False
-            continue
-        if isinstance(node, ast.FormattedValue):
-            return False
-        if isinstance(node, ast.Dict) and not all(
-            isinstance(key, ast.Constant) for key in node.keys
-        ):
-            return False
-        if isinstance(node, ast.Set) and not all(
-            isinstance(element, ast.Constant) for element in node.elts
-        ):
-            return False
-        pending.extend(ast.iter_child_nodes(node))
-    return True
-
-
-def _quiet(step: Step) -> bool:
-    """Whether a step that may raise still changes nothing a plain expression reads.
-
-    Reading a name, an attribute or a subscript, an operator, a comparison.
-    Not a call, a store to an attribute or a subscript, an augmented
-    assignment, a ``del``, unpacking, ``**``, formatting (``__format__``)
-    or hashing a key that is not a constant (``__hash__``).
-    """
-    if isinstance(step, _Operation):
-        return step.kind is _Kind.READ or (
-            step.kind is _Kind.HASH and _hashes_quietly(step.operand, step.display)
-        )
-    if isinstance(step, (ast.Name, ast.Attribute, ast.Subscript)):
-        return isinstance(step.ctx, ast.Load)
-    return isinstance(step, (ast.BinOp, ast.UnaryOp, ast.Compare, ast.JoinedStr, ast.Slice))
-
-
-def _quiet_branch(statement: ast.stmt) -> Optional[FrozenSet[str]]:
+def _quiet_branch(statement: ast.stmt, bound: AbstractSet[str]) -> Optional[FrozenSet[str]]:
     """The names an ``if`` that only assigns names may bind; None for any other statement.
 
-    Every path through such a statement is quiet and falls through to the
-    next statement: its tests and values are plain, and it holds nothing but
-    assignments to names, ``pass`` and more of the same.
+    Every path through such a statement can neither fail nor run code, and
+    falls through to the next statement: its values are effect-free given
+    ``bound``, the names sure to be bound before it, its tests are identity
+    comparisons of such values (whose truth is a ``bool``), and it holds
+    nothing but assignments to names, ``pass`` and more of the same.
     """
     if not isinstance(statement, ast.If):
         return None
-    bound: Set[str] = set()
+    assigned: Set[str] = set()
     pending: List[ast.stmt] = [statement]
     while pending:
         current = pending.pop()
         if isinstance(current, ast.If):
-            if not _plain(current.test):
+            if not _identity_test(current.test, bound):
                 return None
             pending.extend([*current.body, *current.orelse])
         elif isinstance(current, ast.Assign):
-            if not _plain(current.value):
+            if not effect_free(current.value, bound):
                 return None
             for target in current.targets:
                 if not isinstance(target, ast.Name):
                     return None
-                bound.add(target.id)
+                assigned.add(target.id)
         elif isinstance(current, ast.AnnAssign):
             if not isinstance(current.target, ast.Name):
                 return None
             if current.value is not None:
-                if not _plain(current.value):
+                if not effect_free(current.value, bound):
                     return None
-                bound.add(current.target.id)
+                assigned.add(current.target.id)
         elif not isinstance(current, ast.Pass):
             return None
-    return frozenset(bound)
+    return frozenset(assigned)
+
+
+def _identity_test(test: ast.expr, bound: AbstractSet[str]) -> bool:
+    """Whether ``test`` is ``a is b`` or ``a is not b`` over effect-free operands, or ``not`` of one."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return _identity_test(test.operand, bound)
+    return (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], (ast.Is, ast.IsNot))
+        and effect_free(test.left, bound)
+        and effect_free(test.comparators[0], bound)
+    )
 
 
 def _evaluated_at_most_once(helper: ast.FunctionDef, name: str) -> bool:

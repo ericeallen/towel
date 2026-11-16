@@ -37,10 +37,7 @@ from typing import List
 import pytest
 
 from towel.unification.semantic_safety import stable_module_names
-from towel.unification.thunk_inlining import (
-    _evaluated_at_most_once,
-    _plain,
-)
+from towel.unification.thunk_inlining import _evaluated_at_most_once
 from tests.test_builtins_across_modules import (
     _passes_join,
     _patched_module_name_project,
@@ -705,17 +702,73 @@ print(index(1), explore(2, "everything"))
 """
 
 
-def test_a_call_is_passed_by_value_ahead_of_the_lookup_of_its_own_callee(tmp_path: Path) -> None:
+@pytest.mark.parametrize("lookup", ["paginate", "missing"])
+def test_a_call_is_not_moved_ahead_of_the_lookup_of_its_own_callee(
+    tmp_path: Path, lookup: str
+) -> None:
     """microblog's ``db.paginate(current_user.following_posts(), …)`` against ``db.paginate(query, …)``.
 
-    Before the call the helper has only read ``db``, which the module
-    binds, and its attribute ``paginate``.
+    The lookup of ``db.paginate`` comes first and can fail. If it does, the
+    block raises ``AttributeError`` without calling ``following_posts``; at
+    the call, ``following_posts`` would run first (review of lane
+    ``byvalue``, ruling 5).
     """
-    generated, same = refactored(tmp_path, CALL_AS_AN_ARGUMENT)
-    assert helper_calls(generated) == [
-        "__extracted_func_0(following_posts(), 'index', page)",
-        "__extracted_func_0(query, 'explore', page)",
-    ]
+    source = CALL_AS_AN_ARGUMENT.replace("db.paginate(", f"db.{lookup}(").replace(
+        'print(index(1), explore(2, "everything"))',
+        'try:\n    print(index(1), explore(2, "everything"))\n'
+        'except AttributeError as error:\n    print("AttributeError")',
+    )
+    generated, same = refactored(tmp_path, source)
+    assert "lambda: following_posts()" in generated
+    assert same
+
+
+PLAIN_READ_AFTER_A_FAILING_STEP = """\
+class Stats:
+    def __init__(self):
+        self.total = 7
+        self.count = 2
+
+
+def report(label, value):
+    print(label, value)
+    return value
+
+
+def show_total(stats, label):
+    title = label[0]
+    shown = report(title, stats.total)
+    print("done", title)
+    return shown
+
+
+def show_count(stats, label):
+    title = label[0]
+    shown = report(title, stats.count)
+    print("done", title)
+    return shown
+
+
+print(show_total(Stats(), "t"), show_count(Stats(), "c"))
+for function in (show_total, show_count):
+    try:
+        function(None, [])
+    except Exception as error:
+        print(type(error).__name__)
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_plain_read_is_not_moved_ahead_of_a_step_that_can_fail(
+    tmp_path: Path, strict: bool
+) -> None:
+    """Review of lane ``byvalue``, defect 6: ``label[0]`` fails first, with ``IndexError``.
+
+    Read at the call, ``stats.total`` on ``None`` raised ``AttributeError``
+    instead. A plain value has no side effects; it can still fail.
+    """
+    generated, same = refactored(tmp_path, PLAIN_READ_AFTER_A_FAILING_STEP, strict=strict)
+    assert re.search(r"report\(title, __param_\d+\(\)\)", generated), generated
     assert same
 
 
@@ -1136,34 +1189,6 @@ def later():
 del later
 """)
     assert stable_module_names(module) == {"json", "os", "D", "keep", "swapper", "Kept"}
-
-
-def _expression(text: str) -> ast.expr:
-    return ast.parse(text, mode="eval").body
-
-
-@pytest.mark.parametrize(
-    "text, plain",
-    [
-        ("a.b.c[0] + d", True),
-        ("f'{a.b}: {c}'", False),  # formatting runs __format__
-        ("f'text'", True),
-        ("{a: b}", False),  # hashing runs __hash__
-        ("{'k': b, 1: c}", True),
-        ("{a, 'k'}", False),
-        ("a if b else c", True),
-        ("[a, {'k': b}]", True),
-        ("lambda x: g(x)", True),  # made, not run
-        ("a.b()", False),
-        ("[*a]", False),
-        ("[x for x in a]", False),
-        ("{**a}", False),
-        ("lambda x=g(): x", False),
-        ("(y := a)", False),
-    ],
-)
-def test_plain_expressions_call_nothing_and_iterate_nothing(text: str, plain: bool) -> None:
-    assert _plain(_expression(text)) is plain
 
 
 @pytest.mark.parametrize(
