@@ -33,7 +33,7 @@ from towel.unification.exceptions import RefactoringError
 from towel.unification.instantiation import instantiation_mismatch
 from towel.unification.orphan_detector import orphaned_variables
 from towel.unification.pipeline import AnalysisSession
-from towel.unification.models import RefactoringProposal
+from towel.unification.models import CodeBlockPair, RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.semantic_safety import uses_class_private_names
 
@@ -118,10 +118,10 @@ def test_each_pair_takes_every_other_site_from_the_shared_scan(tmp_path: Path) -
             [uncached] if uncached is not None else []
         ), "sharing the scan must preserve the exact sites and calls for each pair"
         if proposal is not None:
-            proposals.append(proposal)
+            proposals.append((pair, proposal))
     assert engine._cluster_scan_cache, "the test must exercise a shared scan"
     assert len(proposals) > 1, "every pair of similar functions proposes"
-    for proposal in proposals:
+    for pair, proposal in proposals:
         starts = sorted(r.line_range[0] for r in proposal.replacements)
         assert len(set(starts)) == len(starts), "a site appears once per proposal"
         # The arithmetic fixture repeats patterns within each function too.
@@ -135,6 +135,35 @@ def test_each_pair_takes_every_other_site_from_the_shared_scan(tmp_path: Path) -
             )
         }
         assert represented == {function.node.lineno for function in functions}
+        assert len(starts) == _similar_sites(
+            engine, pair
+        ), "every similar block joins each proposal"
+
+
+def _similar_sites(engine: UnificationRefactorEngine, pair: CodeBlockPair) -> int:
+    """How many blocks of ``_similar_module(4)`` the pair's helper is called from.
+
+    Strict mode pairs only alignments of nearly the whole body, one site in
+    each of the four functions; it declines the shorter windows. Relaxed mode
+    also pairs those windows, and the literal body repeats one three-statement
+    shape (``d, e, f`` and ``h, i, j``, with different constants). When the
+    pair joins the two windows, the scan finds every window spelled like the
+    second block, which includes the first block's own function's other
+    window, so that function calls the helper twice. (A window spelled like
+    the first block does not join: its constants equal the template's, so it
+    would need a different helper.)
+    """
+    if engine.strict:
+        return 4
+    lines_per_function = SIMILAR_FUNCTION.count("\n")
+
+    def offset(function_name: str, block_range: Tuple[int, int]) -> int:
+        return block_range[0] - int(function_name.removeprefix("f")) * lines_per_function
+
+    windows_differ = offset(pair.function1_name, pair.block1_range) != offset(
+        pair.function2_name, pair.block2_range
+    )
+    return 4 + int(windows_differ)
 
 
 def test_shared_call_nodes_survive_being_applied(tmp_path: Path) -> None:

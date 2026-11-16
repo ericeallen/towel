@@ -577,13 +577,38 @@ RELAXED_REFLECTION_WHERE_PARSED: Dict[str, str] = {
 }
 """REFUSED packages that are reflection cases once this interpreter parses their newer syntax.
 
-On 3.11 to 3.13 strict mode refuses because pkg/fast.py does not parse;
-relaxed mode skips that file. On
-3.15 it parses; strict mode then declines for release order (above), and
-relaxed mode, which makes no such refusal, extracts from a function another
-module recompiles from its source, which the contract excludes like the
-REFLECTION_CASES' hand-applied instrumentation (r7d_instrumenting_call_applied_by_hand).
+On 3.11 to 3.14 strict mode refuses because pkg/fast.py uses PEP 810's
+``lazy import`` and does not parse; relaxed mode skips that file. On 3.15 it parses, and the two modes part
+for a reason the relaxed contract records, then the output changes for one
+it excludes. Strict mode declines: the helper would hand back the loop
+variable ``i`` to keep its object alive, and ``i`` is unbound when the loop
+does not run (``conditionally_bound_return``; on 3.15 also the release-order
+refusal above). Relaxed mode, by its finalization assumption, returns only
+names later code reads (docs/design/DECISIONS.md, "Relaxed mode is the
+default; strict mode keeps exact lifetimes"), so it extracts first's loop.
+pkg/fast.py then recompiles ``kernels.first`` from its source, rewriting
+``i * 2``, and finds only the helper's call there: reflection, outside the
+contract in both modes, as strict mode's own extraction from
+r7d_instrumenting_call_applied_by_hand shows. Only the recompiled function's
+output may change (``_assert_only_the_recompiled_function_changed``).
 """
+
+
+def _assert_only_the_recompiled_function_changed(before: Path, after: Path) -> None:
+    """The one output line that differs is ``fast_first``, which now computes first unrewritten."""
+    code_before, out_before, err_before = _run(before)
+    code_after, out_after, err_after = _run(after)
+    assert (code_after, err_after) == (code_before, err_before)
+    assert out_before == "first 13 second -13\nfast_first 121\n"
+    # 13 is first(4): the recompiled source holds no ``i * 2`` to rewrite.
+    assert out_after == "first 13 second -13\nfast_first 13\n"
+    first = next(
+        node
+        for node in ast.parse((after / "pkg" / "kernels.py").read_text()).body
+        if isinstance(node, ast.FunctionDef) and node.name == "first"
+    )
+    assert "i * 2" not in ast.unparse(first)
+
 
 RELAXED_OBSERVES_FINALIZATION: Dict[str, str] = {}
 """Packages whose output differs in relaxed mode because they print when an object is finalized.
@@ -644,10 +669,12 @@ def test_relaxed_directory_refactoring_preserves_program_output(
             assert _run(after) != _run(before), "no longer differs: remove it from the list"
         elif case in RELAXED_REFLECTION_WHERE_PARSED and not unparsed:
             # Outside the preservation contract, as REFLECTION_CASES are: the
-            # extraction only has to be valid Python.
+            # extraction has to be valid Python, and only the function the
+            # program recompiles from its source may print something else.
             assert transformed, RELAXED_REFLECTION_WHERE_PARSED[case]
             for path in (after / "pkg").rglob("*.py"):
                 compile(path.read_bytes(), str(path), "exec")
+            _assert_only_the_recompiled_function_changed(before, after)
         else:
             assert _run(after) == _run(before)
         if transformed:

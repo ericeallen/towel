@@ -173,7 +173,7 @@ collected by the full test suite and CI. It applies accepted proposals and
 compares affected callable observations on generated inputs in isolated import
 contexts. It requires actual proposals and no failures or unverified target
 errors. This finite fixture check is distinct from the pinned ecosystem runs
-recorded in [production readiness](../docs/PRODUCTION_READINESS.md); it is not
+recorded in [production readiness](../docs/maintainers/PRODUCTION_READINESS.md); it is not
 a universal equivalence proof or a standing ecosystem result.
 
 ---
