@@ -499,6 +499,51 @@ def test_two_sites_that_share_a_parenthesis_line_are_not_both_taken(
     assert run_script(source / "mod.py") == run_script(tmp_path / "out" / "mod.py")
 
 
+CLOSING_LINE_COMMENT = """
+def f1(x):
+    ok = (
+        x > 0
+        and x < 100
+        and x % 2 == 0
+        and x != 42
+    )  {comment}
+    return ok
+
+
+def f2(z):
+    return (
+        z > 0
+        and z < 100
+        and z % 2 == 0
+        and z != 42
+    )
+
+
+print(f1(4), f1(42), f2(4), f2(0))
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+@pytest.mark.parametrize("comment", ["# pragma: no cover", "# the posting rule"])
+def test_a_comment_after_the_closing_parenthesis_stays(
+    tmp_path: Path, comment: str, strict: bool
+) -> None:
+    """Review of the ``expressions`` lane, defect 5: the comment was deleted with the parentheses.
+
+    The call takes the place of the parentheses that only group the
+    expression, and the comment written after ``)`` went with them; a
+    ``# pragma: no cover`` lost that way changed what coverage measured.
+    Those parentheses stay when a comment follows them, and the comment
+    stays on its line.
+    """
+    generated, same = refactored(
+        tmp_path, CLOSING_LINE_COMMENT.format(comment=comment), strict=strict
+    )
+    assert same
+    assert helper_calls(generated) == ["__extracted_func_0(x)", "__extracted_func_0(z)"]
+    assert f")  {comment}\n" in generated, generated
+
+
 # -- A later pass finds the helper it made ------------------------------------
 
 

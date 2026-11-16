@@ -624,8 +624,8 @@ def _with_grouping_parentheses(
     """``start`` and ``end`` widened over parentheses that do nothing but group the expression.
 
     The token before the expression must be ``(`` and the one after it
-    ``)``, with only line breaks between: a comment there would be lost
-    with the parentheses. The ``(`` must open a group, not a call's or a
+    ``)``, with only line breaks between, and no comment may follow the
+    ``)`` on its line: a comment there would be lost with the parentheses. The ``(`` must open a group, not a call's or a
     definition's argument list: what precedes it is an operator, a keyword
     or the start of a statement, never a name, a literal or a closing
     bracket. Positions count bytes, as the syntax tree's do.
@@ -650,6 +650,8 @@ def _with_grouping_parentheses(
         or tokens[closing].type != tokenize.OP
         or tokens[closing].string != ")"
     ):
+        return start, end
+    if closing + 1 < len(tokens) and tokens[closing + 1].type == tokenize.COMMENT:
         return start, end
     before = opening - 1
     while before >= 0 and tokens[before].type in _LAYOUT:
