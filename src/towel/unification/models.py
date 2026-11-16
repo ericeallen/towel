@@ -437,6 +437,15 @@ class HelperTemplate:
     declared: Tuple[FrozenSet[str], FrozenSet[str]] = (frozenset(), frozenset())
 
 
+EXPRESSION_COUNT_PREFIX = "expression "
+"""What begins the reason a declined pair of expression candidates is counted under."""
+
+
+def expression_count(counted: str) -> str:
+    """``counted``, a reason as a run counts it, for a pair of expression candidates."""
+    return EXPRESSION_COUNT_PREFIX + counted
+
+
 def span_contains(node: ast.stmt, line_range: Tuple[int, int]) -> bool:
     """Whether the source span of ``node`` covers every line of ``line_range``."""
     start, end = line_range
@@ -528,7 +537,8 @@ class LeftAlone:
     """Similar code a run did not extract: where it is, and the reason it is counted under.
 
     ``reason`` is a ``RejectReason`` value, with what it names in brackets
-    when it names something (``builtin_may_differ_by_module[len]``), or a
+    when it names something (``builtin_may_differ_by_module[len]``) and
+    ``expression_count`` of that for a pair of expression candidates, or a
     ``DeclineReason`` for a proposal built and then not applied.
     """
 

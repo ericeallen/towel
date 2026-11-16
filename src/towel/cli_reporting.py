@@ -33,7 +33,7 @@ from typing import (
 )
 
 from towel.diagnostics import LOG
-from towel.reason_sentences import Explanation, explain, reason_code
+from towel.reason_sentences import Explanation, explain, reason_code, without_subject
 from towel.source_files import python_sources
 from towel.source_text import decode_source
 
@@ -337,9 +337,10 @@ def reason_lines(
     tallies: Dict[str, _ReasonTally] = {}
     for counted, count in counts.items():
         code = reason_code(counted)
-        explanation = explain(code)
+        kind = without_subject(counted)
+        explanation = explain(kind)
         previous = tallies.get(explanation.sentence)
-        subject = counted[len(code) + 1 : -1] if counted != code else None
+        subject = counted[len(kind) + 1 : -1] if counted != kind else None
         tallies[explanation.sentence] = _ReasonTally(
             explanation,
             {**(previous.codes if previous else {}), code: None},

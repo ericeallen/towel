@@ -115,6 +115,7 @@ from .models import (
     RejectReason,
     AppliedChange,
     FunctionNode,
+    expression_count,
     identity_digest,
 )
 from ..type_baseline import KnownErrors
@@ -1061,7 +1062,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         return PairVerdict(
             proposal,
             None if self._pair_identity is None else identity_digest(self._pair_identity),
-            None if proposal is not None or duplicate else self._rejection_key(),
+            None if proposal is not None or duplicate else self._rejection_key(pair),
             lines[:mark],
             lines[mark:],
         )
@@ -1103,16 +1104,28 @@ class UnificationRefactorEngine(ParallelEvaluation):
             self._proposing_pairs += 1
         return verdict.proposal
 
-    def _rejection_key(self) -> str:
-        """What the pair just declined counts under: its reason, with what the reason names."""
+    def _rejection_key(self, pair: CodeBlockPair) -> str:
+        """What the pair just declined counts under: its reason, with what the reason names.
+
+        A pair of expression candidates is counted apart from pairs of
+        statement blocks (``expression_count``): its sentence speaks of an
+        expression, and some reasons mean something else for one.
+        """
         reason, subject = self._pair_rejection, self._pair_rejection_subject
-        if reason is None:
-            return "other"
-        return str(reason) if subject is None else f"{reason}[{subject}]"
+        counted = (
+            "other"
+            if reason is None
+            else str(reason) if subject is None else f"{reason}[{subject}]"
+        )
+        return expression_count(counted) if is_expression_block(pair.block1_nodes) else counted
 
     @property
     def declined_pairs(self) -> Mapping[str, int]:
-        """How many candidate pairs the latest analysis declined, by ``RejectReason``."""
+        """How many candidate pairs the latest analysis declined, by ``RejectReason``.
+
+        A pair of expression candidates is counted under ``expression_count``
+        of its reason, apart from the pairs of statement blocks.
+        """
         return dict(self._pair_rejections)
 
     @property
