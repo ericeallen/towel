@@ -16,7 +16,7 @@
 
 import ast
 from dataclasses import replace
-from itertools import combinations, product
+from itertools import combinations_with_replacement, product
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,12 +38,18 @@ def analyzed_functions(paths):
 
 
 def exhaustive_pairs(engine, functions):
-    """The pre-index algorithm, deliberately comparing the full Cartesian product."""
+    """The pre-index algorithm, deliberately comparing the full Cartesian product.
+
+    A function pairs with itself as well (since 2.0): two of its blocks pair
+    when the first ends on a line before the second begins.
+    """
     result = []
-    for first, second in combinations(functions, 2):
+    for first, second in combinations_with_replacement(functions, 2):
         for (range1, nodes1), (range2, nodes2) in product(
             engine._extract_code_blocks(first[1]), engine._extract_code_blocks(second[1])
         ):
+            if first is second and not range1[1] < range2[0]:
+                continue
             if len(nodes1) != len(nodes2):
                 continue
             if min(range1[1] - range1[0] + 1, range2[1] - range2[0] + 1) < engine.min_lines:

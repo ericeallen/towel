@@ -154,21 +154,33 @@ def _bucketed(blocks: Sequence[_SignedBlock]) -> _FunctionBuckets:
 
 @dataclass(frozen=True)
 class _Partners:
-    """Which later functions each function of an analysis is paired with.
+    """Which functions each function of an analysis is paired with: itself and those after it.
 
-    Every later function when helpers may be shared across modules, and
-    otherwise only the later functions of its own module, found through a
-    list per module so that pairs never formed cost nothing to skip.
+    A function long enough to hold two blocks pairs with itself, so that a
+    block repeated inside one function is found (two blocks of it that share
+    no line; ``find_block_pairs``). It pairs with every later function when
+    helpers may be shared across modules, and otherwise only with the later
+    functions of its own module, found through a list per module so that
+    pairs never formed cost nothing to skip.
     """
 
     count: int
     by_module: Optional[Mapping[int, Tuple[Sequence[int], int]]]
     """Per function, its module's function indices and its own place among them; None: no limit."""
+    repeats: FrozenSet[int]
+    """The functions whose body spans enough lines for two disjoint blocks."""
 
     @classmethod
-    def of(cls, functions: Sequence[FunctionArtifact], across_modules: bool) -> "_Partners":
+    def of(
+        cls, functions: Sequence[FunctionArtifact], across_modules: bool, min_lines: int
+    ) -> "_Partners":
+        repeats = frozenset(
+            index
+            for index, entry in enumerate(functions)
+            if _body_lines(entry.node) >= 2 * max(min_lines, 1)
+        )
         if across_modules:
-            return cls(len(functions), None)
+            return cls(len(functions), None, repeats)
         members: Dict[str, List[int]] = {}
         for index, entry in enumerate(functions):
             members.setdefault(entry.file_path, []).append(index)
@@ -179,28 +191,58 @@ class _Partners:
                 for indices in members.values()
                 for place, index in enumerate(indices)
             },
+            repeats,
         )
 
-    def participates(self, index: int) -> bool:
-        """Whether another function can pair with this function, before incremental filtering."""
-        return self.count > 1 if self.by_module is None else len(self.by_module[index][0]) > 1
-
-    def after(self, index: int) -> Sequence[int]:
-        """The functions after ``index``, in order, that it is paired with."""
+    def _others(self, index: int) -> Sequence[int]:
         if self.by_module is None:
             return range(index + 1, self.count)
         indices, place = self.by_module[index]
         return indices[place + 1 :]
 
+    def participates(self, index: int) -> bool:
+        """Whether this function can pair at all, itself or another, before incremental filtering."""
+        if index in self.repeats:
+            return True
+        return self.count > 1 if self.by_module is None else len(self.by_module[index][0]) > 1
+
+    def after(self, index: int) -> Sequence[int]:
+        """The functions ``index`` is paired with, in order: itself if it may repeat, then later ones."""
+        others = self._others(index)
+        return [index, *others] if index in self.repeats else others
+
     @property
     def function_pairs(self) -> int:
+        """How many pairs of functions pairing visits, a function with itself included."""
         if self.by_module is None:
-            return self.count * (self.count - 1) // 2
-        return sum(len(indices) - place - 1 for indices, place in self.by_module.values())
+            across = self.count * (self.count - 1) // 2
+        else:
+            across = sum(len(indices) - place - 1 for indices, place in self.by_module.values())
+        return across + len(self.repeats)
 
     def group(self, index: int) -> int:
         """Functions that may pair share a group: every one, or the first of its module."""
         return 0 if self.by_module is None else self.by_module[index][0][0]
+
+
+def _body_lines(function: FunctionNode) -> int:
+    """How many lines a function's body spans, from its first statement to the end of its last."""
+    first, last = function.body[0], function.body[-1]
+    return (last.end_lineno or last.lineno) - first.lineno + 1
+
+
+def _disjoint(first: Tuple[int, int], second: Tuple[int, int]) -> bool:
+    """Whether two blocks of one function share no line, so both may be replaced by a call."""
+    return first[1] < second[0] or second[1] < first[0]
+
+
+def _overlapping_pairs(members: Sequence[_SignedBlock]) -> int:
+    """How many pairs among one function's blocks of one bucket share a line, and so never pair."""
+    return sum(
+        not _disjoint(members[i][0], members[j][0])
+        for i in range(len(members))
+        for j in range(i + 1, len(members))
+    )
 
 
 def _buckets_over_budget(
@@ -211,7 +253,9 @@ def _buckets_over_budget(
     A bucket key groups blocks with one statement-type sequence, and only
     blocks in one bucket pair, so the pairs the loop will form are, per
     key, the pairs among the blocks of functions that may pair (``partners``:
-    all of them, or those of one module) less the pairs within one function.
+    all of them, or those of one module) less the pairs within one function
+    that never form: those whose blocks share a line, and every pair of a
+    function too short to repeat a block.
     Keys are dropped largest first until the rest fit; each dropped key is
     named in a warning, since its blocks will not be proposed.
     """
@@ -226,7 +270,12 @@ def _buckets_over_budget(
             count = len(members)
             across[key] = across.get(key, 0) + count
             grouped[(group, key)] = grouped.get((group, key), 0) + count
-            within[key] = within.get(key, 0) + count * (count - 1) // 2
+            never = (
+                _overlapping_pairs(members)
+                if index in partners.repeats
+                else count * (count - 1) // 2
+            )
+            within[key] = within.get(key, 0) + never
     projected = {key: -within[key] for key in across}
     for (_, key), total in grouped.items():
         projected[key] += total * (total - 1) // 2
@@ -1151,10 +1200,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[CodeBlockPair]:
         """
-        Find every pair of similar code blocks in two different functions.
+        Find every pair of similar code blocks, in two functions or twice in one.
 
         The two functions share a file unless ``cross_module_helpers`` is
-        set, when they may be anywhere in the analysis.
+        set, when they may be anywhere in the analysis. Two blocks of one
+        function pair when they share no line, the earlier one first; every
+        guard a pair of two functions meets applies to them unchanged.
 
         Args:
             all_functions: The analyzed functions with their context
@@ -1171,11 +1222,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # forks, so a configuration that cannot be read is reported once.
         for path in sorted({entry.file_path for entry in all_functions}):
             self._coverage_exclusion(path)
-        # Eligibility precedes block materialization: a module singleton has
-        # no partner unless cross-module helpers are enabled. Earlier partners
+        # Eligibility precedes block materialization: a function has no
+        # partner if it is a module singleton, cross-module helpers are off,
+        # and its body is too short to hold two blocks. Earlier partners
         # count too, including generated helpers from previous passes. Keep
         # incremental filtering below the budget calculation, as before.
-        partners = _Partners.of(all_functions, self.cross_module_helpers)
+        partners = _Partners.of(all_functions, self.cross_module_helpers, self.min_lines)
         blocks = [
             self._signed_blocks(entry.node) if partners.participates(index) else []
             for index, entry in enumerate(all_functions)
@@ -1209,6 +1261,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
                             blocks[i], buckets[i].block_keys
                         ):
                             for block2_range, block2_nodes, sig2 in buckets[j].by_key.get(key1, []):
+                                if i == j and not block1_range[1] < block2_range[0]:
+                                    continue  # one function: the earlier block first, apart
                                 if not quick_filter(sig1, sig2):
                                     continue
                                 pairs.append(

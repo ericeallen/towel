@@ -2000,7 +2000,9 @@ class PairEvaluation(
         """
         is_cross_file = pair.is_cross_file
         desc = f"Extract common code from {pair.function1_name}"
-        if is_cross_file:
+        if pair.function1_node is pair.function2_node:
+            desc = f"Extract code repeated in {pair.function1_name}"
+        elif is_cross_file:
             desc += f" ({Path(pair.file_path).name}) and {pair.function2_name} ({Path(pair.file_path2).name})"
         else:
             desc += f" and {pair.function2_name}"

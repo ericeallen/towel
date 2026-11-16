@@ -1,0 +1,26 @@
+import os
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.abspath(sys.argv[1]))
+
+import settings
+
+FILES = {
+    "full.ini": "[server]\nhost =  0.0.0.0 \nroot = /var/site\nport = 9090\ndebug = yes\n[logging]\nfile = /var/log/site.log\n",
+    "partial.ini": "[server]\nroot = ./public\n",
+    "empty.ini": "",
+    "badport.ini": "[server]\nport = eighty\n",
+}
+with tempfile.TemporaryDirectory() as tmp:
+    os.chdir(tmp)
+    for name, text in FILES.items():
+        with open(name, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    for name in list(FILES) + ["missing.ini"]:
+        try:
+            print(name, sorted(settings.load_settings(name).items()))
+        except ValueError as exc:
+            print(name, "ValueError", exc)
+    os.chdir("/")
+print("ok")

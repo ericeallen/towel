@@ -68,7 +68,10 @@ def test_incremental_filtering_preserves_the_preexisting_budget_order(
     # The budget is global over structural partners, before changed-file
     # filtering. A changed module singleton must not stop an unchanged module
     # from contributing its original budget accounting and warning.
-    functions = _functions(tmp_path, {"a.py": ("first", "second"), "b.py": ("lonely",)})
+    functions = _functions(tmp_path, {"a.py": ("first", "second")})
+    # One statement: too short to repeat a block inside itself, so ineligible.
+    (tmp_path / "b.py").write_text("def lonely(data):\n    return data + 1\n")
+    functions += collect_functions(analyze_scopes(parse_modules([str(tmp_path / "b.py")])))
     engine = UnificationRefactorEngine(min_lines=1, max_candidate_pairs=1)
     changed: Optional[FrozenSet[str]] = frozenset(str(tmp_path / name) for name in changed_names)
     with patch.object(engine, "_signed_blocks", wraps=engine._signed_blocks) as signed:
@@ -76,10 +79,11 @@ def test_incremental_filtering_preserves_the_preexisting_budget_order(
     assert Counter(call.args[0].name for call in signed.call_args_list) == Counter(
         {"first": 1, "second": 1}
     )
-    # Ineligible singleton blocks used to inflate the warning's block count
-    # (15 rather than 10 here), although they contribute zero possible pairs.
+    # Ineligible singleton blocks used to inflate the warning's block count,
+    # although they contribute zero possible pairs. Since 2.0 each function
+    # also pairs ``a = …`` with ``b = …`` inside itself: 8 pairs became 10.
     assert (
-        "8 candidate pairs exceed the budget of 1; leaving out 4 bucket(s) "
+        "10 candidate pairs exceed the budget of 1; leaving out 4 bucket(s) "
         "holding 10 similar blocks" in caplog.text
     )
     assert bool(pairs) == ("a.py" in changed_names)

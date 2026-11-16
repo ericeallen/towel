@@ -142,7 +142,9 @@ def test_a_restricted_pass_still_pairs_a_rewritten_file_with_an_untouched_one(
     _write_two_round_project(source)
     full, applied_full = _fixed_point(source, tmp_path / "full", False)
     restricted, applied_restricted = _fixed_point(source, tmp_path / "restricted", True)
-    assert applied_full == applied_restricted == 4  # two helpers, each rewriting two files
+    # Two helpers each rewrite two files; since 2.0 the arithmetic each
+    # function repeats inside itself is shared as well, with profitability off.
+    assert applied_full == applied_restricted == 10
     assert full == restricted
     assert full["c.py"].startswith(b"import a\nfrom a import ")
     assert full["b.py"].startswith(b"import a\nfrom a import ")
