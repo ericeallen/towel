@@ -14,9 +14,9 @@
 
 """A single file the command line cannot refactor is reported, naming the file.
 
-Directory mode skips a module it cannot decode or parse and says so; single-file
-mode used to refactor the file's copy silently or stop with an error that named
-nothing. A negative refactoring count was accepted and meant "run to a fixed
+Relaxed mode skips a module it cannot decode or parse and says so; strict mode
+refuses it before copying, naming the file and giving a remedy.
+A negative refactoring count was accepted and meant "run to a fixed
 point", the same as zero.
 """
 
@@ -38,7 +38,7 @@ from towel.cli import _build_parser, _run_dry, _run_preview
 
 def _dry_arguments(source: Path, destination: Path) -> argparse.Namespace:
     return _build_parser().parse_args(
-        ["dry", str(source), str(destination), "--no-interactive", "--progress", "none"]
+        ["dry", str(source), str(destination), "--strict", "--no-interactive", "--progress", "none"]
     )
 
 
@@ -51,17 +51,19 @@ def _run_quietly(
 
 
 def test_a_file_that_does_not_decode_is_reported_by_name(tmp_path: Path) -> None:
+    """Runtime item 6: strict mode retains the single-file decoding refusal."""
     source = tmp_path / "latin.py"
     original = b'def f():\n    return "caf\xe9"\n'
     source.write_bytes(original)
     destination = tmp_path / "out.py"
-    with pytest.raises(ValueError, match=r"latin\.py: 'utf-8' codec"):
+    with pytest.raises(ValueError, match=r"latin\.py: it cannot be decoded: 'utf-8' codec"):
         _run_quietly(_run_dry, _dry_arguments(source, destination))
     assert source.read_bytes() == original
     assert not destination.exists(), "Invalid input must be rejected before copying"
 
 
 def test_a_file_that_does_not_parse_is_reported_with_its_line(tmp_path: Path) -> None:
+    """Runtime item 6: strict mode retains the single-file parse refusal."""
     source = tmp_path / "broken.py"
     original = "def f(:\n    pass\n"
     source.write_text(original)
@@ -70,6 +72,30 @@ def test_a_file_that_does_not_parse_is_reported_with_its_line(tmp_path: Path) ->
         _run_quietly(_run_dry, _dry_arguments(source, destination))
     assert source.read_text() == original
     assert not destination.exists(), "Invalid input must be rejected before copying"
+
+
+@pytest.mark.parametrize("original", [b'def f():\n    return "caf\xe9"\n', b"def f(:\n    pass\n"])
+@pytest.mark.parametrize("command", ["dry", "preview"])
+def test_relaxed_single_file_warns_once_and_preserves_invalid_bytes(
+    tmp_path: Path, original: bytes, command: str
+) -> None:
+    """Runtime item 6: the new default skips bad input without losing the user's bytes."""
+    source = tmp_path / "bad.py"
+    source.write_bytes(original)
+    destination = tmp_path / "out.py"
+    arguments = [command, str(source), "--no-types", "--no-format", "--progress", "none"]
+    if command == "dry":
+        arguments.extend([str(destination), "--no-interactive"])
+    result = invoke(arguments)
+    assert result.status == 0, result
+    assert result.stderr.count("Skipping ") == 1, result.stderr
+    assert str(source) in result.stderr
+    assert "Analysed 0 Python files (0 functions). Skipped 1 file" in result.stdout
+    assert source.read_bytes() == original
+    if command == "dry":
+        assert destination.read_bytes() == original
+    else:
+        assert not destination.exists()
 
 
 def test_a_negative_refactoring_count_is_refused_by_the_parser(

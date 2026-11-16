@@ -17,7 +17,7 @@
 Python decodes a source file by its BOM or coding cookie (PEP 263), else
 as UTF-8, and accepts any newline convention. Towel works on LF text in
 memory and, when it writes a file back, restores the file's own encoding,
-BOM and dominant newline, so the only bytes that change are the ones the
+BOM and each unchanged line's newline, so the only bytes that change are the ones the
 refactoring changed.
 """
 
@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import ast
 from bisect import bisect_right
+from difflib import SequenceMatcher
 import io
 from pathlib import Path
+import re
 import tokenize
 from typing import Iterator, List, Optional, Sequence, Tuple, Union
 
@@ -221,7 +223,7 @@ def encode_like(original: bytes, text: str) -> bytes:
     """
     encoding = source_encoding(original)
     try:
-        encoded = text.encode(encoding)
+        text.encode(encoding)
     except UnicodeEncodeError as error:
         escaped = _escaped_for(text, encoding)
         if escaped is not None:
@@ -232,8 +234,7 @@ def encode_like(original: bytes, text: str) -> bytes:
             f"the file's encoding, {encoding}, cannot represent {character!r}"
             f" (U+{ord(character):04X}) on line {line} of the new text"
         ) from error
-    newline = dominant_newline(original)
-    result = encoded if newline == b"\n" else encoded.replace(b"\n", newline)
+    result = _restore_newlines(original, text, encoding).encode(encoding)
     try:
         read_as = source_encoding(result)
     except SyntaxError as error:
@@ -245,3 +246,34 @@ def encode_like(original: bytes, text: str) -> bytes:
             f"the new text would be read as {read_as}, not as the file's own {encoding}"
         )
     return result
+
+
+def _restore_newlines(original: bytes, text: str, encoding: str) -> str:
+    """Keep each surviving line's ending, and use the dominant ending for new lines.
+
+    Equal-length replacement spans inherit their corresponding old line's
+    ending too. Matching ignores endings, so inserted helpers cannot shift
+    the convention of untouched lines farther down the file.
+    """
+    original_text = original.decode(encoding)
+    endings = re.findall(r"\r\n|\r|\n", original_text)
+    newline = dominant_newline(original).decode("ascii")
+    if len(set(endings)) <= 1:
+        return text if newline == "\n" else text.replace("\n", newline)
+    before = source_lines(decode_source(original))
+    after = source_lines(text)
+    line_endings = endings + ([""] if before and not before[-1].endswith("\n") else [])
+    restored = [line[:-1] + newline if line.endswith("\n") else line for line in after]
+    for tag, start_before, end_before, start_after, end_after in SequenceMatcher(
+        None, before, after, autojunk=False
+    ).get_opcodes():
+        if tag == "equal" or (
+            tag == "replace" and end_before - start_before == end_after - start_after
+        ):
+            for old_index, new_index in zip(
+                range(start_before, end_before), range(start_after, end_after)
+            ):
+                line = after[new_index]
+                if line.endswith("\n") and line_endings[old_index]:
+                    restored[new_index] = line[:-1] + line_endings[old_index]
+    return "".join(restored)

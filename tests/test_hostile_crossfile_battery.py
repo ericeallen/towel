@@ -80,9 +80,12 @@ direct host loads so the original binding and typing defects still exercise
 extraction while historical inputs remain unchanged.
 
 A package in ``REFUSED`` holds a file using lazy imports, stored as
-``.pynew`` (``tests.hostile_execution``). Before Python 3.15, Towel must
-refuse the run before writing anything, naming the unparseable file
-(``towel.program_files``). On 3.15 the whole package is visible; the current
+``.pynew`` (``tests.hostile_execution``). Before Python 3.15, strict mode must
+refuse before writing, naming the unparseable file. Relaxed mode warns once,
+leaves that file unchanged, and checks the portion that runs on this interpreter.
+A separate newer-runtime test imports the skipped consumers: it checks output
+preservation for the builtin patch, and successful execution for the documented
+body-recompilation exclusion. On 3.15 the whole package is visible; the current
 lifetime profile refuses these candidates and the program still runs unchanged. The two ``xf9up_`` packages are the
 round-4 audit's P1-2 and P1-3, where such a file hid a decorator applied by
 hand and a test's patch of ``len``.
@@ -101,6 +104,7 @@ from __future__ import annotations
 import ast
 import re
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Dict
@@ -108,7 +112,13 @@ from typing import Dict
 import pytest
 
 from tests.compiler_golden_profiles import lifetime_refusal_profile
-from tests.hostile_execution import ScopeWatch, copy_fixture_tree, module_faces, observe
+from tests.hostile_execution import (
+    ISOLATED_ENV,
+    ScopeWatch,
+    copy_fixture_tree,
+    module_faces,
+    observe,
+)
 from tests.hostile_refactoring import OWNERSHIP_BOOKKEEPING, refactor_package
 from tests.hostile_refactoring import with_known_defects
 from tests.test_cli_integration import invoke
@@ -570,8 +580,8 @@ RELAXED_REFLECTION_WHERE_PARSED: Dict[str, str] = {
 }
 """REFUSED packages that are reflection cases once this interpreter parses their newer syntax.
 
-On 3.11 to 3.14 the run is refused because pkg/fast.py, which uses PEP 810's
-``lazy import``, does not parse. On 3.15 it parses, and the two modes part
+On 3.11 to 3.14 strict mode refuses because pkg/fast.py uses PEP 810's
+``lazy import`` and does not parse; relaxed mode skips that file. On 3.15 it parses, and the two modes part
 for a reason the relaxed contract records, then the output changes for one
 it excludes. Strict mode declines: the helper would hand back the loop
 variable ``i`` to keep its object alive, and ``i`` is unbound when the loop
@@ -609,7 +619,9 @@ def _assert_only_the_recompiled_function_changed(before: Path, after: Path) -> N
         path.name for path in CASES.iterdir() if path.is_dir() and path.name not in REFLECTION_CASES
     ),
 )
-def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> None:
+def test_relaxed_directory_refactoring_preserves_program_output(
+    case: str, caplog: pytest.LogCaptureFixture
+) -> None:
     """The same battery in relaxed mode: identical output, and no ownership bookkeeping."""
     with tempfile.TemporaryDirectory(prefix="towel-hostile-xf-relaxed-") as directory:
         before = Path(directory) / "before"
@@ -617,15 +629,7 @@ def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> No
         copy_fixture_tree(CASES / case, before)
         copy_fixture_tree(CASES / case, after)
         cross_module = case not in WITHOUT_CROSS_MODULE
-        if case in REFUSED and not _parses(before / REFUSED[case]):
-            # A program that will not parse is refused in every mode. Where this
-            # interpreter parses the newer syntax, relaxed mode has no lifetime
-            # refusal to make (strict's is checked above), and the package is
-            # held to the ordinary relaxed checks below.
-            with pytest.raises(UnparsedProgramError, match=re.escape(f"  {REFUSED[case]}: line ")):
-                refactor_package(after / "pkg", cross_module=cross_module, strict=False)
-            assert _python_files(after) == _python_files(before)
-            return
+        unparsed = case in REFUSED and not _parses(before / REFUSED[case])
         scopes = ScopeWatch()
         results = refactor_package(
             after / "pkg",
@@ -635,6 +639,17 @@ def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> No
             strict=False,
         )
         written, original = _python_files(after), _python_files(before)
+        if unparsed:
+            # Runtime item 6: strict's refusal remains tested above. Relaxed
+            # mode must warn once and preserve the skipped bytes. The checks
+            # below cover what this interpreter can execute; the newer-runtime
+            # test below also executes the skipped consumer.
+            assert written[REFUSED[case]] == original[REFUSED[case]]
+            warnings = [
+                record.message for record in caplog.records if "Skipping " in record.message
+            ]
+            assert len(warnings) == 1, warnings
+            assert REFUSED[case] in warnings[0]
         transformed = written != original
         assert transformed == (sum(applied for applied, _ in results.values()) > 0)
         assert scopes.found == []
@@ -642,7 +657,7 @@ def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> No
             assert not OWNERSHIP_BOOKKEEPING.search(text) or (
                 OWNERSHIP_BOOKKEEPING.search(original[name])
             ), name
-        if case in RELAXED_REFLECTION_WHERE_PARSED:
+        if case in RELAXED_REFLECTION_WHERE_PARSED and not unparsed:
             # Outside the preservation contract, as REFLECTION_CASES are: the
             # extraction has to be valid Python, and only the function the
             # program recompiles from its source may print something else.
@@ -782,3 +797,46 @@ def test_cli_refuses_a_top_level_module_inside_the_package(tmp_path: Path) -> No
     assert ran.status == 1, ran.stdout + ran.stderr
     assert "Refusing to share helpers across the modules of" in ran.stderr, ran.stderr
     assert _python_files(root) == before
+
+
+@pytest.mark.parametrize("case", sorted(REFUSED))
+def test_relaxed_skipped_consumer_executes_on_newer_python(case: str, tmp_path: Path) -> None:
+    """Review suspicion: import skipped code on a runtime that actually understands it."""
+    before, after = tmp_path / "before", tmp_path / "after"
+    copy_fixture_tree(CASES / case, before)
+    copy_fixture_tree(CASES / case, after)
+    if _parses(before / REFUSED[case]):
+        pytest.skip("this interpreter parses the consumer; the ordinary battery executes it")
+    interpreter = shutil.which("python3.15")
+    if interpreter is None:
+        pytest.skip("Python 3.15 is required to execute the skipped lazy-import consumer")
+
+    def run(root: Path) -> tuple[int, str, list[str]]:
+        completed = subprocess.run(
+            [interpreter, "run.py"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+            env=ISOLATED_ENV,
+        )
+        return completed.returncode, completed.stdout, completed.stderr.strip().splitlines()[-1:]
+
+    original = run(before)
+    assert original[0] == 0, original
+    assert "needs a newer Python" not in original[1], original
+    assert ("fast_first" if case in RELAXED_REFLECTION_WHERE_PARSED else "patched") in original[1]
+    results = refactor_package(after / "pkg", strict=False)
+    changed = run(after)
+    assert changed[0] == 0, changed
+    assert "needs a newer Python" not in changed[1], changed
+    assert (after / REFUSED[case]).read_bytes() == (before / REFUSED[case]).read_bytes()
+    if case in RELAXED_REFLECTION_WHERE_PARSED:
+        # instrumented() calls inspect.getsource, rewrites the function text,
+        # and execs it. Source reflection is already outside the preservation
+        # contract even when Towel's own interpreter can parse the consumer.
+        assert sum(applied for applied, _ in results.values()) > 0
+        assert "fast_first" in changed[1]
+    else:
+        assert changed == original

@@ -190,3 +190,19 @@ def test_an_unreadable_consumer_directory_aborts_before_any_rename(tmp_path: Pat
     finally:
         restricted.chmod(0o755)
     assert consumer.read_text() == source
+
+
+@pytest.mark.parametrize("consumer", ["local.py", "build/use.py"])
+def test_analysis_exclusions_do_not_hide_rename_consumers(tmp_path: Path, consumer: str) -> None:
+    """Runtime R10: an extraction exclusion cannot hide a live rename consumer."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("local.py\n")
+    (tmp_path / "a.py").write_text(HELPER)
+    use = tmp_path / consumer
+    use.parent.mkdir(parents=True, exist_ok=True)
+    use.write_text("from a import __extracted_func_0\nVALUE = __extracted_func_0(3)\n")
+    mapping = _mapping(tmp_path, {"__extracted_func_0": "increment"})
+    result = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(mapping)])
+    assert result.status == 0, result.stderr
+    assert "def increment(" in (tmp_path / "a.py").read_text()
+    assert "from a import increment" in use.read_text()

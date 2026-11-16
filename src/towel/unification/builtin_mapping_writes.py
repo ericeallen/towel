@@ -64,6 +64,8 @@ def project_may_replace_builtin_mapping(
 
 
 def _file_may_replace(path: Path, root: Path, excluded_names: AbstractSet[str]) -> bool:
+    if path.name.startswith(".#") or (path.is_symlink() and not path.exists()):
+        return False
     try:
         data = path.read_bytes()
     except OSError:

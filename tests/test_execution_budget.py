@@ -70,3 +70,62 @@ def test_an_unrelated_alarm_handler_survives_an_unexpected_exception() -> None:
         assert received == [signal.SIGALRM]
     finally:
         signal.signal(signal.SIGALRM, previous)
+
+
+def test_alarm_during_pool_cleanup_does_not_abandon_workers() -> None:
+    """Runtime 1: a deadline during interrupt cleanup cannot interrupt its joins."""
+    from towel.execution_budget import polling_interrupts
+
+    cleaned = False
+    with pytest.raises(KeyboardInterrupt):
+        with execution_budget(10), polling_interrupts() as check:
+            try:
+                signal.raise_signal(signal.SIGINT)
+                check()
+            finally:
+                signal.raise_signal(signal.SIGALRM)
+                cleaned = True
+    assert cleaned
+
+
+def test_interrupt_during_normal_pool_cleanup_is_not_lost() -> None:
+    """Runtime 1: an interrupt after the final result poll still ends the run."""
+    from towel.execution_budget import polling_interrupts
+
+    cleaned = False
+    with pytest.raises(KeyboardInterrupt):
+        with polling_interrupts() as check:
+            check()
+            signal.raise_signal(signal.SIGINT)
+            cleaned = True
+    assert cleaned
+
+
+def test_deadline_during_normal_pool_cleanup_is_delivered_after_cleanup() -> None:
+    """Runtime 1: the recorded deadline is raised only after worker cleanup ends."""
+    from towel.execution_budget import polling_interrupts
+
+    cleaned = False
+    with pytest.raises(BudgetExpired):
+        with execution_budget(10), polling_interrupts() as check:
+            check()
+            signal.raise_signal(signal.SIGALRM)
+            cleaned = True
+    assert cleaned
+
+
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_recorded_signal_survives_a_broken_pool(signum: int) -> None:
+    """D1: a pool error cannot discard the cancellation recorded before it."""
+    from concurrent.futures.process import BrokenProcessPool
+    from towel.execution_budget import polling_interrupts
+
+    previous = signal.getsignal(signum)
+    expected = KeyboardInterrupt if signum == signal.SIGINT else SystemExit
+    with pytest.raises(expected) as raised:
+        with polling_interrupts():
+            signal.raise_signal(signum)
+            raise BrokenProcessPool("worker received the group signal")
+    if isinstance(raised.value, SystemExit):
+        assert raised.value.code == 143
+    assert signal.getsignal(signum) == previous

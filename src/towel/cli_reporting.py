@@ -33,6 +33,7 @@ from typing import (
 )
 
 from towel.diagnostics import LOG
+from towel.relaxed_suitability import FindingJSON
 from towel.reason_sentences import Explanation, explain, reason_code
 from towel.source_files import python_sources
 from towel.source_text import decode_source
@@ -178,6 +179,9 @@ class CommandResult(TypedDict):
     outcome: Outcome | None
     analysed: AnalysedRecord | None
     left_alone: int
+    partial_diff: NotRequired[str]
+    finally_confirmed: NotRequired[bool]
+    relaxed_findings: NotRequired[List[FindingJSON]]
 
 
 def source_diff(source: Path, output: Path, excluded: Sequence[str]) -> str:
@@ -251,14 +255,28 @@ def run_outcome(report: "RunReport", applied: int) -> Outcome:
     return "no_repeated_code"
 
 
+def _skipped_counts(report: "RunReport") -> tuple[int, int, int]:
+    """Unavailable inputs, Git-ignored inputs and explicitly excluded inputs."""
+    ignored = sum(entry.reason.startswith("Git ignores it") for entry in report.skipped_files)
+    excluded = sum("excluded from analysis" in entry.reason for entry in report.skipped_files)
+    return len(report.skipped_files) - ignored - excluded, ignored, excluded
+
+
 def census_line(report: "RunReport") -> str:
     """What the run read: ``Analysed 3 Python files (12 functions).``"""
     line = (
         f"Analysed {_plural(report.files_analysed, 'Python file')}"
         f" ({_plural(report.functions_analysed, 'function')})."
     )
-    if report.skipped_files:
-        line += f" Skipped {_plural(len(report.skipped_files), 'file')} it could not read."
+    unreadable, ignored, excluded = _skipped_counts(report)
+    if unreadable:
+        line += f" Skipped {_plural(unreadable, 'file')} it could not read or parse."
+    if ignored:
+        line += (
+            f" Skipped {_plural(ignored, 'file')} Git ignores (--include-ignored includes them)."
+        )
+    if excluded:
+        line += f" Skipped {_plural(excluded, 'file')} in excluded directories."
     return line
 
 
@@ -267,6 +285,11 @@ def outcome_line(report: "RunReport", applied: int, target: str) -> Optional[str
     outcome = run_outcome(report, applied)
     if outcome == "no_python_files":
         if report.skipped_files:
+            unreadable, ignored, excluded = _skipped_counts(report)
+            if not unreadable:
+                return f"No Python files selected for analysis under {target}."
+            if ignored or excluded:
+                return f"No selected Python file under {target} could be read."
             return f"No Python file under {target} could be read."
         return f"No Python files found under {target}."
     if outcome == "no_repeated_code":
