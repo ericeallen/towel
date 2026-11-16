@@ -130,23 +130,25 @@ def test_default_cli_preserves_strict_types_of_whole_body_duplicates(
         assert output.read_text() == original
         assert "lifetime_order_uncertified" in run.stdout + run.stderr
     elif second_type == "int":
-        assert (
-            "return first(x)" in output.read_text()
-        ), "the shared body reuses its existing function"
-        assert "__extracted_func" not in output.read_text()
+        # Evaluated annotations prevent the early-binding proof required for reuse.
+        assert "__extracted_func" in output.read_text()
+        assert "return first(x)" not in output.read_text()
 
 
-def test_a_checker_failure_is_not_taken_for_acceptance(tmp_path: Path) -> None:
+@pytest.mark.parametrize("redirect", [False, True])
+def test_a_checker_failure_is_not_taken_for_acceptance(tmp_path: Path, redirect: bool) -> None:
     pytest.importorskip("mypy")
     path = tmp_path / "source.py"
-    original = LITERAL_DUPLICATES.replace("():", "() -> int:")
+    original = "from __future__ import annotations\n" + (
+        _source("int") if redirect else LITERAL_DUPLICATES.replace("():", "() -> int:")
+    )
     path.write_text(original)
     checker = MypyInferrer()
     checker.close()
     assert isinstance(checker.check(str(path), original), CheckFailure)
-    engine = UnificationRefactorEngine(type_oracle=checker)
+    engine = UnificationRefactorEngine(type_oracle=checker, strict=False)
     proposal = engine.analyze_file(str(path))[0]
-    assert proposal.reused_function is not None
+    assert (proposal.reused_function is not None) is redirect
     with pytest.raises(RefactoringError, match="Original project type check failed"):
         engine.apply_refactoring(str(path), proposal)
     assert path.read_text() == original
