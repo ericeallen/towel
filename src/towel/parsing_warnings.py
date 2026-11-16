@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pure lexical eligibility for sharing CPython 3.11--3.14 AST parses.
+"""Pure lexical eligibility for sharing CPython 3.11--3.15 AST parses.
 
 Uncertain syntax uses the native parser. This module neither decodes source nor
 changes warning filters: its only retained result is an immutable boolean.
@@ -290,6 +290,11 @@ def parsing_cannot_warn(source: str) -> bool:
     admitted source; larger sources are classified without retention. No AST
     is held here. The bounded cache is process-local and resets after fork.
     """
+    # CPython 3.15 Parser/action_helpers.c warns for ``from . lazy import x``.
+    # Reject every spelling containing the soft keyword, including continued
+    # lines; false positives only lose caching. Do this before the lexical cache.
+    if sys.version_info[:2] >= (3, 15) and "lazy" in source:
+        return False
     # Subclasses can override hashing/size operations; only native strings are pure keys.
     if type(source) is not str or not memoizing() or len(source) > _MAX_SOURCE_CHARACTERS:
         return _POSSIBLE_WARNING.search(source) is None or _tokens_cannot_warn(source)

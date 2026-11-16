@@ -29,7 +29,10 @@ import sys
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.typed_fixtures import STRICT, apply_one, requires_mypy
+from towel.type_inference import MypyInferrer
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.annotations import _joined_revealed, _joined_tuple, respell_bare
 
 
@@ -153,6 +156,23 @@ def test_resolved_names_do_not_prove_compound_annotation_inertness(
     assert isinstance(atom_final.args.args[0].annotation, ast.Name)
 
 
+def _assert_lifetime_refusal(root: Path, path: Path, source: str, config: str) -> None:
+    (root / "pyproject.toml").write_text(config)
+    oracle = MypyInferrer()
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
+            skip_trivial_helpers=False,
+        )
+        assert engine.analyze_file(str(path)) == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+    finally:
+        oracle.close()
+
+
 @requires_mypy
 @pytest.mark.parametrize("annotated_locals", [False, True])
 def test_a_composed_tuple_return_adds_no_runtime_subscription(
@@ -212,6 +232,16 @@ def second() -> str:
 
     before = run()
     assert before.stdout == "2\n2\nN2 NN\n[]\n"
+    if not lifetime_order_certified():
+        _assert_lifetime_refusal(
+            tmp_path,
+            path,
+            source,
+            '[project]\nname = "m"\nrequires-python = ">=3.10"\n' + STRICT,
+        )
+        after = run()
+        assert (after.stdout, after.stderr) == (before.stdout, before.stderr)
+        return
     outcome = apply_one(
         tmp_path,
         source,
@@ -281,6 +311,8 @@ class Second:
     path.write_text(source)
     driver = (
         "import pkg.websocket\n"
+        "from inspect import get_annotations\n"
+        "get_annotations(pkg.websocket.untouched)\n"
         "pkg.websocket.First().on_close(5, 'closed')\n"
         "pkg.websocket.Second().on_close(None, None)\n"
         "print(pkg.events, pkg.websocket.untouched(7))\n"

@@ -196,7 +196,8 @@ def _is_definition(table: symtable.SymbolTable) -> bool:
     """Whether ``table`` is a ``def`` or ``class``, not a lambda, comprehension or annotation scope."""
     if _kind(table) == "class":
         return True
-    if _kind(table) != "function" or table.get_name() == "lambda":
+    # CPython 3.15 uses the code-object spelling for anonymous symbol tables.
+    if _kind(table) != "function" or table.get_name() in {"lambda", "<lambda>"}:
         return False
     assert isinstance(table, symtable.Function)
     return ".0" not in table.get_parameters()  # a comprehension's implicit iterator

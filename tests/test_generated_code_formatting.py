@@ -32,6 +32,7 @@ from typing import Any, Callable, List, Sequence, Unpack
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_cli_integration import invoke
 from tests.test_helpers import EngineOptions
 from towel import formatting
@@ -78,19 +79,39 @@ DUPLICATED_STRINGS = textwrap.dedent(f"""
     """)
 
 
-def _refactor(path: Path, **engine_options: Unpack[EngineOptions]) -> str:
+# Long literal arguments keep line wrapping observable without transferring a
+# caller frame's arbitrary inputs to the helper.
+LITERAL_STRINGS = DUPLICATED_STRINGS.replace(
+    "(name, a_rather_long_parameter_name, another_long_parameter_name):", "():"
+)
+for _prefix, _suffix in (("Mr. ", "a"), ("Dr. ", "b")):
+    LITERAL_STRINGS = LITERAL_STRINGS.replace(
+        f"    prefix = {_prefix!r}\n",
+        f"    prefix = {_prefix!r}\n    name = 'x'\n"
+        f"    a_rather_long_parameter_name = {'-' + _suffix * 40!r}\n"
+        f"    another_long_parameter_name = {'-' + _suffix * 41!r}\n",
+    )
+
+
+def _refactor(path: Path, **engine_options: Unpack[EngineOptions]) -> str | None:
     # Small method fixtures isolate formatter behavior. CLI tests use
     # substantial input and keep the production readability policy enabled.
     options: EngineOptions = {"skip_trivial_helpers": False, **engine_options}
     engine = UnificationRefactorEngine(min_lines=2, **options)
-    (proposal,) = engine.analyze_file(str(path))
+    original = path.read_text()
+    proposals = engine.analyze_file(str(path))
+    if not lifetime_order_certified() and not proposals:
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == original
+        return None
+    (proposal,) = proposals
     return engine.apply_refactoring(str(path), proposal)
 
 
-def _evaluate(source: str) -> list[str]:
+def _evaluate(source: str, arguments: tuple[str, ...] = ("x", "-y", "-z")) -> list[str]:
     namespace: dict[str, object] = {}
     exec(compile(source, "<formatted>", "exec"), namespace)
-    return [namespace[name]("x", "-y", "-z") for name in ("first", "second")]  # type: ignore[operator]
+    return [namespace[name](*arguments) for name in ("first", "second")]  # type: ignore[operator]
 
 
 def test_checked_formatter_strips_trailing_newline_and_keeps_meaning() -> None:
@@ -122,22 +143,24 @@ def test_black_settings_default_without_configuration(tmp_path: Path) -> None:
 
 def test_engine_inserts_unparsed_text_without_a_formatter(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
-    path.write_text(DUPLICATED_STRINGS)
+    path.write_text(LITERAL_STRINGS)
     result = _refactor(path)
+    assert result is not None
     assert "__extracted_func_0('Mr. '" in result
-    assert _evaluate(result) == _evaluate(DUPLICATED_STRINGS)
+    assert _evaluate(result, ()) == _evaluate(LITERAL_STRINGS, ())
 
 
 def test_engine_formats_helper_and_calls_with_black(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
-    path.write_text(DUPLICATED_STRINGS)
+    path.write_text(LITERAL_STRINGS)
     result = _refactor(path, snippet_formatter=black_formatter(BlackSettings(line_length=60)))
+    assert result is not None
     assert '__extracted_func_0(\n        "Mr. ",' in result, result
     # The helper's long line is wrapped to the configured width and its
     # strings are normalized; the surrounding original text is untouched.
     assert "prefix = 'Mr. '" not in result
     assert max(len(line) for line in result.splitlines() if "__extracted_func" in line) <= 60
-    assert _evaluate(result) == _evaluate(DUPLICATED_STRINGS)
+    assert _evaluate(result, ()) == _evaluate(LITERAL_STRINGS, ())
 
 
 def test_formatted_method_helper_is_reindented_inside_the_class(tmp_path: Path) -> None:
@@ -155,6 +178,10 @@ def test_formatted_method_helper_is_reindented_inside_the_class(tmp_path: Path) 
                     return greeting.strip()
             """))
     result = _refactor(path, snippet_formatter=black_formatter(BlackSettings()))
+    if not lifetime_order_certified():
+        assert result is None
+        return
+    assert result is not None
     tree = ast.parse(result)
     (cls,) = [node for node in tree.body if isinstance(node, ast.ClassDef)]
     assert {node.name for node in cls.body if isinstance(node, ast.FunctionDef)} >= {
@@ -168,7 +195,7 @@ def test_formatted_method_helper_is_reindented_inside_the_class(tmp_path: Path) 
 def test_dry_formats_by_default_and_not_with_no_format(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
-    (source / "m.py").write_text(DUPLICATED_STRINGS)
+    (source / "m.py").write_text(LITERAL_STRINGS)
     formatted = tmp_path / "formatted"
     plain = tmp_path / "plain"
     assert (
@@ -193,7 +220,9 @@ def test_dry_formats_by_default_and_not_with_no_format(tmp_path: Path) -> None:
     )
     assert '"Mr. "' in (formatted / "m.py").read_text()
     assert "'Mr. '" in (plain / "m.py").read_text()
-    assert _evaluate((formatted / "m.py").read_text()) == _evaluate((plain / "m.py").read_text())
+    assert _evaluate((formatted / "m.py").read_text(), ()) == _evaluate(
+        (plain / "m.py").read_text(), ()
+    )
 
 
 R9P2_DOCSTRING_BLOCK = textwrap.dedent("""
@@ -415,6 +444,10 @@ def test_r1792_engine_output_stays_formatted_after_insertion(tmp_path: Path, too
     original = formatter(fixture.read_text()) + "\n"
     path.write_text(original)
     result = _refactor(path, snippet_formatter=formatter)
+    if not lifetime_order_certified():
+        assert result is None
+        return
+    assert result is not None
     assert formatter(result) == result.rstrip("\n")
     assert _evaluate(result) == _evaluate(original)
     assert result != original
@@ -468,6 +501,10 @@ def test_ruff_method_helper_materialization_is_already_formatted(tmp_path: Path)
         """)) + "\n"
     path.write_text(original)
     result = _refactor(path, snippet_formatter=formatter)
+    if not lifetime_order_certified():
+        assert result is None
+        return
+    assert result is not None
     (owner,) = ast.parse(result).body
     assert isinstance(owner, ast.ClassDef)
     (helper,) = [

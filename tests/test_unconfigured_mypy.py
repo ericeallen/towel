@@ -41,6 +41,8 @@ from typing import FrozenSet, Mapping, Optional, Tuple
 import pytest
 
 from tests.test_helpers import child_mode_flags
+from towel.unification import argument_ownership
+
 from towel._mypy_worker import _PROBE_CACHE, _SUPPLIED_TEXT_RECORD
 from towel.type_inference import (
     CheckFailure,
@@ -357,10 +359,14 @@ def test_an_unannotated_test_the_projects_mypy_never_checks_does_not_refuse_the_
     run = _dry(tmp_path)
     assert run.returncode == 0, run.stdout + run.stderr
     written = (tmp_path / "pkg" / "core.py").read_text(encoding="utf-8")
-    assert (
-        "def __extracted_func_0(delta: int, values: 'list[int]', _towel_owner: 'object') -> int:"
-        in written
-    ), written
+    if argument_ownership._supported_runtime():
+        assert (
+            "def __extracted_func_0(delta: int, values: 'list[int]', _towel_owner: 'object') -> int:"
+            in written
+        ), written
+    else:
+        assert written == textwrap.dedent(TWINS).lstrip()
+        assert "lifetime_order_uncertified" in run.stdout
     assert (tmp_path / "tests" / "test_core.py").read_text(encoding="utf-8") == textwrap.dedent(
         UNCHECKED_TEST
     ).lstrip()
@@ -379,10 +385,14 @@ def test_an_error_the_projects_mypy_reports_in_the_package_is_left_as_it_was(
     assert "The original project's type check reports 1 error(s) in 1 file(s)." in run.stderr
     assert "  pkg/core.py: 1" in run.stderr
     written = (tmp_path / "pkg" / "core.py").read_text(encoding="utf-8")
-    assert (
-        "def __extracted_func_0(delta: int, values: 'list[int]', _towel_owner: 'object') -> int:"
-        in written
-    ), written
+    if argument_ownership._supported_runtime():
+        assert (
+            "def __extracted_func_0(delta: int, values: 'list[int]', _towel_owner: 'object') -> int:"
+            in written
+        ), written
+    else:
+        assert written == broken
+        assert "lifetime_order_uncertified" in run.stdout
     assert "WRONG: str = first([1])" in written
     after = _plain_mypy(tmp_path, ("pkg",))
     assert before[0] == after[0] == "checked"

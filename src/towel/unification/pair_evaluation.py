@@ -99,12 +99,14 @@ from .annotation_wiring import HelperAnnotationWiring, declared_oldest_python
 from .annotations import complete_with_any
 from .placement import HelperPlacement, _helper_reads_class_private_names
 from .profitability import worthwhile_helper
+from .unsupported_syntax import unsupported_syntax
 from .block_analysis import BlockAnalysis
 from .engine_state import BlockSite
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
+from . import argument_ownership
 from .argument_ownership import argument_handoff_fits
 from .narrowing import (
     caller_narrowing_leaves_with_block,
@@ -734,6 +736,11 @@ class PairEvaluation(
 
     def _guard_pair(self, pair: CodeBlockPair, functions: FunctionIndex) -> Optional[_PairSetup]:
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""
+        for nodes in (pair.block1_nodes, pair.block2_nodes):
+            unsupported = unsupported_syntax(nodes)
+            if unsupported is not None:
+                self._debug_reject(RejectReason.UNSUPPORTED_SYNTAX, pair, detail=unsupported)
+                return None
         ctx = self._resolve_pair_context(pair, functions)
         blocks = (
             (
@@ -1095,6 +1102,20 @@ class PairEvaluation(
         if debug_enabled:
             VALIDATION.debug("  ✓ Unification successful")
             VALIDATION.debug(f"  Substitution: {substitution}")
+        if (
+            self.strict
+            and not argument_ownership._supported_runtime()
+            # Strict mode only: relaxed mode does not promise release order.
+            and any(
+                len(lifetime_bound_names(nodes, returned)) > 1
+                for nodes, returned in (
+                    (pair.block1_nodes, analysis.return_variables1),
+                    (pair.block2_nodes, analysis.return_variables2),
+                )
+            )
+        ):
+            self._debug_reject(RejectReason.LIFETIME_ORDER_UNCERTIFIED, pair)
+            return None
         aligned = align_return_variables(
             analysis.return_variables1,
             analysis.return_variables2,
@@ -1711,6 +1732,9 @@ class PairEvaluation(
             # Relaxed mode calls the helper directly.
             safe_call = spell_retained_bindings(function, nodes, call_node)
             ownership = self._frame_ownership(function, nodes, site=site)
+            if ownership.split and not argument_ownership._supported_runtime():
+                self._debug_reject(RejectReason.LIFETIME_ORDER_UNCERTIFIED, pair)
+                return None
             if ownership.split and ownership.whole_body:
                 handoff = self._argument_handoff_plan(
                     function, nodes, analyzer, safe_call, func_def
@@ -1904,7 +1928,7 @@ class PairEvaluation(
         if home.insert_into_class is None and home.insert_into_function is None:
             candidates += sorted(participating - {canonical_file})
         # Each other module must import the host by a name the program's own
-        # imports show to work where the program runs (docs/DECISIONS.md,
+        # imports show to work where the program runs (docs/design/DECISIONS.md,
         # "Import names come from the program"); a host no import is known to
         # reach from every borrower is never taken.
         program = self.import_graph.program_for(Path(canonical_file))

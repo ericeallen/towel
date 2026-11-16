@@ -33,6 +33,8 @@ from typing import List, Optional, Set
 
 import pytest
 
+from tests.compiler_golden_profiles import lifetime_refusal_profile
+
 from towel.unification.block_comments import (
     DEFAULT_EXCLUSION,
     directive_conflict,
@@ -186,7 +188,12 @@ def test_the_engine_declines_such_a_pair_by_name(
     path.write_text(textwrap.dedent(source), encoding="utf-8")
     original = _engine()
     original.analyze_file(str(path))
-    assert "owned_binding_frame_boundary" in original.declined_pairs
+    assert path.read_text() == textwrap.dedent(source)
+    assert (
+        "lifetime_order_uncertified"
+        if lifetime_refusal_profile()
+        else "owned_binding_frame_boundary"
+    ) in original.declined_pairs
     # Keep identical physical-line/directive boundaries; literal bindings
     # make their ownership harmless while the duplicated print remains useful.
     source = source.replace("def f1(n):", "def f1():").replace("def f2(n):", "def f2():")
@@ -195,6 +202,8 @@ def test_the_engine_declines_such_a_pair_by_name(
         source.replace("total = sum(items)", "total = 0")
         .replace("count = len(items)", "count = 1")
         .replace("scaled = count * 3", "scaled = 3")
+        .replace("b = a * 2", "b = 2")
+        .replace("c = a + b", "c = 3")
     )
     path.write_text(textwrap.dedent(source), encoding="utf-8")
     engine = _engine()

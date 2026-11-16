@@ -30,6 +30,7 @@ import textwrap
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.hostile_execution import observe
 from towel.diagnostics import Settings
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -41,15 +42,22 @@ REQUIRES_TYPE_PARAMETERS = pytest.mark.skipif(
 
 
 def _assert_preserved(
-    source: str, expected: str, tmp_path: Path, *, safe_companion: bool = False
+    source: str,
+    expected: str,
+    tmp_path: Path,
+    *,
+    safe_companion: bool = False,
+    lifetime_transfer: bool = False,
 ) -> None:
     before = tmp_path / "before.py"
     before.write_text(textwrap.dedent(source))
+    original_source = before.read_bytes()
     if safe_companion:
         # Retain the original owned-frame refusal and its binding observations.
         guarded = UnificationRefactorEngine(skip_trivial_helpers=False, settings=SERIAL)
         unchanged, count, _ = guarded.refactor_to_fixed_point(str(before), progress="none")
-        assert count == 0 and unchanged == before.read_text()
+        assert count == 0 and unchanged.encode() == original_source
+        assert before.read_bytes() == original_source
         assert observe("before.py", tmp_path) == (0, expected, [])
         module = ast.parse(textwrap.dedent(source))
         for function in list(ast.walk(module)):
@@ -71,12 +79,19 @@ def _assert_preserved(
         module.body.insert(0, ast.parse("_lexical_events = []").body[0])
         source = ast.unparse(ast.fix_missing_locations(module))
         before.write_text(source)
-    engine = UnificationRefactorEngine(skip_trivial_helpers=False, settings=SERIAL)
-    final, applied, _ = engine.refactor_to_fixed_point(str(before), progress="none")
-    assert applied > 0, "The regression must exercise a real transformation"
-    (tmp_path / "after.py").write_text(final)
+    original_source = before.read_bytes()
     original = observe("before.py", tmp_path)
     assert original == (0, expected, [])
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, settings=SERIAL)
+    final, applied, _ = engine.refactor_to_fixed_point(str(before), progress="none")
+    if lifetime_transfer and not lifetime_order_certified():
+        assert applied == 0
+        assert final.encode() == original_source
+        assert before.read_bytes() == original_source
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+    else:
+        assert applied > 0, "The regression must exercise a real transformation"
+    (tmp_path / "after.py").write_text(final)
     assert observe("after.py", tmp_path) == original
 
 
@@ -143,7 +158,7 @@ def test_unrelated_generic_classes_pass_their_own_type_parameters(
     source += "\n".join(
         f"print({name}().value(1)[0] is {name}.__type_params__[0])" for name in ("First", "Second")
     )
-    _assert_preserved(source, "True\nTrue\n", tmp_path)
+    _assert_preserved(source, "True\nTrue\n", tmp_path, lifetime_transfer=True)
 
 
 @REQUIRES_TYPE_PARAMETERS
@@ -166,6 +181,7 @@ def test_nested_functions_keep_an_enclosing_generic_parameter(tmp_path: Path) ->
         """,
         "True\n",
         tmp_path,
+        lifetime_transfer=True,
     )
 
 

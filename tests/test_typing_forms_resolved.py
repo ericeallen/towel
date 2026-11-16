@@ -43,6 +43,7 @@ from typing import Dict, List, Set, Tuple
 import pytest
 
 from tests.test_helpers import refactor_to_fixed_point_silently, write_file
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 PYPROJECT = '[project]\nname = "sample"\nversion = "0"\n'
@@ -67,6 +68,8 @@ def _pair(header: str, first: str, second: str, *, prelude: str = "") -> str:
             "label = value.name.upper()",
             'return label + "!"',
         ]
+        if not argument_ownership._supported_runtime():
+            body = [*prelude.splitlines(), f'return ({form}).name.upper() + "!"']
         return f"def {name}(raw):\n" + "".join(f"    {line}\n" for line in body)
 
     return f"{header}\n{CLASSES}\n\n{function('first', first)}\n\n{function('second', second)}"
@@ -244,6 +247,16 @@ def second(raw):
 """
 
 
+if not argument_ownership._supported_runtime():
+    SQLGLOT_PAIR = SQLGLOT_PAIR.replace(
+        '    node = exp.cast(exp.column("a"), "INT")\n    wrapped = node.as_(raw)\n    return wrapped.sql()',
+        '    return exp.cast(exp.column("a"), "INT").as_(raw).sql()',
+    ).replace(
+        '    node = exp.cast(exp.column("b"), "INT")\n    wrapped = node.as_(raw)\n    return wrapped.sql()',
+        '    return exp.cast(exp.column("b"), "INT").as_(raw).sql()',
+    )
+
+
 def test_sqlglots_own_cast_is_an_ordinary_call_in_sqlglot(tmp_path: Path) -> None:
     # sqlglot's modules reach its expression builder as ``exp``, which
     # sqlglot/__init__.py binds to sqlglot.expressions, where ``cast`` is a
@@ -286,6 +299,12 @@ def test_a_cast_imported_from_outside_the_project_is_taken_at_its_word(tmp_path:
         labelled = column.label("value")
         return labelled.desc()
     """
+    if not argument_ownership._supported_runtime():
+        for field in ("first", "second"):
+            alchemy = alchemy.replace(
+                f'        column = cast(table.{field}, Integer)\n        labelled = column.label("value")\n        return labelled.desc()',
+                f'        return cast(table.{field}, Integer).label("value").desc()',
+            )
     final, applied = _refactor(tmp_path, {"alchemy.py": textwrap.dedent(alchemy)}, "alchemy.py")
     assert applied >= 1
     assert _parameterized_calls(final, "cast"), final

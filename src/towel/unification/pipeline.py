@@ -32,6 +32,7 @@ module analyses through an explicitly owned AnalysisSession.
 from __future__ import annotations
 
 from typing import (
+    Callable,
     Dict,
     FrozenSet,
     List,
@@ -42,7 +43,6 @@ from typing import (
     Union,
 )
 import ast
-import sys
 from collections import OrderedDict
 import hashlib
 from dataclasses import dataclass
@@ -51,6 +51,8 @@ import os
 from ..canonical_ast import canonical_dump
 from ..analysis_sources import parse_analysis_source, parser_configuration, parsing_is_pure
 from .models import (
+    AnalysisCensus,
+    SkippedFile,
     RawModule,
     ParsedModule,
     FunctionArtifact,
@@ -61,15 +63,8 @@ from .models import (
 from .models import FunctionNode
 from .scope_analyzer import ScopeAnalyzer
 from .overlap import filter_overlapping_proposals
-from .progress import (
-    DEFAULT_PROGRESS,
-    ProgressBar,
-    ProgressMode,
-    load_tqdm,
-    quietly,
-    render_inline_bar,
-    wants_bar,
-)
+from .progress import DEFAULT_PROGRESS, ProgressMode, ProgressRenderer
+
 from ..diagnostics import LOG, Settings
 from ..source_text import read_source
 from .visitors import DefinitionDepthVisitor, FunctionCollector
@@ -232,6 +227,28 @@ def filter_overlaps(proposals: List[RefactoringProposal]) -> List[RefactoringPro
 
 class SourceFileError(Exception):
     """An expected source read, decoding or syntax failure."""
+
+
+def skipped_because(error: SourceFileError) -> str:
+    """Why a file was skipped, as a clause a user can act on: ``it is not UTF-8 text ...``."""
+    cause = error.__cause__
+    # Python 3.14 and later reject a null byte while decoding, so UTF-16 text
+    # without a coding comment fails there for its null bytes; a UTF-8 source
+    # holding one is refused before analysis (program_files), never skipped.
+    if isinstance(cause, UnicodeError) or (
+        isinstance(cause, SyntaxError)
+        and ("encoding" in str(cause.msg) or "null bytes" in str(cause.msg))
+    ):
+        return (
+            "it is not UTF-8 text and declares no other encoding (a coding comment on its first"
+            " two lines)"
+        )
+    if isinstance(cause, SyntaxError):
+        # Its own words name the file and line: "'(' was never closed (m.py, line 1)".
+        return str(cause)
+    if isinstance(cause, OSError):
+        return f"it cannot be read: {cause.strerror or cause}"
+    return str(error)
 
 
 @dataclass(frozen=True)
@@ -411,26 +428,6 @@ def _read_and_normalize_module(path: str) -> Tuple[str, ast.AST]:
     return src, tree
 
 
-def _create_progress_bar(
-    use_progress: bool, total: int, desc: str, unit: str
-) -> Optional[ProgressBar]:
-    """Return a tqdm-style progress bar if tqdm is available, else None."""
-    if not use_progress or total <= 0:
-        return None
-    tqdm_cls = load_tqdm()
-    if tqdm_cls is None:
-        return None
-    try:
-        return tqdm_cls(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=False)
-    except Exception:
-        return None
-
-
-def _close_progress_bar(bar: Optional[ProgressBar]) -> None:
-    if bar is not None:
-        quietly(bar.close)
-
-
 def run_pipeline(
     paths: Sequence[str],
     *,
@@ -439,6 +436,7 @@ def run_pipeline(
     progress: ProgressMode = DEFAULT_PROGRESS,
     invalidate_paths: Optional[Sequence[str]] = None,
     changed_files: Optional[FrozenSet[str]] = None,
+    census: Optional[Callable[[AnalysisCensus], None]] = None,
 ) -> List[RefactoringProposal]:
     """Analyze current files and propose changes using isolated analysis graphs.
 
@@ -446,39 +444,32 @@ def run_pipeline(
     Standalone calls use a fresh session. Engines explicitly supply their own
     bounded session to reuse unchanged files. Invalidation forces fresh analysis;
     ordinary calls still read and compare source content before reusing an entry.
+    ``census``, when given, is told what the analysis read before any pair is judged.
     """
     analysis_session = session if session is not None else AnalysisSession()
     if invalidate_paths:
         analysis_session.invalidate(invalidate_paths)
 
-    use_progress = wants_bar(progress)
-    bar = _create_progress_bar(use_progress, len(paths), "analyze", "file")
-    inline_progress = use_progress and bar is None and len(paths) > 0
-    if inline_progress:
-        print("Analyzing files:", end=" ", flush=True, file=sys.stderr)
+    bar = ProgressRenderer(progress, total=len(paths), desc="Analyzing files", unit="file")
     analyses: List[ModuleAnalysis] = []
+    skipped: List[SkippedFile] = []
     try:
-        for index, path in enumerate(paths, 1):
+        for path in paths:
             try:
                 analyses.append(analysis_session.analyze_module(path))
             except SourceFileError as error:
-                LOG.warning("Skipping %s: %s", path, error)
-            if bar is not None:
-                quietly(lambda: bar.update(1))
-            elif inline_progress:
-                percent = int(100 * index / len(paths))
-                print(
-                    f"\rAnalyzing files: [{render_inline_bar(percent)}] {percent:3d}%",
-                    end="",
-                    flush=True,
-                    file=sys.stderr,
-                )
+                # A caller taking the census reports what was skipped, once a
+                # run; without one, each analysis says so as it happens.
+                if census is None:
+                    LOG.warning("Skipping %s: %s", path, error)
+                skipped.append(SkippedFile(path, skipped_because(error)))
+            bar.update()
     finally:
-        _close_progress_bar(bar)
-        if inline_progress:
-            print(file=sys.stderr)
+        bar.close()
 
     functions = [function for analysis in analyses for function in analysis.functions]
+    if census is not None:
+        census(AnalysisCensus(len(analyses), len(functions), tuple(skipped)))
     classes = [info for analysis in analyses for info in analysis.module.class_infos]
     with sharing_if_transfer_proofs(
         tuple(

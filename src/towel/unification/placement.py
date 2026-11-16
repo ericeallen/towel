@@ -22,7 +22,7 @@ a class named only with underscores, which mangles nothing, takes none. No
 other class ever takes a helper: methods of
 sibling classes, of a parent and a child, or of classes in different modules
 share a module-level helper that takes the receiver explicitly, as does
-everything else (docs/DECISIONS.md, "A method helper lives in the class that
+everything else (docs/design/DECISIONS.md, "A method helper lives in the class that
 holds both duplicates"). This module also rewrites a rendered call into
 method form and the helper signature to match.
 """
@@ -955,7 +955,7 @@ class HelperPlacement(EngineState):
         the code. Blocks shared by sibling classes, by a parent and a child,
         or by classes in different modules get the module-level helper that
         takes the receiver as an argument, and whether it belongs in a class
-        is left to whoever reviews the change (docs/DECISIONS.md, "Towel does
+        is left to whoever reviews the change (docs/design/DECISIONS.md, "Towel does
         not change externally visible class design").
         """
         if not (method_info1.receiver_known and method_info2.receiver_known):

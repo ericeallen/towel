@@ -31,7 +31,8 @@ from tests.test_cli_integration import BODY
 
 def _write_project(root: Path, prefix: str, *, independent_import: bool) -> None:
     (root / "pyproject.toml").write_text('[project]\nname="fresh-host"\nversion="0"\n')
-    body = "def {name}(seed):\n" + BODY.replace("x", "seed").replace(
+    # Literal inputs let these tests reach import validation on every runtime.
+    body = "def {name}():\n    seed = 3\n" + BODY.replace("x", "seed").replace(
         "return k", "return k * {factor}"
     )
     (root / "a.py").write_text(prefix + body.format(name="first", factor=5))
@@ -42,7 +43,7 @@ def _write_project(root: Path, prefix: str, *, independent_import: bool) -> None
         # This import is unconditional in its own module, but the driver's
         # execution never imports that module or calls b.unused.
         (root / "independent.py").write_text("import a\n")
-    (root / "run.py").write_text("import b\nprint(b.second(3))\n")
+    (root / "run.py").write_text("import b\nprint(b.second())\n")
 
 
 def _run(root: Path) -> str:
@@ -130,6 +131,6 @@ def test_complete_cross_module_preview_handles_non_table_tool_settings(
         env={**os.environ, "TOWEL_WORKERS": "1"},
     )
     assert result.returncode == 0, result.stderr
-    assert "Termination: fixed_point" in result.stdout
+    assert "Termination" not in result.stdout and "Stopped at the limit" not in result.stdout
     assert "2 refactoring" in result.stdout
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before

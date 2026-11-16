@@ -17,6 +17,7 @@ import warnings
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.canonical_ast import exact_dump
 from towel.analysis_sources import parsing_is_pure
 from towel.diagnostics import VALIDATION
@@ -253,16 +254,22 @@ def test_accepted_pair_retains_both_fresh_proofs_for_each_caller(
         memoization_disabled() if disabled else nullcontext(),
     ):
         result = _proposal(inputs)
-    assert result is not None
     assert inputs.engine.events[:4] == ["bindings", "shape", "unify", "nested"]
-    assert inputs.engine.proofs == [
-        ("f", None, True),
-        ("g", None, True),
-        ("f", ("doubled", "answer"), True),
-        ("g", ("doubled", "answer"), True),
-    ]
+    if lifetime_order_certified():
+        assert result is not None
+        assert inputs.engine.proofs == [
+            ("f", None, True),
+            ("g", None, True),
+            ("f", ("doubled", "answer"), True),
+            ("g", ("doubled", "answer"), True),
+        ]
+        rendered = inputs.engine.apply_refactoring(inputs.pair.file_path, result)
+    else:
+        assert result is None
+        assert str(inputs.engine._pair_rejection) == "lifetime_order_uncertified"
+        rendered = Path(inputs.pair.file_path).read_text()
+        assert rendered == inputs.pair.source1
     assert exact_dump(inputs.module) == before
-    rendered = inputs.engine.apply_refactoring(inputs.pair.file_path, result)
     for text in (inputs.pair.source1, rendered):
         namespace: Dict[str, object] = {}
         exec(compile(text, "<proof-order>", "exec"), namespace)
@@ -347,6 +354,9 @@ def test_warning_capable_sources_keep_native_warning_and_refusal_order(
             warnings.simplefilter(policy)
             with evaluation.deferring_pair_if_proofs(inputs.engine) if deferred else nullcontext():
                 proposal = _proposal(inputs)
+                if policy == "always" and not lifetime_order_certified():
+                    assert proposal is None
+                    assert str(inputs.engine._pair_rejection) == "lifetime_order_uncertified"
         observed.append(
             (
                 [(item.category.__name__, str(item.message)) for item in emitted],
@@ -357,7 +367,8 @@ def test_warning_capable_sources_keep_native_warning_and_refusal_order(
     assert observed[0] == observed[1]
     assert observed[0][1][0] == "nested"
     if policy == "always":
-        assert observed[0][0] and observed[0][2]
+        assert observed[0][0]
+        assert observed[0][2] is lifetime_order_certified()
     else:
         assert not observed[0][2]
 
@@ -377,7 +388,13 @@ def test_outside_fallback_keeps_legacy_three_argument_unify_call(
         return original(pair, analysis, ctx)
 
     monkeypatch.setattr(inputs.engine, "_unify_pair", legacy)
-    assert _proposal(inputs) is not None and calls == 1
+    proposal = _proposal(inputs)
+    assert calls == 1
+    if lifetime_order_certified():
+        assert proposal is not None
+    else:
+        assert proposal is None
+        assert str(inputs.engine._pair_rejection) == "lifetime_order_uncertified"
 
 
 def test_malformed_direct_function_keeps_original_guard_exception(tmp_path: Path) -> None:
@@ -416,7 +433,12 @@ def test_actual_analyze_file_owns_the_scheduling_scope_and_releases_it(tmp_path:
     before = path.read_bytes()
     assert evaluation._IF_PROOF_OWNER.get() is None
     proposals = engine.analyze_file(str(path))
-    assert proposals and any(engine.schedules)
+    assert any(engine.schedules)
+    if lifetime_order_certified():
+        assert proposals
+    else:
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     assert evaluation._IF_PROOF_OWNER.get() is None
     assert path.read_bytes() == before
 

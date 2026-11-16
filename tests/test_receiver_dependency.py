@@ -47,6 +47,7 @@ import pytest
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_helpers import method_helper_calls
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -92,6 +93,10 @@ def _refactored(tmp_path: Path, source: str) -> Tuple[str, Any]:
     initial_proposals = original_engine.analyze_file(str(original_path))
     if "self.offset" in source:
         assert initial_proposals == []
+    elif not lifetime_order_certified():
+        assert initial_proposals == []
+        assert original_engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert original_path.read_text() == source
     else:
         # Occurrence-specific offsets now recover these complete bodies too.
         assert len(initial_proposals) == 1
@@ -132,10 +137,15 @@ def _refactored(tmp_path: Path, source: str) -> Tuple[str, Any]:
     project.mkdir()
     (project / "program.py").write_text(source)
     output = tmp_path / "output"
-    UnificationRefactorEngine(skip_trivial_helpers=False).refactor_directory_to_fixed_point(
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
+    results, _ = engine.refactor_directory_to_fixed_point(
         str(project), str(output), progress="none"
     )
     written = (output / "program.py").read_text()
+    if not lifetime_order_certified():
+        assert results == {}
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert written == source
     return written, _outcome(written)
 
 
@@ -148,7 +158,11 @@ def test_a_method_reached_through_its_class_keeps_working(tmp_path: Path) -> Non
 
 def test_the_helper_is_a_module_function_that_asks_for_no_receiver(tmp_path: Path) -> None:
     """Why it works: no receiver is asked for, and nothing names the class."""
-    written, _ = _refactored(tmp_path, UNBOUND)
+    written, after = _refactored(tmp_path, UNBOUND)
+    assert after == (14, 17)
+    if not lifetime_order_certified():
+        assert "extracted_func" not in written
+        return
     module = ast.parse(written)
     helper = next(
         node
@@ -169,6 +183,9 @@ def test_a_method_that_uses_its_receiver_still_gets_an_instance_helper(tmp_path:
     assert _outcome(USES_RECEIVER) == (23, 26)
     written, after = _refactored(tmp_path, USES_RECEIVER)
     assert after == (23, 26), written
+    if not lifetime_order_certified():
+        assert "extracted_func" not in written
+        return
     helper = next(
         statement
         for node in ast.parse(written).body

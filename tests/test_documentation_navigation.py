@@ -14,6 +14,11 @@ Check that each guide has an index entry and a way back, and that local links
 resolve to real files and real prose headings. Do not count headings hidden in
 code examples as destinations. These tests protect navigation, not a preferred
 word count or an immutable layout; factual release regressions remain separate.
+
+The pages under docs/ are also the documentation site, which serves nothing outside
+docs/. A page there names a repository file outside docs/ by its GitHub address on
+the default branch, and that address is checked against this checkout like a
+relative link.
 """
 
 from __future__ import annotations
@@ -29,6 +34,23 @@ import pytest
 from tests.test_readme_links import _destinations
 
 ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_FILES = re.compile(r"https://github\.com/ericeallen/towel/(?:blob|tree)/main/([^#?]+)")
+# Retained release evidence is never edited, so its links keep naming where these
+# records were when it was recorded. They moved in 2.0, when the user guides and the
+# project's records were separated; at the evidence's own commit the old paths exist.
+MOVED_SINCE_RECORDED = {
+    "docs/PRODUCTION_READINESS.md": "docs/maintainers/PRODUCTION_READINESS.md",
+    "docs/RELEASING.md": "docs/maintainers/RELEASING.md",
+    "docs/proposals/next-validation-final.md": "docs/design/proposals/next-validation-final.md",
+}
+FROZEN_EVIDENCE = "tests/release_evidence/"
+# Each documentation section: its index, and the directory whose pages it lists.
+SECTIONS = (
+    ("docs/README.md", "docs"),
+    ("docs/design/README.md", "docs/design"),
+    ("docs/design/proposals/README.md", "docs/design/proposals"),
+    ("docs/maintainers/README.md", "docs/maintainers"),
+)
 
 
 def _prose(markdown: str) -> str:
@@ -52,14 +74,37 @@ def _local_links(name: str, markdown: str) -> list[tuple[str, str]]:
     result = []
     for destination in _destinations(markdown):
         link = urlsplit(destination)
+        repository_file = REPOSITORY_FILES.fullmatch(destination.split("#", 1)[0])
+        if repository_file:
+            target = posixpath.normpath(unquote(repository_file.group(1)))
+            result.append((target, unquote(link.fragment)))
+            continue
         if link.scheme or link.netloc:
             continue
         path = unquote(link.path)
         target = posixpath.normpath(str(PurePosixPath(name).parent / path)) if path else name
         if path.startswith("/"):
             target = path.removeprefix("/")
+        if name.startswith(FROZEN_EVIDENCE):
+            target = MOVED_SINCE_RECORDED.get(target, target)
         result.append((target, unquote(link.fragment)))
     return result
+
+
+def _relative_links_leaving_docs(documents: Mapping[str, str]) -> list[str]:
+    """Relative links from a site page to a file the site does not serve."""
+    leaving = []
+    for name, markdown in documents.items():
+        if not name.startswith("docs/"):
+            continue
+        for destination in _destinations(markdown):
+            link = urlsplit(destination)
+            if link.scheme or link.netloc or not link.path:
+                continue
+            target = posixpath.normpath(str(PurePosixPath(name).parent / unquote(link.path)))
+            if not target.startswith("docs/"):
+                leaving.append(f"{name}: {destination}")
+    return leaving
 
 
 def _check_links(documents: Mapping[str, str], files: set[str]) -> None:
@@ -67,7 +112,9 @@ def _check_links(documents: Mapping[str, str], files: set[str]) -> None:
     for name, markdown in documents.items():
         for target, fragment in _local_links(name, markdown):
             inspected += 1
-            assert target in files, f"{name}: missing local destination {target}"
+            assert target in files or (
+                (ROOT / target).is_dir() and not fragment
+            ), f"{name}: missing local destination {target}"
             if fragment and target.endswith(".md"):
                 assert target in documents, f"{name}: uninspected heading destination {target}"
                 assert fragment in _anchors(
@@ -105,12 +152,56 @@ def test_documentation_local_links_and_contents_resolve() -> None:
     _check_links(documents, files)
 
 
-def test_every_guide_is_indexed_and_links_back() -> None:
-    _check_index(_documents(), "docs/README.md", "docs")
+@pytest.mark.parametrize(("index", "directory"), SECTIONS)
+def test_every_page_is_indexed_and_links_back(index: str, directory: str) -> None:
+    _check_index(_documents(), index, directory)
 
 
-def test_every_proposal_is_indexed_and_links_back() -> None:
-    _check_index(_documents(), "docs/proposals/README.md", "docs/proposals")
+def test_every_directory_of_pages_has_a_section_index() -> None:
+    directories = {
+        str(PurePosixPath(name).parent)
+        for name in _documents()
+        if name.startswith("docs/") and not name.startswith("docs/maintainers/reviews/")
+    }
+    assert directories == {directory for _, directory in SECTIONS}
+
+
+def test_site_pages_link_outside_docs_only_by_github_address() -> None:
+    """The site serves docs/ alone; Zensical 0.1 turns `../X.md` into a link to its parent."""
+    assert _relative_links_leaving_docs(_documents()) == []
+
+
+def test_links_leaving_docs_are_found() -> None:
+    documents = {
+        "docs/guide.md": "[Up](../CHANGELOG.md) [Same](other.md) [Web](https://example.org/)",
+        "docs/sub/page.md": "[Index](../README.md) [Source](../../src/towel/cli.py)",
+        "CONTRIBUTING.md": "[Guide](docs/guide.md) [Up](../outside.md)",
+    }
+    assert _relative_links_leaving_docs(documents) == [
+        "docs/guide.md: ../CHANGELOG.md",
+        "docs/sub/page.md: ../../src/towel/cli.py",
+    ]
+
+
+def test_github_addresses_on_main_are_checked_as_local_files() -> None:
+    files = {"docs/guide.md", "CHANGELOG.md"}
+    good = {"docs/guide.md": "[Log](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md)"}
+    _check_links({**good, "CHANGELOG.md": "# Changelog\n"}, files)
+    bad = {"docs/guide.md": "[Gone](https://github.com/ericeallen/towel/blob/main/GONE.md)"}
+    with pytest.raises(AssertionError, match="missing local destination GONE.md"):
+        _check_links(bad, files)
+    anchor = {
+        "docs/guide.md": "[Log](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#x)"
+    }
+    with pytest.raises(AssertionError, match="missing CHANGELOG.md#x"):
+        _check_links({**anchor, "CHANGELOG.md": "# Changelog\n"}, files)
+
+
+def test_only_frozen_evidence_may_name_a_record_where_it_was() -> None:
+    link = "[Readiness](../../../docs/PRODUCTION_READINESS.md)"
+    evidence = "tests/release_evidence/x/README.md"
+    assert _local_links(evidence, link) == [("docs/maintainers/PRODUCTION_READINESS.md", "")]
+    assert _local_links("tests/x/y/README.md", link) == [("docs/PRODUCTION_READINESS.md", "")]
 
 
 @pytest.mark.parametrize("destination", ["missing.md", "guide.md#missing", "guide.md#fake"])

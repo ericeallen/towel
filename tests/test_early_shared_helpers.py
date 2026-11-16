@@ -35,6 +35,15 @@ _BODY = """def {name}(seed):
 """
 
 
+# Import timing needs a real helper on every interpreter, independently of
+# cleanup proofs for multiple locally owned arithmetic results.
+_BORROWED_BODY = """def {name}(seed):
+    assert seed >= 0
+    assert seed < 10
+    return ((seed + 1) * 2 + 3) * {factor}
+"""
+
+
 def _run(root: Path, search_paths: tuple[Path, ...] = ()) -> str:
     paths = [str(root), *(str(path) for path in search_paths)]
     result = subprocess.run(
@@ -85,10 +94,10 @@ def test_shared_helper_exists_in_a_partial_host(
         prefix = reentry
     header = '#!/usr/bin/env python3\n# coding: utf-8\n"""Host documentation."""\n'
     header += "from __future__ import annotations\n"
-    (package / "a.py").write_text(header + prefix + _BODY.format(name="first", factor=5))
+    (package / "a.py").write_text(header + prefix + _BORROWED_BODY.format(name="first", factor=5))
     # A direct module import proves the host is present; a package member
     # import could instead bind an unrelated existing attribute.
-    (package / "b.py").write_text("import pkg.a\n" + _BODY.format(name="second", factor=7))
+    (package / "b.py").write_text("import pkg.a\n" + _BORROWED_BODY.format(name="second", factor=7))
     (tmp_path / "run.py").write_text("from pkg import a, b\nprint(a.first(2), b.second(3))\n")
     expected = ("49\n" if call_during_import else "") + "45 77\n"
     assert _run(tmp_path) == expected
@@ -112,10 +121,10 @@ def test_previous_helper_body_can_run_before_later_imports(tmp_path: Path) -> No
     (tmp_path / "pyproject.toml").write_text('[project]\nname="existing-helper"\nversion="0"\n')
     (package / "__init__.py").write_text("")
     (package / "a.py").write_text(
-        _BODY.format(name="__extracted_func_9", factor=5)
+        _BORROWED_BODY.format(name="__extracted_func_9", factor=5)
         + "\nprint(__extracted_func_9(2))\nfrom pkg import b\n"
     )
-    (package / "b.py").write_text(_BODY.format(name="second", factor=7))
+    (package / "b.py").write_text(_BORROWED_BODY.format(name="second", factor=7))
     (tmp_path / "run.py").write_text("from pkg import a, b\nprint(b.second(3))\n")
     expected = "45\n77\n"
     assert _run(tmp_path) == expected
@@ -130,9 +139,9 @@ def test_early_helper_keeps_existing_names_and_star_imports(tmp_path: Path) -> N
     (package / "__init__.py").write_text("")
     (package / "a.py").write_text(
         "__extracted_func_0 = 111\n__all__ = ['first', '__extracted_func_0']\n"
-        + _BODY.format(name="first", factor=5)
+        + _BORROWED_BODY.format(name="first", factor=5)
     )
-    (package / "b.py").write_text("import pkg.a\n" + _BODY.format(name="second", factor=7))
+    (package / "b.py").write_text("import pkg.a\n" + _BORROWED_BODY.format(name="second", factor=7))
     (tmp_path / "run.py").write_text(
         "from pkg.a import *\nfrom pkg import b\n"
         "print(first(2), b.second(3), __extracted_func_0)\n"
@@ -161,12 +170,12 @@ def test_external_star_import_cannot_overwrite_an_early_helper(
         "if 0 > 1:\n    from wildcard import *\n" if inactive else "from wildcard import *\n"
     )
     (package / "a.py").write_text(
-        (importing if placement == "host" else "") + _BODY.format(name="first", factor=5)
+        (importing if placement == "host" else "") + _BORROWED_BODY.format(name="first", factor=5)
     )
     (package / "b.py").write_text(
         (importing if placement == "borrower-leading" else "")
         + "import pkg.a\n"
-        + _BODY.format(name="second", factor=7)
+        + _BORROWED_BODY.format(name="second", factor=7)
         + (importing if placement == "borrower-late" else "")
     )
     (project / "run.py").write_text("from pkg import a, b\nprint(a.first(2), b.second(3))\n")

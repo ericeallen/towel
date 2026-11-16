@@ -26,9 +26,14 @@ that already holds unannotated functions keeps the rung.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
+import pytest
+
+from tests.test_helpers import lifetime_order_certified
 from tests.typed_fixtures import apply_one, requires_mypy
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 NO_MYPY_CONFIGURATION = "[project]\nname = 'labels'\nversion = '0'\n"
 
@@ -58,24 +63,75 @@ def decode() -> list[str]:
 """
 
 
+SINGLE_BINDING_LABELS = """
+def encode() -> list[str]:
+    result = []
+    if not "a.b":
+        raise ValueError("empty")
+    result.append("a")
+    return result
+
+
+def decode() -> list[str]:
+    result = []
+    if not "a.b":
+        raise ValueError("empty")
+    result.extend(["b", "c"])
+    return result
+"""
+"""The empty-list inference failure without an order among multiple helper locals."""
+
+
+def _assert_uncertified_labels_prefix_refused(tmp_path: Path, source: str) -> None:
+    path = tmp_path / "labels.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, skip_trivial_helpers=False
+    )
+    proposals = engine.analyze_file(str(path))
+    assert "lifetime_order_uncertified" in engine.declined_pairs
+    # Smaller safe prefixes remain discoverable, but the historical helper
+    # that returns result alongside the other locals must never be proposed.
+    assert all(
+        not any(
+            isinstance(node, ast.Name) and node.id == "result"
+            for node in ast.walk(proposal.extracted_function)
+        )
+        for proposal in proposals
+    )
+    assert path.read_text() == source
+
+
 @requires_mypy
+@pytest.mark.parametrize("source", [LABELS, SINGLE_BINDING_LABELS], ids=["original", "one-local"])
 def test_only_an_unannotated_helper_is_declined_in_a_fully_annotated_module(
     tmp_path: Path,
+    source: str,
 ) -> None:
-    outcome = apply_one(tmp_path, LABELS, pick="encode and decode", config=NO_MYPY_CONFIGURATION)
+    if source == LABELS and not lifetime_order_certified():
+        _assert_uncertified_labels_prefix_refused(tmp_path, source)
+        return
+    outcome = apply_one(tmp_path, source, pick="encode and decode", config=NO_MYPY_CONFIGURATION)
     assert outcome.error is not None, outcome.module
     message = str(outcome.error)
     assert "would be the one unannotated function of its module" in message, message
-    assert all(
+    assert outcome.checked_helpers and all(
         " -> " in signature for signature in outcome.checked_helpers
     ), outcome.checked_helpers
 
 
 @requires_mypy
-def test_a_module_that_already_has_unannotated_functions_keeps_the_rung(tmp_path: Path) -> None:
+@pytest.mark.parametrize("source", [LABELS, SINGLE_BINDING_LABELS], ids=["original", "one-local"])
+def test_a_module_that_already_has_unannotated_functions_keeps_the_rung(
+    tmp_path: Path, source: str
+) -> None:
+    original = source + "\n\ndef legacy(value):\n    return value\n"
+    if source == LABELS and not lifetime_order_certified():
+        _assert_uncertified_labels_prefix_refused(tmp_path, original)
+        return
     outcome = apply_one(
         tmp_path,
-        LABELS + "\n\ndef legacy(value):\n    return value\n",
+        original,
         pick="encode and decode",
         config=NO_MYPY_CONFIGURATION,
     )

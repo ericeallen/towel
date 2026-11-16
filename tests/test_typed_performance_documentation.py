@@ -42,7 +42,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "tests/release_evidence/post-1772-performance"
-PROPOSAL = "docs/proposals/next-release.md"
+PROPOSAL = "docs/design/proposals/next-release.md"
 CHANGELOG = "CHANGELOG.md"
 BASELINE = "35035a747e446368b6a5c4f3b1cee3fd1b5487c3"
 CANDIDATE = "1b9719612ae9e844df8fbab2775c0646a0ab7ebf"

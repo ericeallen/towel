@@ -20,7 +20,7 @@ With `cross_module_helpers` (`--cross-module`), a helper shared by several
 modules lives in one of them and the others import it. Towel reads the
 imports every Python file of the project already makes, and writes only an
 import those show to work wherever the program runs
-([Design decisions](DECISIONS.md), *Import names come from the program*):
+([Design decisions](design/DECISIONS.md), *Import names come from the program*):
 
 - between two modules of one package, the relative import, or the absolute
   one when the importing module already spells its own package absolutely

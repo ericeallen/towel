@@ -26,6 +26,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification import placement
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -144,10 +145,21 @@ class Box:
                 stack.enter_context(memoization_disabled())
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
-            assert engine.analyze_files([str(path)], progress="none")
-            assert engine.analyze_files([str(path)], progress="none")
+            for _ in range(2):
+                proposals = engine.analyze_files([str(path)], progress="none")
+                if lifetime_order_certified():
+                    assert proposals
+                else:
+                    assert proposals == []
+                    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
             result, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
-        assert applied > 0
+        if lifetime_order_certified():
+            assert applied > 0
+        else:
+            assert applied == 0
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert result == source
         outputs.append(result)
     assert outputs[0] == outputs[1]
-    assert method_helper_calls(outputs[0])
+    if lifetime_order_certified():
+        assert method_helper_calls(outputs[0])

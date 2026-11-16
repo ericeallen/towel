@@ -14,7 +14,7 @@
 
 """The facts the method-helper hosting rule rests on, held as executable evidence.
 
-docs/DECISIONS.md ("A method helper lives in the class that holds both
+docs/design/DECISIONS.md ("A method helper lives in the class that holds both
 duplicates") keeps a helper in a class only when every duplicate is a method
 of that class, names it class-private, and sends every other shared block to a
 module function that takes the receiver. The justification is a set of claims

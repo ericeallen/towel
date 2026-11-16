@@ -43,13 +43,17 @@ from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
 from tests.compiler_golden_profiles import (
     HISTORICAL_PARAMETER_CELL_GOLDENS,
+    LIFETIME_REFUSAL_GOLDENS,
+    LIFETIME_REFUSAL_CROSSFILE_GOLDENS,
+    lifetime_refusal_profile,
+    crossfile_baseline,
     PARAMETER_CELL_GOLDENS,
     PROFITABILITY_RETAINED_DEFINITIONS,
     _compiled_parameter_cells,
     _compiler_baseline,
     _uses_parameter_cell_golden,
 )
-from tests.generate_baseline import generate_single_file_baseline
+from tests.generate_baseline import generate_single_file_baseline, generate_crossfile_baseline
 
 
 def normalize_generated_names(code: str) -> str:
@@ -161,7 +165,7 @@ def find_duplicate_helpers(root: Path) -> list[str]:
 # whose extraction stops happening, or that starts to be refactored, moves in
 # or out of this set with an explanation in the commit, never silently.
 #
-# Relaxed mode, the default (docs/DECISIONS.md, "Relaxed mode is the default;
+# Relaxed mode, the default (docs/design/DECISIONS.md, "Relaxed mode is the default;
 # strict mode keeps exact lifetimes"), leaves four inputs alone:
 #
 # - bindings_comprehensions.py: every candidate block is a comprehension whose
@@ -235,6 +239,13 @@ EXPECTED_UNCHANGED_CROSSFILE_PROJECTS = frozenset(
 )
 
 
+if lifetime_refusal_profile():
+    # Strict mode only, which alone consults the lifetime certification: all
+    # three remaining whole-body literal/comparison helpers require the
+    # uncertified transfer; the other four profiles still extract safe blocks.
+    STRICT_UNCHANGED_EXAMPLES |= {"syntactic_coverage_comprehensive.py"}
+
+
 class TestCompilerGoldenSelection(unittest.TestCase):
     """Strict mode's goldens depend on the compiler's parameter cells; relaxed mode's do not.
 
@@ -242,6 +253,66 @@ class TestCompilerGoldenSelection(unittest.TestCase):
     ownership transfer keeps the original definitions there. Relaxed mode
     transfers nothing and renders the same on every supported compiler.
     """
+
+    def test_reviewed_lifetime_goldens_remove_uncertified_handoffs(self) -> None:
+        root = project_root / "test_examples_strict_expected_output"
+        for name in LIFETIME_REFUSAL_GOLDENS:
+            with self.subTest(name=name):
+                original = (root / name).read_text()
+                refused = (root / "lifetime_refusals" / name).read_text()
+                self.assertNotEqual(
+                    normalize_generated_names(original), normalize_generated_names(refused)
+                )
+                self.assertIn("_towel_owner", original)
+                self.assertNotIn("_towel_owner", refused)
+                self.assertNotIn("_towel_arguments", refused)
+
+    def test_lifetime_profiles_select_only_reviewed_overrides(self) -> None:
+        """Python support ruling: certified outputs survive new runtime refusals."""
+        for profile, names, select in (
+            ("test_examples_strict_expected_output", LIFETIME_REFUSAL_GOLDENS, _compiler_baseline),
+            (
+                "test_examples_crossfile_expected_output",
+                LIFETIME_REFUSAL_CROSSFILE_GOLDENS,
+                crossfile_baseline,
+            ),
+        ):
+            root = project_root / profile
+            self.assertEqual({p.name for p in (root / "lifetime_refusals").glob("*")}, set(names))
+            for name in (*names, "unaffected.py"):
+                for certified in (True, False):
+                    with (
+                        self.subTest(name=name, certified=certified),
+                        patch(
+                            "towel.unification.argument_ownership._supported_runtime",
+                            return_value=certified,
+                        ),
+                    ):
+                        expected = root / name
+                        if not certified and name in names:
+                            expected = root / "lifetime_refusals" / name
+                        # Parameter-cell fixtures need their real original source.
+                        original = project_root / "test_examples" / name
+                        if certified and name in PARAMETER_CELL_GOLDENS:
+                            cells = PARAMETER_CELL_GOLDENS[name]
+                            if _compiled_parameter_cells(original.read_text(), set(cells)) == cells:
+                                expected = root / "parameter_cells" / name
+                        self.assertEqual(select(original, root), expected)
+
+    def test_uncertified_runtime_cannot_overwrite_certified_goldens(self) -> None:
+        for generate in (generate_single_file_baseline, generate_crossfile_baseline):
+            with (
+                self.subTest(generator=generate.__name__),
+                patch(
+                    "towel.unification.argument_ownership._supported_runtime", return_value=False
+                ),
+                self.assertRaisesRegex(RuntimeError, "certified lifetime goldens"),
+            ):
+                generate(
+                    UnificationRefactorEngine(strict=True),
+                    project_root / "test_examples",
+                    Path("unused"),
+                )
 
     def test_exact_cells_and_cell_free_profiles_have_distinct_goldens(self) -> None:
         for expected in PARAMETER_CELL_GOLDENS.values():
@@ -282,6 +353,7 @@ class TestCompilerGoldenSelection(unittest.TestCase):
             marker.write_text("untouched\n")
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=3, strict=True)
             with (
+                patch("towel.unification.argument_ownership._supported_runtime", return_value=True),
                 patch(
                     "tests.compiler_golden_profiles._compiled_parameter_cells",
                     return_value=PARAMETER_CELL_GOLDENS[name],
@@ -329,7 +401,10 @@ class TestCompilerGoldenSelection(unittest.TestCase):
         examples = project_root / "test_examples"
         goldens = project_root / "test_examples_strict_expected_output"
         for file in HISTORICAL_PARAMETER_CELL_GOLDENS:
-            self.assertEqual(_compiler_baseline(examples / file, goldens), goldens / file)
+            expected = goldens / file
+            if lifetime_refusal_profile() and file in LIFETIME_REFUSAL_GOLDENS:
+                expected = goldens / "lifetime_refusals" / file
+            self.assertEqual(_compiler_baseline(examples / file, goldens), expected)
         for file, names in PROFITABILITY_RETAINED_DEFINITIONS.items():
             original = ast.parse((examples / file).read_text())
             original_defs = {
@@ -406,8 +481,9 @@ class TestSingleFileRegression(unittest.TestCase):
         unchanged = {
             example.name
             for example in self.test_examples.glob("*.py")
-            if (self.expected_output / example.name).is_file()
-            and (self.expected_output / example.name).read_bytes() == example.read_bytes()
+            if _compiler_baseline(example, self.expected_output).is_file()
+            and _compiler_baseline(example, self.expected_output).read_bytes()
+            == example.read_bytes()
         }
         self.assertEqual(
             unchanged,
@@ -661,7 +737,12 @@ class TestCrossFileRegression(unittest.TestCase):
         self.assertTrue(project_dirs, "no cross-file test projects found")
         differences = []
         for project_dir in project_dirs:
-            golden_dir = self.expected_output / project_dir.name
+            # Only strict mode's goldens have a lifetime-refusal profile.
+            golden_dir = (
+                crossfile_baseline(project_dir, self.expected_output)
+                if self.strict
+                else self.expected_output / project_dir.name
+            )
             self.assertTrue(golden_dir.is_dir(), f"no cross-file golden for {project_dir.name}")
             with tempfile.TemporaryDirectory(prefix="towel-regression-") as directory:
                 out = Path(directory) / project_dir.name

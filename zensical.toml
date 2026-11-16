@@ -1,0 +1,138 @@
+# Copyright 2026 Eric Allen
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software distributed
+# under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+# CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+# The documentation site. Build it with `just docs` (strict: any warning fails)
+# and preview it with `just docs-serve`. The pages are the Markdown under docs/,
+# which also reads as plain Markdown on GitHub.
+#
+# Every page under docs/ appears in `nav` below; tests/test_documentation_site.py
+# checks that, because Zensical's strict mode does not report an unlisted page.
+
+[project]
+site_name = "Towel"
+site_description = "Refactor duplicated Python code into shared helper functions"
+site_url = "https://ericeallen.github.io/towel/"
+repo_url = "https://github.com/ericeallen/towel"
+repo_name = "ericeallen/towel"
+edit_uri = "edit/main/docs/"
+docs_dir = "docs"
+site_dir = "site"
+copyright = "Copyright 2026 Eric Allen. Licensed under the Apache License 2.0."
+
+nav = [
+  { "Home" = "README.md" },
+  { "Quick start" = "QUICKSTART.md" },
+  { "Using Towel on a project" = "USING_TOWEL.md" },
+  { "Reading Towel's output" = "GENERATED_CODE.md" },
+  { "Why something was left alone" = [
+    { "Common reasons" = "WHY_LEFT_ALONE.md" },
+    { "Known limitations" = "KNOWN_LIMITATIONS.md" },
+  ] },
+  { "Typed projects" = "TYPING.md" },
+  { "Sharing across modules" = "CROSS_MODULE.md" },
+  { "Naming helpers" = "NAMING.md" },
+  { "Recipes" = "RECIPES.md" },
+  { "Gallery" = "GALLERY.md" },
+  { "FAQ" = "FAQ.md" },
+  { "Command reference" = "CLI_GUIDE.md" },
+  { "Automation and compatibility" = "COMPATIBILITY.md" },
+  { "Python API" = "USAGE_GUIDE.md" },
+  { "Requirements and performance" = [
+    { "Requirements" = "REQUIREMENTS.md" },
+    { "Performance" = "PERFORMANCE.md" },
+  ] },
+  { "How Towel is validated" = "VALIDATION.md" },
+  { "How Towel compares" = "COMPARISON.md" },
+  { "Glossary" = "GLOSSARY.md" },
+  { "Changelog" = "https://github.com/ericeallen/towel/blob/main/CHANGELOG.md" },
+  { "Getting help" = "GETTING_HELP.md" },
+  { "Design (for contributors)" = [
+    "design/README.md",
+    { "Architecture" = "design/ARCHITECTURE.md" },
+    { "Design decisions" = "design/DECISIONS.md" },
+    { "Proposals" = [
+      "design/proposals/README.md",
+      { "October 8 review" = "design/proposals/REVIEW_2026-10-08.md" },
+      { "Decline capabilities" = "design/proposals/decline-capabilities.md" },
+      { "Dethunking" = "design/proposals/dethunking.md" },
+      { "Next release" = "design/proposals/next-release.md" },
+      { "Next validation" = "design/proposals/next-validation.md" },
+      { "Next validation, final" = "design/proposals/next-validation-final.md" },
+      { "Performance roadmap" = "design/proposals/performance-roadmap.md" },
+      { "Preview what dry would do" = "design/proposals/preview-what-dry-would-do.md" },
+      { "The project's own check" = "design/proposals/project-own-check.md" },
+      { "Published 1.772 comparison" = "design/proposals/published-1772-comparison.md" },
+      { "Reuse an existing function" = "design/proposals/reuse-existing-function.md" },
+      { "Shared helper module" = "design/proposals/shared-helper-module.md" },
+      { "Template method" = "design/proposals/template-method.md" },
+      { "Trusted decorators" = "design/proposals/trusted-decorators.md" },
+      { "Type parameters" = "design/proposals/type-parameters.md" },
+    ] },
+  ] },
+  { "Maintainers' records" = [
+    "maintainers/README.md",
+    { "Release procedure" = "maintainers/RELEASING.md" },
+    { "Release log" = "maintainers/RELEASE_LOG.md" },
+    { "Production readiness" = "maintainers/PRODUCTION_READINESS.md" },
+    { "1.947 overview" = "maintainers/RELEASE_1_947.md" },
+    { "1.946 overview" = "maintainers/RELEASE_1_946.md" },
+    { "Historical release evidence" = "maintainers/RELEASE_HISTORY.md" },
+    { "Adversarial review" = "maintainers/ADVERSARIAL_REVIEW.md" },
+    { "Open-source audit" = "maintainers/OPEN_SOURCE_AUDIT.md" },
+    { "Correctness review, October 31" = "maintainers/reviews/gemini-2026-10-31/REPORT.md" },
+    { "Documentation review, October 31" = "maintainers/reviews/gemini-2026-10-31-docs-vs-cli.md" },
+  ] },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.code.copy",
+  "content.tabs.link",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "toc.follow",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+# Anchors as GitHub makes them ("a & b" gives "a--b"), so a link to a heading
+# works in both places; tests/test_documentation_navigation.py models GitHub's.
+toc.slugify = { object = "pymdownx.slugs.slugify", kwds = { case = "lower" } }
+pymdownx.details = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+pymdownx.tabbed.alternate_style = true

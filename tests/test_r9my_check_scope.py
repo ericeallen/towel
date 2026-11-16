@@ -88,17 +88,18 @@ BUMP_TESTS = """\
         assert result == "0.10"
     """
 
+# Literal operands reach project-scope checking without caller transfer proofs.
 TAXES = """\
-    def with_tax(prices: list[float], rate: float) -> float:
-        subtotal = sum(prices)
-        taxed = subtotal * (1 + rate)
+    def with_tax() -> float:
+        subtotal = 3.0
+        taxed = subtotal * 1.1
         rounded = round(taxed, 2)
         return rounded
 
 
-    def without_tax(prices: list[float], rate: float) -> float:
-        subtotal = sum(prices)
-        taxed = subtotal * (1 + rate)
+    def without_tax() -> float:
+        subtotal = 7.0
+        taxed = subtotal * 1.2
         rounded = round(taxed, 2)
         return rounded
     """
@@ -109,7 +110,7 @@ def _tax_values(source: str) -> tuple[object, object]:
     exec(compile(textwrap.dedent(source), "<scope-fixture>", "exec"), namespace)
     first, second = namespace["with_tax"], namespace["without_tax"]
     assert callable(first) and callable(second)
-    return first([1.0, 2.0], 0.1), second([3.0, 4.0], 0.2)
+    return first(), second()
 
 
 @requires_mypy
@@ -174,7 +175,7 @@ def test_r9my_candidates_are_checked_without_the_directory_exclude_leaves_out(
 
 @requires_mypy
 def test_r9my_a_consumer_outside_the_target_is_not_built(tmp_path: Path) -> None:
-    example = "from calc.core import with_tax\n\nprint(with_tax([1.0, 2.0], 0.1))\n"
+    example = "from calc.core import with_tax\n\nprint(with_tax())\n"
     _write(
         tmp_path,
         {

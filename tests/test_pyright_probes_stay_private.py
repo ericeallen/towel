@@ -34,6 +34,7 @@ from typing import Any, List
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel import type_inference
 from towel.type_inference import PyrightOracle, RevealRequest, Subtyping
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -98,10 +99,13 @@ def test_command_line_reveals_and_subtypes_write_nothing_into_the_project(
     assert sorted(p.name for p in path.parent.iterdir()) == ["m.py", "pyproject.toml"]
 
 
+@pytest.mark.parametrize("owned", [True, False], ids=["owned", "literal"])
 def test_an_out_of_place_run_without_a_language_server_leaves_its_input_alone(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owned: bool
 ) -> None:
     path = _project(tmp_path / "project")
+    source = SOURCE if owned else SOURCE.replace("value: int", "").replace("value + 1", "2")
+    path.write_text(source, encoding="utf-8")
     monkeypatch.setattr(type_inference, "_pyright_langserver_command", lambda: None)
     seen: List[List[str]] = []
     _watch_pyright_runs(monkeypatch, path.parent, seen)
@@ -120,6 +124,11 @@ def test_an_out_of_place_run_without_a_language_server_leaves_its_input_alone(
             )
     finally:
         oracle.close()
-    assert sum(count for count, _ in results.values()) == 1
+    if owned and not lifetime_order_certified():
+        assert sum(count for count, _ in results.values()) == 0
+        assert "lifetime_order_uncertified" in engine.declined_pairs
+        assert (output / "m.py").read_text(encoding="utf-8") == source
+    else:
+        assert sum(count for count, _ in results.values()) == 1
     assert seen and all(probes == [] for probes in seen), seen
-    assert path.read_text(encoding="utf-8") == SOURCE
+    assert path.read_text(encoding="utf-8") == source

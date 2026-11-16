@@ -504,7 +504,7 @@ def _restoration(journal: Path) -> Optional[List[Tuple[Path, bytes, int, str]]]:
     return originals
 
 
-def recover(journal: Path) -> None:
+def recover(journal: Path) -> List[Path]:
     """Restore originals from a trusted local journal, refusing conflicting edits.
 
     Validate the entire journal and all targets before restoring its first file.
@@ -522,7 +522,8 @@ def recover(journal: Path) -> None:
         raise type(error)(f"{error}. {_instead_of_recovery(journal, error)}") from error
     if originals is None:
         _cleanup(journal)
-        return
+        return []
+    restored: List[Path] = []
     for path, content, mode, after in reversed(originals):
         _safe_target(path)
         current = path.read_bytes()
@@ -531,6 +532,8 @@ def recover(journal: Path) -> None:
         if _digest(current) != after:
             raise ChangeConflict(f"External edit during recovery: {path}")
         _replace(path, content, mode)
+        restored.append(path)
     _write_new(journal / "complete", b"rolled back\n")
     _sync_directory(journal)
     _cleanup(journal)
+    return list(reversed(restored))

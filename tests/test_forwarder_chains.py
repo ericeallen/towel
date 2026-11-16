@@ -46,6 +46,7 @@ from typing import Dict, List, Tuple
 
 import pytest
 
+from tests.test_helpers import strict_lifetime_refusal
 from tests.test_helpers import (
     function_def,
     module_functions,
@@ -84,6 +85,36 @@ def _assert_runtime_values(tmp_path: Path, final: str, names: list[str]) -> None
     assert values(final) == values((tmp_path / "m.py").read_text())
 
 
+def _assert_lifetime_refusal(path: Path, final: str, *, min_lines: int = 3) -> None:
+    original = path.read_text()
+    engine = UnificationRefactorEngine(min_lines=min_lines, skip_trivial_helpers=False)
+    assert engine.analyze_file(str(path)) == []
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+    assert path.read_text() == original == final
+
+
+def _assert_whole_bodies_extracted_beside_a_lifetime_refusal(
+    path: Path, final: str, *, kept: str, shared: tuple[str, ...]
+) -> None:
+    """On an interpreter whose release order strict mode has not certified.
+
+    The clustered helper that keeps every site's names alive is declined for
+    release order; since the unify lane parameterizes differing f-string text,
+    the functions that only print through the block are still extracted whole,
+    without kept bindings, and the function that reads the names afterwards is
+    left as it was.
+    """
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False)
+    engine.analyze_file(str(path))
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+    assert "_towel_keep" not in final
+    original = module_functions(path.read_text())
+    functions = module_functions(final)
+    assert ast.dump(functions[kept]) == ast.dump(original[kept])
+    for name in shared:
+        assert unparsed_body(functions[name]) == f"return __extracted_func_0({name!r})"
+
+
 def _summaries(source: str, names: list[str]) -> list[object]:
     namespace: dict[str, object] = {}
     exec(compile(source, "<chain>", "exec"), namespace)
@@ -111,6 +142,12 @@ def _chain(count: int) -> str:
 def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) -> None:
     source = textwrap.dedent(_chain(12))
     final, applied = refactor_to_fixed_point_silently(write_module(tmp_path, source))
+    if strict_lifetime_refusal():
+        assert applied == 0
+        _assert_lifetime_refusal(tmp_path / "m.py", final, min_lines=1)
+        names = [f"f{index}" for index in range(12)]
+        assert _summaries(final, names) == _summaries(source, names)
+        return
     functions = module_functions(final)
     helpers = [name for name in functions if name.startswith("__extracted_func")]
     assert helpers == ["__extracted_func_0"], "one helper serves every site"
@@ -148,6 +185,11 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
         ),
         3,
     )
+    if strict_lifetime_refusal():
+        assert _applied == 0
+        _assert_lifetime_refusal(tmp_path / "m.py", final)
+        _assert_runtime_values(tmp_path, final, ["a", "b", "c"])
+        return
     functions = module_functions(final)
     assert [name for name in functions if name.startswith("__extracted_func")] == [
         "__extracted_func_0"
@@ -189,6 +231,13 @@ def test_the_helper_returns_what_every_clustered_site_reads(tmp_path: Path) -> N
         ),
         3,
     )
+    if strict_lifetime_refusal():
+        assert _applied == 1
+        _assert_whole_bodies_extracted_beside_a_lifetime_refusal(
+            tmp_path / "m.py", final, kept="c", shared=("a", "b")
+        )
+        _assert_runtime_values(tmp_path, final, ["a", "b", "c"])
+        return
     functions = module_functions(final)
     assert [name for name in functions if name.startswith("__extracted_func")] == [
         "__extracted_func_0"
@@ -229,6 +278,11 @@ def test_a_function_that_is_the_block_plus_its_return_shares_the_helper(tmp_path
         ),
         3,
     )
+    if strict_lifetime_refusal():
+        assert _applied == 0
+        _assert_lifetime_refusal(tmp_path / "m.py", final)
+        _assert_runtime_values(tmp_path, final, ["compute", "show", "label"])
+        return
     functions = module_functions(final)
     assert set(functions) == {"compute", "show", "label", "__extracted_func_0"}
     assert (
@@ -280,6 +334,13 @@ def test_a_function_returning_the_names_in_another_order_keeps_its_order(
         ),
         3,
     )
+    if strict_lifetime_refusal():
+        assert _applied == 1
+        _assert_whole_bodies_extracted_beside_a_lifetime_refusal(
+            tmp_path / "m.py", final, kept="compute", shared=("show", "label")
+        )
+        _assert_runtime_values(tmp_path, final, ["compute", "show", "label"])
+        return
     functions = module_functions(final)
     assert set(functions) == {"compute", "show", "label", "__extracted_func_0"}
     assert (
@@ -297,6 +358,47 @@ def test_a_function_returning_the_names_in_another_order_keeps_its_order(
 
     assert _applied == 1
     _assert_runtime_values(tmp_path, final, ["compute", "show", "label"])
+
+
+def _literal_cluster_field(index: int) -> str:
+    """The returned name as an f-string field, repeated: distinct field counts, as in _chain."""
+    return ("{" + ("amount" if index % 2 else "total") + "}") * (index + 1)
+
+
+def test_literal_cluster_returns_live_names_without_forwarder_chains(tmp_path: Path) -> None:
+    source = "\n".join(
+        f"def f{index}():\n"
+        f"    {'step' if index % 2 else 'tmp'} = 6\n"
+        "    base = 3\n"
+        f"    {'amount' if index % 2 else 'total'} = base * 2\n"
+        + (
+            f"    return ({'amount' if index % 2 else 'total'}, {'step' if index % 2 else 'tmp'})\n"
+            if index == 11
+            else f"    return f'F{index} {_literal_cluster_field(index)}'\n"
+        )
+        for index in range(12)
+    )
+    final, applied = refactor_to_fixed_point_silently(write_module(tmp_path, source), 3)
+    assert applied == 1
+    functions = module_functions(final)
+    assert [name for name in functions if name.startswith("__extracted_func")] == [
+        "__extracted_func_0"
+    ]
+    assert (
+        len(
+            [
+                node
+                for function in functions.values()
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "__extracted_func_0"
+            ]
+        )
+        == 12
+    )
+    assert unparsed_body(functions["f11"]).endswith("return (amount, step)")
+    _assert_runtime_values(tmp_path, final, [f"f{index}" for index in range(12)])
 
 
 OWNED_GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT = """
@@ -370,8 +472,19 @@ def _collection_trace(source: str) -> list[object]:
     return result
 
 
+def _literal_collection_source() -> str:
+    return (
+        GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.replace("y = x + 10", "y = 11")
+        .replace("z = y ** 2", "z = 121")
+        .replace("step = x + 20", "step = 21")
+        .replace("final = step ** 2", "final = 441")
+        .replace("result.append(z)", "result.append(z * 3 // 3 * 5 // 5 + 7 - 7)")
+        .replace("result.append(final)", "result.append(final * 3 // 3 * 5 // 5 + 7 - 7)")
+    )
+
+
 def _continue_from_generated_helper(
-    tmp_path: Path, *, skip_trivial_helpers: bool
+    tmp_path: Path, *, skip_trivial_helpers: bool, literal_inputs: bool = False
 ) -> tuple[str, int]:
     """Resume the real loop from an earlier pass's generated state.
 
@@ -380,28 +493,36 @@ def _continue_from_generated_helper(
     from the original input. Keep that provenance rather than weakening the
     no-forwarding assertion or treating user-defined names as generated ones.
     """
+    source = GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT
+    if literal_inputs:
+        source = _literal_collection_source()
     origin, stage = tmp_path / "origin", tmp_path / "stage"
     origin.mkdir()
     stage.mkdir()
     original = (
-        GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.split("def __extracted_func_0", 1)[0]
+        source.split("def __extracted_func_0", 1)[0]
         + "def collect"
-        + GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.split("def collect", 1)[1]
+        + source.split("def collect", 1)[1]
     )
-    for root, source in ((origin, original), (stage, GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT)):
+    for root, text in ((origin, original), (stage, source)):
         (root / "pyproject.toml").write_text("[project]\nname='forwarder-fixture'\nversion='0'\n")
-        (root / "module.py").write_text(source)
+        (root / "module.py").write_text(text)
     engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=skip_trivial_helpers)
     engine._output_origin = (origin, stage)
     final, applied, _ = engine._refactor_file_in_place(
         str(stage / "module.py"),
-        GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.encode(),
-        GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT,
+        source.encode(),
+        source,
         0,
         "none",
         _ApplyProgress.detail_only("none"),
     )
     assert (origin / "module.py").read_text() == original
+    if strict_lifetime_refusal() and not literal_inputs:
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert final == source
+    assert _collection_trace(final) == _collection_trace(source)
     return final, applied
 
 
@@ -417,6 +538,9 @@ def test_a_generated_helper_is_not_reduced_to_a_forwarder(tmp_path: Path) -> Non
 @pytest.mark.strict_mode
 def test_the_forwarder_check_is_part_of_skipping_trivial_helpers(tmp_path: Path) -> None:
     final, applied = _continue_from_generated_helper(tmp_path, skip_trivial_helpers=False)
+    if strict_lifetime_refusal():
+        assert applied == 0  # The helper above checks the reason, source, and runtime trace.
+        return
     assert applied == 1
     _assert_single_forwarding_call(
         module_functions(final)["__extracted_func_0"], "__extracted_func_1"
@@ -437,11 +561,40 @@ def test_a_user_named_function_may_specialize_the_new_helper(tmp_path: Path) -> 
         ),
         3,
     )
+    if strict_lifetime_refusal():
+        assert applied == 0
+        _assert_lifetime_refusal(tmp_path / "m.py", final)
+        assert _collection_trace(final) == _collection_trace((tmp_path / "m.py").read_text())
+        return
     assert applied == 1
     _assert_single_forwarding_call(module_functions(final)["square_shifted"], "__extracted_func_0")
     assert _collection_trace(final) == _collection_trace(
         GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.replace("__extracted_func_0", "square_shifted")
     )
+
+
+@pytest.mark.parametrize("skip_trivial_helpers", [False, True])
+def test_literal_generated_helper_obeys_the_forwarding_option(
+    tmp_path: Path, skip_trivial_helpers: bool
+) -> None:
+    final, applied = _continue_from_generated_helper(
+        tmp_path, skip_trivial_helpers=skip_trivial_helpers, literal_inputs=True
+    )
+    assert applied == (0 if skip_trivial_helpers else 1)
+    body = unparsed_body(module_functions(final)["__extracted_func_0"])
+    assert body == (
+        "y = 11\nz = 121\nresult.append(z * 3 // 3 * 5 // 5 + 7 - 7)"
+        if skip_trivial_helpers
+        else "__extracted_func_1(11, 121)"
+    )
+
+
+def test_literal_user_function_can_specialize_a_helper(tmp_path: Path) -> None:
+    source = _literal_collection_source().replace("__extracted_func_0", "square_shifted")
+    final, applied = refactor_to_fixed_point_silently(write_module(tmp_path, source), 3)
+    assert applied == 1
+    assert unparsed_body(module_functions(final)["square_shifted"]) == "__extracted_func_0(11, 121)"
+    assert _collection_trace(final) == _collection_trace(source)
 
 
 # sqlglot's generator, reduced: each method reads ``expression.this`` and two
@@ -612,6 +765,10 @@ def _refactor_generator(
             max_iterations=bound,
             progress="none",
         )
+    if not binding_free and strict_lifetime_refusal():
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert final == (tmp_path / "generator.py").read_text()
     return final, applied
 
 
@@ -866,6 +1023,8 @@ def test_owned_partial_collection_does_not_enable_a_forwarding_fixture(tmp_path:
     )
     assert applied == 0
     assert ast.dump(ast.parse(final)) == ast.dump(ast.parse(source))
+    if strict_lifetime_refusal():
+        _assert_lifetime_refusal(tmp_path / "m.py", final)
     for program in (source, final):
         namespace: dict[str, object] = {}
         exec(compile(program, "<owned-collection>", "exec"), namespace)

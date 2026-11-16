@@ -18,7 +18,7 @@ The project root is where staging copies from, where formatters, checkers
 and the import model read their configuration, and what the helper-name
 scan reads whole. Module names are not decided here: they are the names the
 program's own imports give its modules (``towel.import_model``;
-docs/DECISIONS.md, "Import names come from the program").
+docs/design/DECISIONS.md, "Import names come from the program").
 """
 
 from __future__ import annotations
@@ -31,10 +31,11 @@ from .diagnostics import LOG
 import tomllib
 
 
-def load_pyproject(project_root: Path) -> Dict[str, Any]:
+def load_pyproject(project_root: Path, *, strict: bool = False) -> Dict[str, Any]:
     """Best-effort load of pyproject.toml using the available TOML parser.
 
     Returns an empty dict if parsing fails or file does not exist.
+    With ``strict=True``, read and parse errors are raised to the caller.
     """
     pyproject_path = project_root / "pyproject.toml"
     if not pyproject_path.exists():
@@ -44,8 +45,12 @@ def load_pyproject(project_root: Path) -> Dict[str, Any]:
         with pyproject_path.open("rb") as f:
             return tomllib.load(f)
     except OSError:
+        if strict:
+            raise
         return {}
     except ValueError as error:
+        if strict:
+            raise
         LOG.warning(
             "%s could not be parsed; none of its settings are read: %s",
             pyproject_path,

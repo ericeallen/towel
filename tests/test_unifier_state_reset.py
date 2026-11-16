@@ -23,6 +23,7 @@ These tests ensure that:
 import ast
 import unittest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.unifier import Unifier
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import get_test_example_path
@@ -89,6 +90,20 @@ class TestEngineEndToEndStability(unittest.TestCase):
 
     def _assert_expected_proposals(self, proposals):
         descs = [p.description.lower() for p in proposals]
+        if not lifetime_order_certified():
+            self.assertEqual(
+                sorted(descs),
+                sorted(
+                    [
+                        "extract common code from const_parameterization_a and const_parameterization_b",
+                        "extract common code from string_const_a and string_const_b",
+                        "extract common code from log_user and log_admin",
+                        "extract common code from log_user and log_admin",
+                    ]
+                ),
+            )
+            self.assertGreater(self.engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertTrue(
             any("format_number" in d for d in descs), "Should include format_number proposals"
         )

@@ -30,6 +30,8 @@ import subprocess
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
+
 from tests.test_helpers import module_functions
 from tests.test_functions_keep_their_own_bodies import _assert_owned_helper_call
 from towel.cli import main
@@ -97,7 +99,12 @@ def test_same_file_extractions_still_happen(tmp_path: Path) -> None:
         )
     assert reason == "fixed_point"
     changed = {Path(path).name: count for path, (count, _) in results.items()}
-    assert changed == {"a.py": 1}
+    if lifetime_order_certified():
+        assert changed == {"a.py": 1}
+    else:
+        assert changed == {}
+        assert engine.run_report.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert (tmp_path / "out" / "pkg" / "a.py").read_text() == SAME_FILE + CROSS_A
     assert (tmp_path / "out" / "pkg" / "b.py").read_text() == CROSS_B
     assert _behavior(tmp_path / "out") == expected
 
@@ -118,9 +125,17 @@ def test_the_cross_module_pair_is_shared_when_asked(tmp_path: Path) -> None:
             str(tmp_path / "proj"), str(tmp_path / "out"), max_iterations=0, progress="none"
         )
     changed = {Path(path).name: count for path, (count, _) in results.items()}
-    assert changed == {"a.py": 2, "b.py": 1}
+    if lifetime_order_certified():
+        assert changed == {"a.py": 2, "b.py": 1}
+    else:
+        assert changed == {}
+        assert engine.run_report.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert (tmp_path / "out" / "pkg" / "a.py").read_text() == SAME_FILE + CROSS_A
     borrower = (tmp_path / "out" / "pkg" / "b.py").read_text()
-    assert "from .a import __extracted_func" in borrower, borrower
+    if lifetime_order_certified():
+        assert "from .a import __extracted_func" in borrower, borrower
+    else:
+        assert borrower == "from .a import g\n\n" + CROSS_B
     assert _behavior(tmp_path / "out") == expected
 
 
@@ -140,14 +155,20 @@ def test_the_command_line_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         "none",
     ]
     monkeypatch.setattr(sys, "argv", argv)
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    stdout = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
         main()
     rewritten = (tmp_path / "out" / "pkg" / "a.py").read_text()
     # The same-file pair: both functions call one helper.
     functions = module_functions(rewritten)
     helpers = [node for name, node in functions.items() if name.startswith("__extracted_func")]
-    assert len(helpers) == 1
-    _assert_owned_helper_call(functions["f1"], helpers[0], ("a",))
-    _assert_owned_helper_call(functions["f2"], helpers[0], ("b",))
+    if lifetime_order_certified():
+        assert len(helpers) == 1
+        _assert_owned_helper_call(functions["f1"], helpers[0], ("a",))
+        _assert_owned_helper_call(functions["f2"], helpers[0], ("b",))
+    else:
+        assert helpers == []
+        assert rewritten == SAME_FILE + CROSS_A
+        assert "lifetime_order_uncertified" in stdout.getvalue()
     assert (tmp_path / "out" / "pkg" / "b.py").read_text() == CROSS_B
     assert _behavior(tmp_path / "out") == expected

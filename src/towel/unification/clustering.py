@@ -51,11 +51,20 @@ from .block_analysis import (
 from .block_comments import call_argument_lines, directive_conflict, site_comments
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
+from .unsupported_syntax import unsupported_syntax
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
+from . import argument_ownership
 from .argument_ownership import argument_handoff_fits
 from .compiler_literals import unsafe_byte_literal_moves, unstable_literal_pool
-from .models import ArgumentHandoff, FunctionArtifact, FunctionNode, RejectReason, Replacement
+from .models import (
+    ArgumentHandoff,
+    CodeBlockPair,
+    FunctionArtifact,
+    FunctionNode,
+    RejectReason,
+    Replacement,
+)
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import bindings_of, statement_shape
@@ -253,6 +262,14 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         if self.strict and not lifetime_order_preserved(
             candidate.nodes, candidate.function, candidate.analyzer, returned
         ):
+            if not argument_ownership._supported_runtime():
+                self._debug_decline_site(
+                    RejectReason.LIFETIME_ORDER_UNCERTIFIED,
+                    pair,
+                    candidate.function,
+                    candidate.nodes,
+                    "this runtime's retained-local cleanup order has not been certified",
+                )
             return None
         # A name the call rebinds is not orphaned by moving the block.
         indices = self._get_block_indices(candidate.function, candidate.nodes)
@@ -365,6 +382,15 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             return call_node2, call_argument_lines(subst2, 1), None
         safe_call = spell_retained_bindings(candidate.function, candidate.nodes, call_node2)
         ownership = self._frame_ownership(candidate.function, candidate.nodes, site=candidate.site)
+        if ownership.split and not argument_ownership._supported_runtime():
+            self._debug_decline_site(
+                RejectReason.LIFETIME_ORDER_UNCERTIFIED,
+                pair,
+                candidate.function,
+                candidate.nodes,
+                "this runtime's frame cleanup order has not been certified",
+            )
+            return None
         handoff = (
             self._argument_handoff_plan(
                 candidate.function,
@@ -525,7 +551,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 if not quick_filter(template_signature, cand_sig):
                     continue
                 candidate = self._admissible_candidate(
-                    entry, cand_nodes, self._block_site(fn, cand_nodes)
+                    entry, cand_nodes, self._block_site(fn, cand_nodes), pair=pair
                 )
                 if candidate is None:
                     continue
@@ -563,6 +589,8 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         entry: FunctionArtifact,
         cand_nodes: List[ast.stmt],
         site: Optional[BlockSite],
+        *,
+        pair: "CodeBlockPair",
     ) -> Optional["_ClusterCandidate"]:
         """The candidate block as a cluster candidate, or None when a semantic guard declines it.
 
@@ -571,6 +599,12 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         boundary, moved scope declarations, reassignment of a name the block
         did not bind, and unbinding of a name bound before it.
         """
+        unsupported = unsupported_syntax(cand_nodes)
+        if unsupported is not None:
+            self._debug_decline_site(
+                RejectReason.UNSUPPORTED_SYNTAX, pair, entry.node, cand_nodes, unsupported
+            )
+            return None
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
         module = analyzer.analyzed_tree
         if unstable_literal_pool(cand_nodes) or unsafe_byte_literal_moves(

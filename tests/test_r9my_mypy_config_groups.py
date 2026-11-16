@@ -41,6 +41,8 @@ from typing import Mapping
 
 import pytest
 
+from tests.test_cli_integration import LITERAL_DUPLICATES
+
 from towel.type_inference import CheckFailure, CheckSuccess, MypyInferrer
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -64,28 +66,9 @@ def _typed_run(root: Path) -> UnificationRefactorEngine:
     return engine
 
 
-SUB_MODULE = """\
-    from typing import Callable
-
-    def legacy(x):
-        return x
-
-
-    def first(values: list[int], scale: int, transform: Callable[[str], str] = str.upper) -> str:
-        total = 0
-        for v in values:
-            total += v * scale
-        label = f"sum={total}"
-        return transform(label)
-
-
-    def second(items: list[int], factor: int, transform: Callable[[str], str] = str.lower) -> str:
-        total = 0
-        for v in items:
-            total += v * factor
-        label = f"sum={total}"
-        return transform(label)
-    """
+# The untyped legacy function still distinguishes the two configurations;
+# literal operands keep the actual candidate independent of lifetime proofs.
+SUB_MODULE = "def legacy(x):\n    return x\n\n" + LITERAL_DUPLICATES.replace("():", "() -> int:")
 
 
 @requires_mypy

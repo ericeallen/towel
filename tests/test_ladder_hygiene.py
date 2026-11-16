@@ -29,10 +29,12 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import textwrap
 from typing import List, Mapping, Sequence
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.type_inference import (
     CheckResult,
     CheckSuccess,
@@ -64,17 +66,17 @@ class _RefusedInsideTheHelper(CountingMypy):
 
 SUMS = """
 def first() -> int:
-    values = [1, 2]
-    total = sum(values)
-    count = len(values)
+    values = 1
+    total = values + 2
+    count = total * 3
     return total + count
 
 
 def second() -> int:
-    items = [1, 2]
-    total = sum(items)
-    count = len(items)
-    return total * count
+    items = 2
+    total = items + 2
+    count = total * 3
+    return total + count
 """
 
 
@@ -127,9 +129,7 @@ class _RevealsNothing(CountingMypy):
 def test_a_helper_inference_left_bare_still_gets_the_fallback_rungs(
     tmp_path: Path,
 ) -> None:
-    outcome = apply_one(
-        tmp_path,
-        """
+    source = """
         def first() -> int:
             text = "same input"
             words = text.split()
@@ -144,7 +144,28 @@ def test_a_helper_inference_left_bare_still_gets_the_fallback_rungs(
             size = len(parts)
             doubled = size * 2
             return doubled + 1
-        """,
+        """
+    if not lifetime_order_certified():
+        path = tmp_path / "module.py"
+        path.write_text(textwrap.dedent(source).lstrip())
+        original = path.read_bytes()
+        checker = _RevealsNothing()
+        try:
+            engine = UnificationRefactorEngine(
+                min_lines=2,
+                reuse_existing_functions=False,
+                type_oracle=checker,
+                skip_trivial_helpers=False,
+            )
+            assert engine.analyze_file(str(path)) == []
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert path.read_bytes() == original
+        finally:
+            checker.close()
+        return
+    outcome = apply_one(
+        tmp_path,
+        source,
         pick="first and second",
         config="[tool.mypy]\ndisallow_untyped_defs = true\n",
         oracle=_RevealsNothing(),

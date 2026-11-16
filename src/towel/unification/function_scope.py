@@ -342,7 +342,9 @@ def _comprehension_scope(node: _Comprehension) -> _NestedScope:
             parts.append(generator.iter)
         parts.extend(generator.ifs)
     if isinstance(node, ast.DictComp):
-        parts.extend([node.key, node.value])
+        parts.append(node.key)
+        if node.value is not None:
+            parts.append(node.value)
     else:
         parts.append(node.elt)
     code = _code_names(parts, evaluates_annotations=False, in_comprehension=True)

@@ -30,6 +30,7 @@ import unittest
 from pathlib import Path
 import tempfile
 
+from tests.test_helpers import lifetime_order_certified
 from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -61,6 +62,10 @@ class TestAdditionalBindings(unittest.TestCase):
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
+        if not lifetime_order_certified():
+            self.assertEqual((passed, failed, errors), (0, 0, []))
+            self.assertIn("lifetime_order_uncertified", engine.declined_pairs)
+            return
         self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
         self.assertEqual(failed, 0, f"with-as binding should not break equivalence: {errors}")
 
@@ -105,6 +110,10 @@ class TestAdditionalBindings(unittest.TestCase):
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
+        if not lifetime_order_certified():
+            self.assertEqual((passed, failed, errors), (0, 0, []))
+            self.assertIn("lifetime_order_uncertified", engine.declined_pairs)
+            return
         self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
         self.assertEqual(failed, 0, f"walrus target should be treated as binding: {errors}")
 

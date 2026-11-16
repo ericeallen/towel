@@ -25,7 +25,8 @@ from tests.test_cli_integration import invoke
 from towel.formatting import LintRejected, file_finisher_for_project
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-DUPLICATED_LABELS = 'def first(label, pos):\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n\ndef second(label, pos):\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n'
+# Known literal inputs reach Ruff independently of caller-lifetime transfer.
+DUPLICATED_LABELS = 'def first():\n    label = "first"\n    pos = 0\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n\ndef second():\n    label = "second"\n    pos = 0\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n'
 
 
 def _module(root: Path, source: str, rules: str) -> Path:
