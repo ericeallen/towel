@@ -88,6 +88,7 @@ from .block_signature import (
     quick_filter,
     signature_bucket_key,
 )
+from .expression_sites import expression_site
 from ..coverage_config import CoverageExclusion
 from ..consumers import MAXIMUM_FILES
 from .if_binding_transfer import sharing_if_transfer_sources
@@ -318,6 +319,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         file_finisher: Optional[Callable[[str, str], str]] = None,
         incremental_global_passes: bool = True,
         max_candidate_pairs: int = DEFAULT_MAX_CANDIDATE_PAIRS,
+        expression_candidates: bool = False,
         settings: Optional[Settings] = None,
     ):
         """
@@ -438,6 +440,11 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 declined for a cycle stays declined), and any proposal it
                 produced was applied, which changed its files. False re-pairs
                 everything on every global pass.
+            expression_candidates: Also enumerate as candidates the
+                expressions repeated inside statements that otherwise differ
+                (``towel.unification.expression_sites``). Off (default: False)
+                until the engine can judge such a candidate and write its
+                calls; runs of whole statements are the only candidates.
             settings: What Towel reads from the environment (worker cap,
                 debug switches). Read once from ``os.environ`` when omitted.
         """
@@ -452,6 +459,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.max_parameters = max_parameters
         self.min_lines = min_lines
         self.max_candidate_pairs = max_candidate_pairs
+        self.expression_candidates = expression_candidates
         self.skip_trivial_helpers = skip_trivial_helpers
         # reuse_existing_functions is accepted and ignored; see the docstring.
         self.annotate_helpers = annotate_helpers
@@ -599,6 +607,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._signed_block_cache: WeakKeyDictionary[
             FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
         ] = WeakKeyDictionary()
+        self._signed_expression_cache: WeakKeyDictionary[
+            FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
+        ] = WeakKeyDictionary()
+        self._exact_truth_blocks: WeakKeyDictionary[ast.AST, List[ast.stmt]] = WeakKeyDictionary()
 
     # --- Debug helpers ---
     def _debug_reject(
@@ -892,10 +904,20 @@ class UnificationRefactorEngine(ParallelEvaluation):
         if digest is None or not nodes:
             return None
         first = nodes[0]
+        expression = expression_site(nodes)
         return BlockSite(
             digest,
             (func.lineno, func.col_offset),
             (first.lineno, first.col_offset, len(nodes)),
+            (
+                None
+                if expression is None
+                else (
+                    first.end_lineno or first.lineno,
+                    first.end_col_offset or first.col_offset,
+                    expression.exact_truth,
+                )
+            ),
         )
 
     def _remember(

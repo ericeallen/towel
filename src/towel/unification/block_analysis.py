@@ -98,6 +98,12 @@ from .static_positions import (
 )
 from .structural_memo import load_substitution, store_substitution
 from .ast_paths import has_shared_expressions
+from .expression_sites import (
+    expression_signature,
+    expression_sites,
+    in_exact_truth_form,
+    standing_block,
+)
 from .typing_forms import ModuleText, typing_forms_of
 from .substitution import Substitution
 from .visitors import (
@@ -602,6 +608,41 @@ class BlockAnalysis(EngineState):
                 (self._function_paths.get(function),), self._signed_block_cache, function
             )
         return cached
+
+    def _signed_expressions(
+        self, function: FunctionNode
+    ) -> List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]:
+        """The function's expression candidates, each as its standing block, signed for pairing.
+
+        Enumerated once per function and shared by pairing and clustering,
+        like its statement blocks. An expression on a line of a definition
+        marked ``# towel: no-extract`` is left out.
+        """
+        if not self.expression_candidates:
+            return []
+        cached = self._signed_expression_cache.get(function)
+        if cached is None:
+            protected = self._extraction_exclusions.get(function, ())
+            cached = []
+            for site in expression_sites(function, self.min_lines):
+                span = (site.first_line, site.last_line)
+                if protected and overlaps_protected(span, protected):
+                    continue
+                block = standing_block(site)
+                cached.append((span, [block], expression_signature(block)))
+            self._signed_expression_cache[function] = cached
+            self._remember(
+                (self._function_paths.get(function),), self._signed_expression_cache, function
+            )
+        return cached
+
+    def _in_exact_truth_form(self, block: Sequence[ast.stmt]) -> List[ast.stmt]:
+        """The exact-truth block of an expression candidate's site, made once per site."""
+        exact = self._exact_truth_blocks.get(block[0])
+        if exact is None:
+            exact = [in_exact_truth_form(cast(ast.Return, block[0]))]
+            self._exact_truth_blocks[block[0]] = exact
+        return exact
 
     def _extract_code_blocks(
         self, function: FunctionNode

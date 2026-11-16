@@ -100,6 +100,10 @@ class BlockSite(NamedTuple):
     function_position: Tuple[int, int]
     # The first statement's line and column, and the number of statements.
     block_position: Tuple[int, int, int]
+    # For an expression candidate (``expression_sites``), where the expression
+    # ends and whether its block is the exact truth form; None for statements.
+    # An expression can begin where a statement or another expression does.
+    expression: Optional[Tuple[int, int, bool]] = None
 
 
 class GuardKey(NamedTuple):
@@ -267,6 +271,9 @@ class EngineState:
     max_candidate_pairs: int
     """Candidate pairs an analysis evaluates before it leaves the largest buckets out."""
 
+    expression_candidates: bool
+    """Whether an expression repeated inside differing statements is a candidate too."""
+
     extractor: HygienicExtractor
     """Renders helpers and call sites."""
 
@@ -345,6 +352,12 @@ class EngineState:
     _signed_block_cache: WeakKeyDictionary[
         FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
     ]
+    # Each function's expression candidates, as blocks signed like the above,
+    # and each such block's exact-truth form once strict mode has asked for it.
+    _signed_expression_cache: WeakKeyDictionary[
+        FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
+    ]
+    _exact_truth_blocks: WeakKeyDictionary[ast.AST, List[ast.stmt]]
     # The index of the current analysis's functions, keyed by the list it
     # was built from; see ``_function_index``.
     _function_index_cache: Optional[Tuple[Sequence[FunctionArtifact], FunctionIndex]]
