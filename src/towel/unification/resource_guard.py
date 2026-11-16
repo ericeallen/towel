@@ -46,8 +46,11 @@ RESOURCE_CONSTRUCTORS: FrozenSet[str] = frozenset(
     {
         "builtins.open",
         "io.open",
+        "io.FileIO",
         "os.fdopen",
         "socket.socket",
+        "socket.socketpair",
+        "socket.create_connection",
         # Deleted from disk on finalization; the path outlives the object.
         "tempfile.TemporaryDirectory",
         "tempfile.NamedTemporaryFile",
@@ -78,6 +81,7 @@ WEAK_REFERENCE_CONSTRUCTORS: FrozenSet[str] = frozenset(
         "weakref.ref",
         "weakref.proxy",
         "weakref.WeakMethod",
+        "weakref.WeakValueDictionary",
         "weakref.finalize",
     }
 )

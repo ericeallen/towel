@@ -2058,8 +2058,8 @@ The list comprises `tempfile.TemporaryDirectory`, `NamedTemporaryFile`,
 `TemporaryFile` and `SpooledTemporaryFile`; `multiprocessing.Pool` (including
 its defining module `multiprocessing.pool.Pool`) and
 `multiprocessing.pool.ThreadPool`; `tkinter.PhotoImage` and `BitmapImage`;
-`mmap.mmap`; `weakref.finalize`; builtin `open`, `io.open`, `os.fdopen` and
-`socket.socket`. Files and sockets qualify because descriptors and locks can
+`mmap.mmap`; `weakref.finalize`; builtin `open`, `io.open`, `io.FileIO`,
+`os.fdopen`, `socket.socket`, `socket.socketpair` and `socket.create_connection`. Files and sockets qualify because descriptors and locks can
 be observed without holding the owning object. Import aliases are resolved
 in their lexical scope, including re-exports through project modules; a
 shadowing local or parameter is not that import.
@@ -2071,14 +2071,16 @@ after it. The original answers true until the function returns; a helper that
 returned only `watcher` would answer false. A local passed directly to
 `weakref.ref`, `weakref.proxy`, `weakref.WeakMethod` or `weakref.finalize` is
 kept by the same stable-name rule (for `WeakMethod`, the receiver of the
-bound method). Rebinding or an unrecognized ownership shape declines the
+bound method). A mapping passed directly to `weakref.WeakValueDictionary`
+is retained by this rule too, to hold its initial values strongly. Rebinding or an unrecognized ownership shape declines the
 block instead of returning a name that no longer owns the object.
 
 The guard is a list of known constructors, not a proof of resource ownership.
 It reads syntax only. A program that keeps some other resource alive only
 through a local it never reads again, obtains one through an unrecognized
 factory (including a constructor passed through a parameter default,
-`functools.partial`, or a tuple-unpacked copy), or registers one in a `WeakSet` or a weak dictionary needs
+`functools.partial`, or a tuple-unpacked copy), or registers one in a `WeakSet`, a `WeakKeyDictionary`, or a weak dictionary
+filled after construction needs
 `--strict`, or better a `with` statement or an explicit reference.
 
 **What this supersedes.** In the default mode this entry supersedes, and under

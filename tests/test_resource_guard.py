@@ -62,8 +62,11 @@ def test_the_list_is_the_one_the_decision_names() -> None:
     assert RESOURCE_CONSTRUCTORS == {
         "builtins.open",
         "io.open",
+        "io.FileIO",
         "os.fdopen",
         "socket.socket",
+        "socket.socketpair",
+        "socket.create_connection",
         "tempfile.TemporaryDirectory",
         "tempfile.NamedTemporaryFile",
         "tempfile.TemporaryFile",
@@ -83,6 +86,7 @@ def test_the_weak_reference_constructors_are_the_ones_the_decision_names() -> No
         "weakref.ref",
         "weakref.proxy",
         "weakref.WeakMethod",
+        "weakref.WeakValueDictionary",
         "weakref.finalize",
     }
 
@@ -652,3 +656,48 @@ def test_loop_back_edges_prevent_stable_ownership(
 def test_comprehensions_are_loops_for_resource_ownership(expression: str) -> None:
     """Round 2 suspicion: a comprehension's elt is repeated, including walrus stores."""
     assert _guard("import tempfile, weakref\ndef work(values):\n    held = " + expression).refusal
+
+
+@pytest.mark.parametrize(
+    "constructor, descriptor",
+    [
+        ("io.FileIO(os.devnull, 'rb')", "held.fileno()"),
+        ("socket.socketpair()", "held[0].fileno()"),
+        ("socket.create_connection(server.getsockname())", "held.fileno()"),
+    ],
+)
+def test_additional_descriptor_owners_survive_helper_return(
+    tmp_path: Path, constructor: str, descriptor: str
+) -> None:
+    """Round 2 suspicion: all three constructors release an independently used descriptor."""
+    source = "import io, os, socket\n"
+    if "create_connection" in constructor:
+        source += "server = socket.socket()\nserver.bind(('127.0.0.1', 0))\nserver.listen()\n"
+    for name in ("first", "second"):
+        source += (
+            f"def {name}(n):\n    held = {constructor}\n    descriptor = {descriptor}\n"
+            "    total = n + 1\n    total *= 2\n"
+            + ("    if n:\n        " if name == "second" else "    ")
+            + f"print('{name}', os.fstat(descriptor).st_mode, total)\n    return total\n"
+        )
+    source += "first(1)\nsecond(2)\n"
+    generated, original, changed = _refactored(tmp_path, source)
+    assert _run(original)[0] == 0
+    assert _run(changed) == _run(original), generated
+
+
+def test_weak_value_dictionary_keeps_its_initial_values(tmp_path: Path) -> None:
+    """Round 2 suspicion: a weak value dictionary observes early release just like ref."""
+    source = "import weakref\nclass Thing: pass\n"
+    for name in ("first", "second"):
+        source += (
+            f"def {name}(n):\n    targets = {{'item': Thing()}}\n"
+            "    watcher = weakref.WeakValueDictionary(targets)\n"
+            "    total = n + 1\n    total *= 2\n"
+            + ("    if n:\n        " if name == "second" else "    ")
+            + f"print('{name}', len(watcher), total)\n    return total\n"
+        )
+    source += "first(1)\nsecond(2)\n"
+    generated, original, changed = _refactored(tmp_path, source)
+    assert _run(original)[0] == 0
+    assert _run(changed) == _run(original), generated
