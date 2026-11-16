@@ -48,6 +48,7 @@ import hashlib
 from dataclasses import dataclass
 import os
 
+from .unexamined import not_examined
 from ..canonical_ast import canonical_dump
 from ..analysis_sources import parse_analysis_source, parser_configuration, parsing_is_pure
 from .models import (
@@ -469,7 +470,19 @@ def run_pipeline(
 
     functions = [function for analysis in analyses for function in analysis.functions]
     if census is not None:
-        census(AnalysisCensus(len(analyses), len(functions), tuple(skipped)))
+        census(
+            AnalysisCensus(
+                len(analyses),
+                len(functions),
+                tuple(skipped),
+                tuple(
+                    found
+                    for analysis in analyses
+                    if (found := not_examined(analysis.module.file_path, analysis.module.tree))
+                    is not None
+                ),
+            )
+        )
     classes = [info for analysis in analyses for info in analysis.module.class_infos]
     with sharing_if_transfer_proofs(
         tuple(

@@ -69,6 +69,7 @@ from .models import (
     LeftAlone,
     PairTally,
     RefactoringProposal,
+    NotExamined,
     SkippedFile,
     TerminationReason,
 )
@@ -165,6 +166,8 @@ class RunReport:
     functions_analysed: int = 0
     skipped_files: Tuple[SkippedFile, ...] = ()
     left_alone: Tuple[LeftAlone, ...] = ()
+    not_examined: Tuple[NotExamined, ...] = ()
+    """Per file the first analysis read, the code no candidate is drawn from (``NotExamined``)."""
 
 
 @dataclass(frozen=True)
@@ -259,6 +262,7 @@ class FixedPointDrivers(Materialization):
             files_analysed=census.files,
             functions_analysed=census.functions,
             skipped_files=census.skipped,
+            not_examined=census.not_examined,
             left_alone=self._last_left_alone + not_applied,
         )
 
