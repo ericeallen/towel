@@ -401,7 +401,7 @@ def test_relaxed_suppressing_context(tmp_path: Path, opaque: bool, typed: bool) 
         # arithmetic suffix does not repay its annotated helper's overhead.
         assert "thunk_of_possibly_unbound_local" in result.stdout
         assert "unprofitable_helper" in result.stdout
-        assert "No refactorings found!" in result.stdout
+        assert "with similar code and extracted none." in result.stdout
         assert ast.dump(ast.parse(transformed)) == ast.dump(ast.parse(source))
     else:
         assert "Applied 1 refactoring(s)" in result.stdout
@@ -670,7 +670,7 @@ def test_relaxed_comments(tmp_path: Path) -> None:
     from tests import test_moved_comments as comments
 
     source = textwrap.dedent(comments._EXPLAINED).lstrip()
-    driver = "for values in ([],[1,3,5]):\n    print(first(values,2),second(values,2))"
+    driver = "for value in (0, 1, 3, 5):\n    print(first(), second())"
     before = _observe(source, driver)
     result = _transform(tmp_path / "m.py", source)
     assert _observe(result, driver) == before
