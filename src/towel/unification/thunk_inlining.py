@@ -807,6 +807,44 @@ def effect_free(expression: ast.expr, bound: AbstractSet[str] = frozenset()) -> 
     return True
 
 
+def reads_first(expression: ast.expr, names: Sequence[str]) -> bool:
+    """Whether evaluating ``expression`` reads ``names``, in that order, before anything else.
+
+    Every path through ``expression`` must read each of them, and before any
+    other step: reading another name, an attribute or a subscript, or
+    calling. A function of ``names`` called as ``callback(*names)`` where the
+    expression stood then reads them exactly when the expression did, and
+    fails as it did when one is unbound. ``value if flag else 0`` and ``flag
+    and value`` read ``value`` only on some paths; ``a.x + b.y`` reads ``b``
+    after ``a.x``, which may fail first. An expression that binds one of
+    ``names`` (``(item := …)``) would bind the function's parameter instead.
+    """
+    if any(
+        isinstance(node, ast.NamedExpr)
+        and isinstance(node.target, ast.Name)
+        and node.target.id in names
+        for node in ast.walk(expression)
+    ):
+        return False
+    pending = list(names)
+    try:
+        for step in _walk(expression):
+            if not pending:
+                return True
+            if not (
+                isinstance(step, ast.Name)
+                and isinstance(step.ctx, ast.Load)
+                and step.id in names
+                and (step.id == pending[0] or step.id not in pending)
+            ):
+                return False
+            if step.id == pending[0]:
+                pending.pop(0)
+    except _Stop:
+        return False
+    return not pending
+
+
 def _parameter_names(arguments: ast.arguments) -> FrozenSet[str]:
     """The names a call binds on entry to a function with ``arguments``."""
     listed = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]

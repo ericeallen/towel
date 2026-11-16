@@ -2197,7 +2197,10 @@ block read the attribute; an argument-less method call is taken whole
 (`lambda value: value.strip()`). The function is called where the expression
 was evaluated and as often, so this is not a matter of the mode; it rests on
 the instantiation check like every other parameter. It is declined when the
-function could not take every block-bound name the expression reads.
+function could not take every block-bound name the expression reads, and
+when the expression does not read those names first and on every path:
+`value if flag else 0` reads `value` only when `flag` is true, and a function
+called as `__param_0(value)` would read it, unbound, when `flag` is false.
 
 **What relaxed mode gives up here, exactly.**
 

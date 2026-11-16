@@ -40,6 +40,7 @@ from typing import List, Tuple
 import pytest
 
 from towel.api import UnificationRefactorEngine
+from towel.unification.thunk_inlining import reads_first
 from tests.test_cli_integration import invoke
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -217,3 +218,70 @@ def test_an_attribute_of_a_comprehension_target_becomes_a_callback(
     assert "lambda item: item.name" in generated and "lambda item: item.price" in generated
     assert "[__param_0(item) for item in items if item.price]" in generated
     assert same
+
+
+SKIPPED_READ = """\
+def alpha(flag):
+    if flag:
+        value = 4
+    print("start")
+    print("middle")
+    result = value if flag else 0
+    print("end")
+    return result
+
+
+def beta(flag):
+    if flag:
+        value = 4
+    print("start")
+    print("middle")
+    result = flag and value
+    print("end")
+    return result
+
+
+for function in (alpha, beta):
+    for flag in (False, True):
+        try:
+            print(function(flag))
+        except Exception as error:
+            print(type(error).__name__)
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_callback_never_reads_a_name_the_expression_may_skip(
+    tmp_path: Path, strict: bool
+) -> None:
+    """Review of lane ``byvalue``, defect 2: ``callback(value)`` read ``value`` where the block did not.
+
+    ``value if flag else 0`` and ``flag and value`` read ``value`` only when
+    ``flag`` is true, and ``value`` is bound only then. A function of
+    ``value`` called as ``__param_0(value)`` reads it on every path and
+    raises ``UnboundLocalError`` for ``flag=False``.
+    """
+    generated, same = refactored(tmp_path, SKIPPED_READ, strict=strict)
+    assert "(value)" not in generated
+    assert same
+
+
+@pytest.mark.parametrize(
+    "text, names, first",
+    [
+        ("item.weight_kg", ["item"], True),
+        ("value.strip()", ["value"], True),
+        ("item.price * item.quantity", ["item"], True),
+        ("a + b", ["a", "b"], True),
+        ("a + b", ["b", "a"], False),  # the function would read b first
+        ("value if flag else 0", ["value"], False),
+        ("flag and value", ["value"], False),
+        ("a.x + b.y", ["a", "b"], False),  # a.x may fail before b is read
+        ("len(value)", ["value"], False),
+        ("(item := other).name", ["item"], False),
+    ],
+)
+def test_a_callback_takes_only_names_its_expression_reads_first(
+    text: str, names: List[str], first: bool
+) -> None:
+    assert reads_first(ast.parse(text, mode="eval").body, names) is first

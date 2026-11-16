@@ -34,6 +34,7 @@ from .scope_analyzer import ScopeAnalyzer
 from ..diagnostics import UNIFIER
 
 from .substitution import Substitution, structural_text
+from .thunk_inlining import reads_first
 from .constant_consistency import constant_identity
 from .binding_context import bound_variables_in_block
 from .static_positions import is_statically_read
@@ -253,6 +254,11 @@ class Parameterization(UnifierState):
         can be passed only as a function of it. Names bound in a nested
         scope of the block count too, whichever scope the expression stands
         in: that over-approximates, and only declines.
+
+        The function is called where the expression stood, with ``taken``
+        read as its arguments, so the expression must read them first and on
+        every path (``reads_first``): ``value if flag else 0`` must not read
+        ``value`` when the block left it unbound.
         """
         if self.current_blocks is None:
             return False
@@ -265,6 +271,8 @@ class Parameterization(UnifierState):
                 for name in bindings_of(statement, into_nested_scopes=True)
             }
             if (bound & loaded_names(expr)) - set(taken):
+                return False
+            if not isinstance(expr, ast.expr) or not reads_first(expr, taken):
                 return False
         return True
 
