@@ -267,7 +267,7 @@ def test_unresolved_import_still_refuses_unchecked_changes(tmp_path: Path) -> No
     assert run.returncode == 0, run.stdout + run.stderr
     assert blind.read_text() == before
     assert "Cannot find implementation or library stub" in run.stderr
-    driver = "\nprint(first(2), second(3), third(4))\n"
+    driver = "\nprint(first(), second(), third())\n"
     final = seen.read_text()
     seen.write_text(CLI_CALCULATIONS + driver)
     expected = _observe(seen)
