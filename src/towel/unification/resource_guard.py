@@ -12,67 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The one lifetime relaxed mode still keeps: a local that holds a resource alive.
+"""Keep recognized resources through helper return, or decline the block.
 
-Relaxed mode assumes a program does not depend on when its objects are
-finalized once it has stopped using them, so a helper's return releases the
-locals of the block it took (docs/design/DECISIONS.md, "Relaxed mode is the default;
-strict mode keeps exact lifetimes"). That assumption fails for an object
-whose finalizer destroys something the program can still reach another way::
-
-    tmp = tempfile.TemporaryDirectory()
-    path = os.path.join(tmp.name, "report.txt")
-    # ... end of the block ...
-    os.listdir(tmp.name)
-
-The program has not stopped using the directory; it has only stopped naming
-the object that owns it. The language guarantees that an object lives while
-it is reachable, and the original kept ``tmp`` reachable until its function
-returned. So a block that binds a local directly to a call of one of the
-constructors below returns that local, and its caller binds it under its own
-name, exactly as long-lived as before.
-
-A weak reference is the other way a program reaches an object it no longer
-names::
-
-    target = Target()
-    watcher = weakref.ref(target)
-    # ... end of the block ...
-    return watcher() is not None
-
-The original answers True, because ``target`` lives until the function
-returns; a helper that returned only ``watcher`` would make it False. That
-is a different value, not a finalizer running at another time, so a local
-the block hands directly to one of the weak-reference constructors below is
-returned and kept by the caller as well.
-
-The guard reads syntax and nothing else. It sees a direct call whose callee
-the module's imports resolve to a listed name; a resource reached through a
-wrapper, a factory or an attribute, and an object registered in a
-``WeakSet`` or a weak dictionary, are not seen, and need ``--strict`` or a
-``with`` statement.
+This is a list of known constructors, not a proof of resource ownership.
+A listed call must be managed by a whole with statement in the block or
+assigned directly to a local that still holds its result when the block ends.
+Weak-reference referents need the same stable ownership. Wrappers and
+constructors outside the list still require strict mode or explicit management.
 """
 
 from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, Iterator, Mapping, Optional, Sequence, Set
+from pathlib import Path
+from typing import FrozenSet, Iterator, Mapping, Optional, Sequence
 from weakref import WeakKeyDictionary
 
+from ..analysis_sources import parse_analysis_source
+from ..source_text import try_read_source
+from .assignment_analyzer import own_scope_bindings
+from .import_graph import ImportGraphCache, imported_alias_sites
 from .module_bindings import dotted_name, import_origin
+from .models import is_generated_helper_name
+from .parameters import parameter_nodes
 from .statement_facts import imported_binding_name, memoized_per_node
+from .visitors import evaluated_before_definition
 
-# The criterion: a standard-library constructor whose result, when it is
-# finalized, destroys or shuts down something the program can still reach by a
-# route other than the object itself: a path on disk, a file descriptor, a
-# pool's workers, a Tk image name, a mapped region. A lock, a socket or an
-# ordinary open file does not qualify: closing one takes nothing from code
-# that does not hold it. Each entry is the name the documentation gives the
-# constructor, plus the defining module's name where the two differ. The list
-# is closed on purpose; an addition is a decision, not a convenience.
+# Finalization can remove a path, descriptor, lock, worker, image or mapping
+# which the program still uses through another route. Additions to this closed
+# list require a decision; this recognizer does not infer arbitrary ownership.
 RESOURCE_CONSTRUCTORS: FrozenSet[str] = frozenset(
     {
+        "builtins.open",
+        "io.open",
+        "io.FileIO",
+        "os.fdopen",
+        "socket.socket",
+        "socket.socketpair",
+        "socket.create_connection",
         # Deleted from disk on finalization; the path outlives the object.
         "tempfile.TemporaryDirectory",
         "tempfile.NamedTemporaryFile",
@@ -103,136 +81,538 @@ WEAK_REFERENCE_CONSTRUCTORS: FrozenSet[str] = frozenset(
         "weakref.ref",
         "weakref.proxy",
         "weakref.WeakMethod",
+        "weakref.WeakValueDictionary",
         "weakref.finalize",
     }
 )
 
-_MAX_ALIAS_DEPTH = 8
+
+@dataclass(frozen=True)
+class _Origin:
+    position: tuple[int, int]
+    spelling: Optional[str]
+    imported: bool
+    conditional: bool
 
 
 @dataclass(frozen=True)
-class _ModuleSpellings:
-    """Every dotted name a spelling could copy, in any scope of one module.
-
-    Scopes and paths are not told apart: a name bound by an import or by a
-    plain ``alias = a.b`` anywhere in the module may denote that origin
-    wherever it is read. That over-approximates, and the guard's only cost
-    for a false alarm is one more returned name.
-    """
-
-    origins: Mapping[str, FrozenSet[str]]
-    star_modules: FrozenSet[str]
+class _Scope:
+    parent: Optional[int]
+    bindings: Mapping[str, tuple[_Origin, ...]]
+    parameters: FrozenSet[str]
+    stars: FrozenSet[str]
+    globals: FrozenSet[str]
+    nonlocals: FrozenSet[str]
 
 
-def _module_spellings(module: ast.AST) -> _ModuleSpellings:
-    origins: Dict[str, Set[str]] = {}
-    stars: Set[str] = set()
-    for node in ast.walk(module):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                name = imported_binding_name(alias)
-                if name is None:
-                    if isinstance(node, ast.ImportFrom) and not node.level and node.module:
-                        stars.add(node.module)
+@dataclass(frozen=True)
+class _Resolution:
+    scopes: Mapping[int, _Scope]
+    locations: Mapping[int, int]
+
+    def origins(
+        self,
+        spelling: str,
+        scope: int,
+        position: tuple[int, int],
+        depth: int = 0,
+        *,
+        deferred: bool = False,
+    ) -> FrozenSet[str]:
+        if depth >= 16:
+            return frozenset()
+        head, _, tail = spelling.partition(".")
+        current = self.scopes[scope]
+        events = current.bindings.get(head, ())
+        earlier = [event for event in events if event.position < position]
+        # A definite assignment supersedes previous imports; a conditional one
+        # retains both possibilities. A parameter/local never falls through to
+        # a same-spelled global import, even before its first assignment.
+        last = (
+            0
+            if deferred
+            else next((i for i in range(len(earlier) - 1, -1, -1) if not earlier[i].conditional), 0)
+        )
+        # Deferred lookups may run before a later shadowing assignment (or
+        # after a deletion restores a builtin), so retain every possibility.
+        found: set[str] = (
+            {f"builtins.{spelling}"} if deferred and scope == 0 and head == "open" else set()
+        )
+        for event in earlier[last:]:
+            if event.spelling is None:
+                continue
+            targets = (
+                frozenset({event.spelling})
+                if event.imported
+                else self.origins(event.spelling, scope, event.position, depth + 1)
+            )
+            found.update(f"{target}.{tail}" if tail else target for target in targets)
+        if earlier:
+            return frozenset(found)
+        if head in current.globals and scope:
+            return self.origins(spelling, 0, (10**9, 0), depth + 1, deferred=True)
+        if head in current.nonlocals and current.parent is not None:
+            return self.origins(spelling, current.parent, (10**9, 0), depth + 1, deferred=True)
+        if events or head in current.parameters:
+            return frozenset(found)
+        if current.parent is not None:
+            return self.origins(spelling, current.parent, (10**9, 0), depth + 1, deferred=True)
+        found.update(f"{prefix}{spelling}" for prefix in current.stars)
+        if head == "open":
+            found.add(f"builtins.{spelling}")
+        return frozenset(found)
+
+
+def _position(node: ast.AST) -> tuple[int, int]:
+    return getattr(node, "lineno", 0), getattr(node, "col_offset", 0)
+
+
+def _resolution(module: ast.AST) -> _Resolution:
+    scopes: dict[int, _Scope] = {}
+    locations: dict[int, int] = {}
+
+    def scope_of(node: ast.AST, parent: Optional[int], key: int) -> None:
+        body = getattr(node, "body", [])
+        if not isinstance(body, list):
+            body = [body]
+        origins: dict[str, list[_Origin]] = {}
+        stars: set[str] = set()
+        globals_: set[str] = set()
+        nonlocals: set[str] = set()
+        nested: list[ast.AST] = []
+        recorded: set[int] = set()
+        parameters = (
+            frozenset(arg.arg for arg in parameter_nodes(node.args))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+            else frozenset()
+        )
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            parameters = frozenset(
+                target.id
+                for generator in node.generators
+                for target in ast.walk(generator.target)
+                if isinstance(target, ast.Name)
+            )
+            body = [condition for generator in node.generators for condition in generator.ifs]
+            body += [generator.iter for generator in node.generators[1:]]
+            body += [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+
+        def visit(current: ast.AST, conditional: bool = False) -> None:
+            locations[id(current)] = key
+            if isinstance(current, (ast.Global, ast.Nonlocal)):
+                (globals_ if isinstance(current, ast.Global) else nonlocals).update(current.names)
+            # Record only bindings made by this node, not its descendants.
+            if isinstance(current, ast.Name) and isinstance(current.ctx, (ast.Store, ast.Del)):
+                recorded.add(id(current))
+                origins.setdefault(current.id, []).append(
+                    _Origin(_position(current), None, False, conditional)
+                )
+            elif isinstance(current, (ast.Import, ast.ImportFrom)):
+                for alias in current.names:
+                    name = imported_binding_name(alias)
+                    if name is not None:
+                        recorded.add(id(alias))
+                        origins.setdefault(name, []).append(
+                            _Origin(
+                                _position(current),
+                                (
+                                    "." * current.level
+                                    + (current.module + "." if current.module else "")
+                                    + alias.name
+                                    if isinstance(current, ast.ImportFrom) and current.level
+                                    else import_origin(current, alias)
+                                ),
+                                True,
+                                conditional,
+                            )
+                        )
+                    elif isinstance(current, ast.ImportFrom):
+                        stars.add(
+                            "." * current.level + (current.module + "." if current.module else "")
+                        )
+            elif isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                recorded.add(id(current))
+                for expression in evaluated_before_definition(current):
+                    visit(expression, conditional)
+                origins.setdefault(current.name, []).append(
+                    _Origin(_position(current), None, False, conditional)
+                )
+                nested.append(current)
+                return
+            elif isinstance(current, ast.Lambda):
+                for expression in evaluated_before_definition(current):
+                    visit(expression, conditional)
+                nested.append(current)
+                return
+            elif isinstance(current, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                visit(current.generators[0].iter, conditional)
+                nested.append(current)
+                return
+            for child in ast.iter_child_nodes(current):
+                visit(
+                    child,
+                    conditional
+                    or isinstance(
+                        current,
+                        (
+                            ast.If,
+                            ast.For,
+                            ast.AsyncFor,
+                            ast.While,
+                            ast.Try,
+                            ast.TryStar,
+                            ast.With,
+                            ast.AsyncWith,
+                            ast.Match,
+                            ast.BoolOp,
+                            ast.IfExp,
+                            ast.Assert,
+                        ),
+                    ),
+                )
+            if isinstance(current, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                value = current.value
+                copied = dotted_name(value) if value is not None else None
+                targets = current.targets if isinstance(current, ast.Assign) else [current.target]
+                for target in targets:
+                    if isinstance(target, ast.Name) and value is not None:
+                        # Replace the store entry with the value's import origin.
+                        entries = origins[target.id]
+                        entries[-1] = _Origin(_position(current), copied, False, conditional)
+
+        for statement in body:
+            visit(statement)
+        # Handler and pattern names are strings in the AST, not Name stores.
+        positions = {
+            id(child): _position(child) for statement in body for child in ast.walk(statement)
+        }
+        for binding in own_scope_bindings(body):
+            if binding.node_id not in recorded:
+                origins.setdefault(binding.name, []).append(
+                    _Origin(positions.get(binding.node_id, (0, 0)), None, False, True)
+                )
+        scopes[key] = _Scope(
+            parent,
+            {
+                name: tuple(sorted(events, key=lambda e: e.position))
+                for name, events in origins.items()
+            },
+            parameters,
+            frozenset(stars),
+            frozenset(globals_),
+            frozenset(nonlocals),
+        )
+        for child in nested:
+            # A method's globals are outside the class namespace.
+            enclosing = parent if isinstance(node, ast.ClassDef) else key
+            scope_of(child, enclosing, id(child))
+
+    scope_of(module, None, 0)
+    return _Resolution(scopes, locations)
+
+
+@dataclass(frozen=True)
+class ResourceImports:
+    """The importing file and the engine's current project import graph."""
+
+    file_path: str
+    cache: ImportGraphCache
+
+    def follow(
+        self, origins: FrozenSet[str], seen: FrozenSet[tuple[Path, str]] = frozenset()
+    ) -> FrozenSet[str]:
+        found = set(origins)
+        for origin in origins:
+            if origin in RESOURCE_CONSTRUCTORS or origin in WEAK_REFERENCE_CONSTRUCTORS:
+                continue
+            level = len(origin) - len(origin.lstrip("."))
+            head, _, tail = origin.lstrip(".").partition(".")
+            alias = ast.alias(name="*")
+            statement = ast.ImportFrom(module=None if level else head, names=[alias], level=level)
+            sites = imported_alias_sites(
+                self.file_path, statement, alias, origin.lstrip(".") if level else tail, self.cache
+            )
+            for file, name in sites or ():
+                key = (file, name)
+                if key in seen or len(seen) >= 32:
                     continue
-                origin = import_origin(node, alias)
-                if origin is not None:
-                    origins.setdefault(name, set()).add(origin)
-        elif isinstance(node, ast.Assign):
-            copied = dotted_name(node.value)
-            if copied is not None:
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        origins.setdefault(target.id, set()).add(copied)
-    return _ModuleSpellings(
-        {name: frozenset(found) for name, found in origins.items()}, frozenset(stars)
-    )
+                source = try_read_source(file)
+                if source is None:
+                    continue
+                try:
+                    module = parse_analysis_source(source, str(file))
+                except SyntaxError:
+                    continue
+                resolution = memoized_per_node(_RESOLUTIONS, module, _resolution)
+                targets = resolution.origins(name, 0, (10**9, 0), deferred=True)
+                found.update(ResourceImports(str(file), self.cache).follow(targets, seen | {key}))
+        return frozenset(found)
 
 
-_SPELLINGS: "WeakKeyDictionary[ast.AST, _ModuleSpellings]" = WeakKeyDictionary()
-
-
-def _possible_origins(spellings: _ModuleSpellings, dotted: str, depth: int = 0) -> Iterator[str]:
-    """Every absolute name ``dotted`` could denote, itself included."""
-    yield dotted
-    head, _, rest = dotted.partition(".")
-    if not rest:
-        for module in spellings.star_modules:
-            yield f"{module}.{head}"
-    if depth >= _MAX_ALIAS_DEPTH:
-        return
-    for origin in spellings.origins.get(head, ()):
-        target = f"{origin}.{rest}" if rest else origin
-        if target != dotted:
-            yield from _possible_origins(spellings, target, depth + 1)
-
-
-def _calls_one_of(
-    value: Optional[ast.AST], listed: FrozenSet[str], spellings: _ModuleSpellings
-) -> bool:
-    if not isinstance(value, ast.Call):
-        return False
-    callee = dotted_name(value.func)
-    return callee is not None and any(
-        origin in listed for origin in _possible_origins(spellings, callee)
-    )
-
-
-def _constructs_resource(value: Optional[ast.expr], spellings: _ModuleSpellings) -> bool:
-    return _calls_one_of(value, RESOURCE_CONSTRUCTORS, spellings)
-
-
-def _weakly_referenced(node: ast.AST, spellings: _ModuleSpellings) -> FrozenSet[str]:
-    """The names read in the first argument of a weak-reference constructor's call."""
-    if not _calls_one_of(node, WEAK_REFERENCE_CONSTRUCTORS, spellings):
+def _call_origins(
+    call: ast.Call, resolution: Optional[_Resolution], imports: Optional[ResourceImports]
+) -> FrozenSet[str]:
+    spelling = dotted_name(call.func)
+    if spelling is None:
         return frozenset()
-    assert isinstance(node, ast.Call)
-    if not node.args:
-        return frozenset()
-    return frozenset(
-        name.id
-        for name in ast.walk(node.args[0])
-        if isinstance(name, ast.Name) and isinstance(name.ctx, ast.Load)
+    origins = (
+        resolution.origins(spelling, resolution.locations.get(id(call), 0), _position(call))
+        if resolution is not None
+        else frozenset({"builtins.open" if spelling == "open" else spelling})
     )
+    return origins if imports is None else imports.follow(origins)
+
+
+_RESOLUTIONS: WeakKeyDictionary[ast.AST, _Resolution] = WeakKeyDictionary()
+_OWNING_HELPERS: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
+
+
+@dataclass(frozen=True)
+class ResourceGuard:
+    names: FrozenSet[str] = frozenset()
+    refusal: Optional[str] = None
 
 
 def _own_scope(node: ast.AST) -> Iterator[ast.AST]:
-    pending = [node]
-    while pending:
-        current = pending.pop()
-        yield current
-        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        pending.extend(ast.iter_child_nodes(current))
+    yield node
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+        for expression in evaluated_before_definition(node):
+            yield from _own_scope(expression)
+        return
+    for child in ast.iter_child_nodes(node):
+        yield from _own_scope(child)
 
 
-def resource_bound_names(block: Sequence[ast.stmt], module: Optional[ast.AST]) -> FrozenSet[str]:
-    """The names of ``block``'s own scope whose objects must live as long as they did.
-
-    A name bound directly to a listed constructor's result, and a name read
-    in the first argument of a weak-reference constructor's call. The caller
-    keeps those of them that the block newly binds. ``module`` is the parsed
-    module holding the block, whose imports say what a callee's spelling
-    denotes; without it nothing resolves but a full dotted name. Only a
-    plain name target counts as bound to a resource: an attribute or an item
-    is reachable through its container, and a ``with`` target is released by
-    its statement in every mode.
-    """
-    spellings = (
-        memoized_per_node(_SPELLINGS, module, _module_spellings)
-        if module is not None
-        else _ModuleSpellings({}, frozenset())
+def _helper_callees(call: ast.Call, resolution: Optional[_Resolution]) -> FrozenSet[str]:
+    spelling = dotted_name(call.func)
+    if spelling is None:
+        return frozenset()
+    origins = (
+        resolution.origins(spelling, resolution.locations.get(id(call), 0), _position(call))
+        if resolution is not None
+        else frozenset()
     )
-    names: Set[str] = set()
-    for statement in block:
-        for node in _own_scope(statement):
-            if isinstance(node, ast.Assign) and _constructs_resource(node.value, spellings):
-                names.update(target.id for target in node.targets if isinstance(target, ast.Name))
-            elif (
-                isinstance(node, (ast.AnnAssign, ast.NamedExpr))
-                and isinstance(node.target, ast.Name)
-                and _constructs_resource(node.value, spellings)
+    return frozenset(
+        origin
+        for origin in {*origins, spelling}
+        if is_generated_helper_name(origin.rsplit(".", 1)[-1])
+    )
+
+
+def _owning_helpers(module: ast.AST, imports: Optional[ResourceImports] = None) -> FrozenSet[str]:
+    """Retain the guard's guarantee across subsequent extraction passes.
+
+    A helper's result can contain an owner the first pass deliberately kept.
+    Until returned ownership is summarized by position, another helper must
+    not swallow that call and drop its owner. Imported generated helpers are
+    also left in place when their bodies are unavailable in this module.
+    Ordinary factories are outside this deliberately syntactic guard.
+    """
+    resolution = memoized_per_node(_RESOLUTIONS, module, _resolution)
+    helpers = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and is_generated_helper_name(node.name)
+    ]
+    known = {helper.name for helper in helpers}
+    owning: set[str] = set()
+    dependencies: dict[str, set[str]] = {}
+    for helper in helpers:
+        nodes = [node for statement in helper.body for node in _own_scope(statement)]
+        managed = {id(node.context_expr) for node in nodes if isinstance(node, ast.withitem)}
+        for node in nodes:
+            if not isinstance(node, ast.Call):
+                continue
+            dependencies.setdefault(helper.name, set()).update(_helper_callees(node, resolution))
+            origins = _call_origins(node, resolution, imports)
+            if origins & WEAK_REFERENCE_CONSTRUCTORS or (
+                origins & RESOURCE_CONSTRUCTORS and id(node) not in managed
             ):
-                names.add(node.target.id)
-            names.update(_weakly_referenced(node, spellings))
-    return frozenset(names)
+                owning.add(helper.name)
+    while True:
+        expanded = owning | {
+            name for name, calls in dependencies.items() if calls & owning or calls - known
+        }
+        if expanded == owning:
+            return frozenset(owning)
+        owning = expanded
+
+
+def resource_guard(
+    block: Sequence[ast.stmt],
+    module: Optional[ast.AST],
+    imports: Optional[ResourceImports] = None,
+) -> ResourceGuard:
+    """Each recognized call is managed, retained by a stable name, or refused.
+
+    Rebinding is conservatively checked across all paths. Returning a stable
+    alias of a rebound direct target is deliberately not an ownership proof.
+    The index caches immutable facts without retaining its weak-key AST.
+    """
+    resolution = (
+        memoized_per_node(_RESOLUTIONS, module, _resolution) if module is not None else None
+    )
+    owning_helpers = (
+        (
+            memoized_per_node(_OWNING_HELPERS, module, _owning_helpers)
+            if imports is None
+            else _owning_helpers(module, imports)
+        )
+        if module is not None
+        else frozenset()
+    )
+    known_helpers = (
+        {
+            node.name
+            for node in ast.walk(module)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and is_generated_helper_name(node.name)
+        }
+        if module is not None
+        else set()
+    )
+    nodes = [node for statement in block for node in _own_scope(statement)]
+    parents = {id(child): node for node in nodes for child in ast.iter_child_nodes(node)}
+    positions = {id(node): _position(node) for node in nodes}
+    # A smaller prefix must not evade a refusal by leaving the rebinding in
+    # the caller: aliases created by that prefix would otherwise disappear.
+    owner = (
+        next(
+            (
+                candidate
+                for candidate in ast.walk(module)
+                if isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and block
+                and resolution is not None
+                and id(candidate) == resolution.locations.get(id(block[0]))
+            ),
+            None,
+        )
+        if module is not None
+        else None
+    )
+    lifetime_nodes = (
+        [node for statement in owner.body for node in _own_scope(statement)]
+        if owner is not None
+        else nodes
+    )
+    lifetime_parents = {
+        id(child): node for node in lifetime_nodes for child in ast.iter_child_nodes(node)
+    }
+    positions.update({id(node): _position(node) for node in lifetime_nodes})
+    bindings = own_scope_bindings(owner.body if owner is not None else block)
+    names: set[str] = set()
+    captured_writes = (
+        frozenset(
+            name
+            for descendant in ast.walk(owner)
+            if isinstance(descendant, ast.Nonlocal)
+            for name in descendant.names
+        )
+        if owner is not None
+        else frozenset()
+    )
+
+    def stable(name: str, call: ast.Call, binding: Optional[ast.Name] = None) -> bool:
+        return (
+            name not in captured_writes
+            and not any(
+                event.name == name
+                and event.node_id != (id(binding) if binding else None)
+                and positions.get(event.node_id, (10**9, 0)) >= _position(call)
+                for event in bindings
+            )
+            and not any(
+                isinstance(node, ast.Name)
+                and node.id == name
+                and isinstance(node.ctx, ast.Del)
+                and _position(node) > _position(call)
+                for node in lifetime_nodes
+            )
+        )
+
+    for node in nodes:
+        if not isinstance(node, ast.Call):
+            continue
+        callees = _helper_callees(node, resolution)
+        if callees & owning_helpers or callees - known_helpers:
+            return ResourceGuard(
+                refusal=(
+                    f"This block calls a generated helper (line {node.lineno}) whose resource ownership "
+                    "Towel cannot preserve through another helper. Keep this call in place, or use `--strict`."
+                )
+            )
+        origins = _call_origins(node, resolution, imports)
+        resource = bool(origins & RESOURCE_CONSTRUCTORS)
+        weak = bool(origins & WEAK_REFERENCE_CONSTRUCTORS)
+        if not resource and not weak:
+            continue
+        refusal = (
+            f"This block creates or weakly references a resource (line {node.lineno}) "
+            "that later code may depend on, and Towel cannot keep it alive in a helper. "
+            "Use a `with` statement, or `--strict`."
+        )
+        parent = parents.get(id(node))
+        if resource and isinstance(parent, ast.withitem) and parent.context_expr is node:
+            continue
+        # Textual positions cannot prove stability across a loop back edge.
+        # Include loops outside a candidate prefix and comprehension bodies:
+        # their generators are siblings of elt/key/value, not ancestors.
+        ancestor = lifetime_parents.get(id(node))
+        while ancestor is not None:
+            if isinstance(
+                ancestor,
+                (
+                    ast.For,
+                    ast.AsyncFor,
+                    ast.While,
+                    ast.ListComp,
+                    ast.SetComp,
+                    ast.DictComp,
+                    ast.GeneratorExp,
+                ),
+            ):
+                return ResourceGuard(refusal=refusal)
+            ancestor = lifetime_parents.get(id(ancestor))
+        if resource:
+            targets: Sequence[ast.expr] = ()
+            if isinstance(parent, ast.Assign) and parent.value is node:
+                targets = parent.targets
+            elif isinstance(parent, (ast.AnnAssign, ast.NamedExpr)) and parent.value is node:
+                targets = [parent.target]
+            if not targets or any(not isinstance(target, ast.Name) for target in targets):
+                return ResourceGuard(refusal=refusal)
+            for target in targets:
+                assert isinstance(target, ast.Name)
+                if not stable(target.id, node, target):
+                    return ResourceGuard(refusal=refusal)
+                names.add(target.id)
+        if weak:
+            referent = (
+                node.args[0]
+                if node.args
+                else next(
+                    (
+                        keyword.value
+                        for keyword in node.keywords
+                        if keyword.arg == "meth" and "weakref.WeakMethod" in origins
+                    ),
+                    None,
+                )
+            )
+            if "weakref.WeakMethod" in origins and isinstance(referent, ast.Attribute):
+                referent = referent.value
+            if not isinstance(referent, ast.Name) or not stable(referent.id, node):
+                return ResourceGuard(refusal=refusal)
+            names.add(referent.id)
+    return ResourceGuard(frozenset(names))
+
+
+def resource_bound_names(
+    block: Sequence[ast.stmt],
+    module: Optional[ast.AST],
+    imports: Optional[ResourceImports] = None,
+) -> FrozenSet[str]:
+    """Stable resource names; callers must also check the guard's refusal."""
+    return resource_guard(block, module, imports).names
