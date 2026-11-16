@@ -578,10 +578,13 @@ class FixedPointDrivers(Materialization):
             excluded=self.excluded_directories,
         )
         merged: Dict[str, List[str]] = {}
+        skipped = self._unwritable_in_place | {
+            Path(item.path).resolve() for item in self._census.skipped
+        }
         for path in paths:
             if remaining is not None and remaining <= 0:
                 break
-            if Path(path).resolve() in self._unwritable_in_place:
+            if Path(path).resolve() in skipped:
                 continue
             original = Path(path).read_bytes()
             source = decode_source(original)

@@ -571,7 +571,7 @@ class ExistingFunctionReuse(EngineState):
         function ends by returning exactly those names, in any order; the
         other sites then unpack the function's result in its order.
         """
-        if self.strict and not self.complete_scope:
+        if self._census.skipped or (self.strict and not self.complete_scope):
             return None
         helper_name = proposal.extracted_function.name
         candidates: List[Tuple[int, FunctionArtifact]] = []
