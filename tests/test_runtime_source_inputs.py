@@ -65,7 +65,7 @@ def test_include_ignored_and_discovery_census(tmp_path: Path) -> None:
     assert python_sources(tmp_path, include_ignored=True) == [tmp_path / "local.py"]
 
 
-@pytest.mark.parametrize("data", [b"def broken(:\n", b"x = '\xe9'\n", b"x=1\0\n"])
+@pytest.mark.parametrize("data", [b"def broken(:\n", b"x=1\0\n"])
 def test_relaxed_nonprogram_files_warn_once_and_strict_refuses(
     tmp_path: Path, data: bytes, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -179,3 +179,25 @@ def test_cli_aliases_do_not_duplicate_unreadable_inputs(tmp_path: Path, command:
             assert len(payload["analysed"]["skipped"]) == 2, payload["analysed"]
     finally:
         locked.chmod(0o700)
+
+
+@pytest.mark.parametrize("command", ["preview", "dry"])
+@pytest.mark.parametrize("data", [b"x = '\xe9'\n", b"# coding: unknown_codec\nx = 1\n"])
+def test_strict_preserves_undecodable_skip(tmp_path: Path, command: str, data: bytes) -> None:
+    """D4: strict retains 1.949's undecodable skip instead of a new refusal."""
+    from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("")
+    (project / "good.py").write_text(LITERAL_DUPLICATES)
+    (project / "bad.py").write_bytes(data)
+    args = [command, str(project), "--strict", "--no-types", "--no-format"]
+    if command == "dry":
+        args += [str(tmp_path / "out"), "--no-interactive"]
+    result = invoke(args)
+    assert result.status == 0, result
+    assert "Skipping" in result.stderr and "bad.py" in result.stderr
+    assert (project / "bad.py").read_bytes() == data
+    if command == "dry":
+        assert (tmp_path / "out" / "bad.py").read_bytes() == data

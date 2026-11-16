@@ -14,7 +14,7 @@
 
 """Whole-program sources and the policy for inputs that cannot be read.
 
-Strict runs refuse unreadable, undecodable or unparsable files before changes.
+Strict runs refuse unreadable or unparsable files, retaining the historical decode skip.
 Relaxed runs warn once and treat those inputs as no part of the program.
 Valid sources excluded from extraction, including Git-ignored files, still
 contribute to whole-program checks. Editor locks and dangling links never do.
@@ -116,7 +116,7 @@ def skip_nonprogram_file(path: Path) -> bool:
         return True
     if policy is None or policy.strict:
         return False
-    failure = parse_failure(path)
+    failure = parse_failure(path, include_decoding_errors=True)
     if failure is None:
         return False
     warn_skipped(path, failure.complaint)
@@ -155,33 +155,38 @@ class UnparsedFile:
         return f"{_shown(self.path, root)}: {self.complaint}"
 
 
-_ComplaintKey = Tuple[str, bytes, ParserConfiguration]
+_ComplaintKey = Tuple[str, bytes, ParserConfiguration, bool]
 _COMPLAINTS: BoundedCache[_ComplaintKey, Optional[str]] = BoundedCache(1 << 15)
 """What the parser said of each file version, None when it parsed: a run asks twice."""
 
 
-def parse_failure(path: Path) -> Optional[UnparsedFile]:
-    """Describe a read, decoding or parse failure; return None for valid source."""
+def parse_failure(path: Path, *, include_decoding_errors: bool = False) -> Optional[UnparsedFile]:
+    """Describe read/parse failures; optionally include historically skipped decode errors."""
     try:
         data = path.read_bytes()
     except OSError as error:
         return UnparsedFile(path, f"it cannot be read: {error.strerror or error}")
-    stamp = (str(path.absolute()), hashlib.sha256(data).digest(), parser_configuration())
+    stamp = (
+        str(path.absolute()),
+        hashlib.sha256(data).digest(),
+        parser_configuration(),
+        include_decoding_errors,
+    )
     cacheable = parsing_is_pure(data)
     if cacheable and stamp in _COMPLAINTS:
         complaint = _COMPLAINTS[stamp]
     else:
-        complaint = _complaint(data, path)
+        complaint = _complaint(data, path, include_decoding_errors)
         if cacheable:
             _COMPLAINTS.put(stamp, complaint)
     return None if complaint is None else UnparsedFile(path, complaint)
 
 
-def _complaint(data: bytes, path: Path) -> Optional[str]:
+def _complaint(data: bytes, path: Path, include_decoding_errors: bool) -> Optional[str]:
     try:
         text = decode_source(data)
     except (SyntaxError, UnicodeError, LookupError) as error:
-        return f"it cannot be decoded: {_described(error)}"
+        return f"it cannot be decoded: {_described(error)}" if include_decoding_errors else None
     try:
         ast.parse(text, filename=str(path))
     except (SyntaxError, ValueError, RecursionError) as error:
