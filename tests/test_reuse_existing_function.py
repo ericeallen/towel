@@ -34,6 +34,7 @@ import textwrap
 import pytest
 from typing import Unpack
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_functions_keep_their_own_bodies import _assert_owned_helper_call
 from tests.test_helpers import (
     EngineOptions,
@@ -74,6 +75,24 @@ def _fixed_point_directory(package: Path, **engine_options: Unpack[EngineOptions
             str(package), str(package), max_iterations=0, progress="none"
         )
     return sorted({desc for _count, descs in results.values() for desc in descs})
+
+
+def _assert_lifetime_refused(path: Path, final: str) -> None:
+    original = path.read_text()
+    engine = UnificationRefactorEngine(min_lines=1)
+    assert engine.analyze_file(str(path)) == []
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+    assert final == original
+
+
+def _assert_cross_file_lifetime_refused(package: Path) -> None:
+    paths = sorted(package.glob("*.py"))
+    originals = {path: path.read_text() for path in paths}
+    engine = UnificationRefactorEngine(min_lines=1, cross_module_helpers=True)
+    assert engine.analyze_files([str(path) for path in paths], progress="none") == []
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+    assert _fixed_point_directory(package) == []
+    assert {path: path.read_text() for path in paths} == originals
 
 
 def _extracted_helper(
@@ -117,6 +136,10 @@ def _observed(source: str, driver: str) -> str:
 @pytest.mark.strict_mode
 def test_identical_functions_both_call_one_new_helper(tmp_path: Path) -> None:
     final = _fixed_point(write_module(tmp_path, IDENTICAL_PAIR))
+    if not lifetime_order_certified():
+        _assert_lifetime_refused(tmp_path / "m.py", final)
+        assert _observed(final, "print(alpha(3), beta(5))") == "8 12\n"
+        return
     helper = _extracted_helper(final, ("alpha", "beta"))
     functions = module_functions(final)
     _assert_owned_helper_call(functions["alpha"], functions[helper], ("value",))
@@ -126,6 +149,9 @@ def test_identical_functions_both_call_one_new_helper(tmp_path: Path) -> None:
 
 def test_the_proposal_extracts_a_helper_and_reuses_no_function(tmp_path: Path) -> None:
     path = write_module(tmp_path, IDENTICAL_PAIR)
+    if not lifetime_order_certified():
+        _assert_lifetime_refused(Path(path), Path(path).read_text())
+        return
     (proposal,) = UnificationRefactorEngine(min_lines=1).analyze_file(path)
     assert proposal.reused_function is None
     assert proposal.description == "Extract common code from alpha and beta"
@@ -178,6 +204,10 @@ def test_a_partial_owned_body_declines_but_complete_bodies_share(tmp_path: Path)
         + "        scaled =",
     )
     final = _fixed_point(write_module(tmp_path, whole, "whole.py"))
+    if not lifetime_order_certified():
+        _assert_lifetime_refused(tmp_path / "whole.py", final)
+        assert _observed(final, driver) == _observed(original, driver)
+        return
     helper = _extracted_helper(final, ("norm", "report"))
     functions = module_functions(final)
     _assert_owned_helper_call(
@@ -211,6 +241,9 @@ def test_three_copies_all_call_one_helper(tmp_path: Path) -> None:
             """,
         )
     )
+    if not lifetime_order_certified():
+        _assert_lifetime_refused(tmp_path / "m.py", final)
+        return
     _extracted_helper(final, ("a", "b", "c"))
 
 
@@ -233,6 +266,10 @@ def test_a_method_and_a_function_share_a_helper(tmp_path: Path) -> None:
             """,
         )
     )
+    if not lifetime_order_certified():
+        _assert_lifetime_refused(tmp_path / "m.py", final)
+        assert _observed(final, "print(alpha(3), K().m(5))") == "8 12\n"
+        return
     assert "return alpha(value)" not in final
     functions = module_functions(final)
     helpers = [node for name, node in functions.items() if name != "alpha"]
@@ -328,6 +365,9 @@ def test_globally_rebound_functions_share_a_helper(tmp_path: Path) -> None:
             """,
         )
     )
+    if not lifetime_order_certified():
+        _assert_lifetime_refused(tmp_path / "m.py", final)
+        return
     _extracted_helper(final, ("alpha", "beta", "swap"), sites=("alpha", "beta"))
     assert "return alpha(value)" not in final
     assert "return beta(value)" not in final
@@ -339,7 +379,10 @@ def test_the_reuse_setting_redirects_nothing_either_way(tmp_path: Path) -> None:
             write_module(tmp_path, IDENTICAL_PAIR, f"reuse_{reuse}.py"),
             reuse_existing_functions=reuse,
         )
-        _extracted_helper(final, ("alpha", "beta"))
+        if lifetime_order_certified():
+            _extracted_helper(final, ("alpha", "beta"))
+        else:
+            _assert_lifetime_refused(tmp_path / f"reuse_{reuse}.py", final)
 
 
 def test_trivial_forwarding_bodies_are_still_skipped(tmp_path: Path) -> None:
@@ -375,6 +418,9 @@ def test_a_cross_file_site_imports_the_new_helper(tmp_path: Path) -> None:
             """,
             name,
         )
+    if not lifetime_order_certified():
+        _assert_cross_file_lifetime_refused(package)
+        return
     assert _fixed_point_directory(package) == [
         "Extract common code from alpha (a.py) and beta (b.py)"
     ]
@@ -414,6 +460,9 @@ def test_a_cross_file_helper_is_hosted_where_no_import_cycle_closes(tmp_path: Pa
     )
     # ``a`` already imports ``b``, so ``b`` importing from ``a`` would close
     # a cycle: the helper lives in ``b``, which ``a`` imports already.
+    if not lifetime_order_certified():
+        _assert_cross_file_lifetime_refused(package)
+        return
     assert _fixed_point_directory(package)
     assert "from .a import" not in (package / "b.py").read_text()
     assert "def __extracted_func" in (package / "b.py").read_text()

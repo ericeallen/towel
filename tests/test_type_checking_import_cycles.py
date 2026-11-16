@@ -34,6 +34,8 @@ import importlib.util
 
 import pytest
 
+from tests.test_helpers import child_mode_flags, lifetime_order_certified
+
 import towel
 from towel.unification.import_graph import (
     ImportGraphCache,
@@ -234,6 +236,7 @@ def _dry(root: Path, *, types: bool = False) -> subprocess.CompletedProcess[str]
             "--parameterize-builtins",
             "--progress",
             "none",
+            *child_mode_flags(),
         ],
         capture_output=True,
         text=True,
@@ -281,11 +284,13 @@ def test_modules_share_a_helper_only_when_guarded_imports_are_proved_inert(
     assert result.returncode == 0, result.stdout + result.stderr
     alpha = (root / "pkg" / "alpha.py").read_text()
     beta = (root / "pkg" / "beta.py").read_text()
-    if immutable_false:
+    if immutable_false and lifetime_order_certified():
         assert "__extracted_func" in alpha and "__extracted_func" in beta, alpha + beta
         assert ("from .alpha import" in beta) != ("from .beta import __extracted" in alpha)
     else:
         assert (alpha, beta) == (original_alpha, original_beta)
+        if immutable_false:
+            assert "lifetime_order_uncertified" in result.stdout
     imports_in_every_order(
         root,
         ["pkg.alpha", "pkg.beta"],
@@ -362,25 +367,36 @@ def test_a_type_only_import_towel_wrote_refuses_no_later_pair(tmp_path: Path) ->
     first = _dry(tmp_path, types=True)
     assert first.returncode == 0, first.stdout + first.stderr
     direct = (tmp_path / "pkg" / "direct.py").read_text()
-    assert (
-        "if 0 > 1:  # pragma: no cover\n    from .lock import LockError as _LockError" in direct
-    ), direct
+    if lifetime_order_certified():
+        assert (
+            "if 0 > 1:  # pragma: no cover\n    from .lock import LockError as _LockError" in direct
+        ), direct
+    else:
+        assert "lifetime_order_uncertified" in first.stdout
+        assert direct == files["pkg/direct.py"]
+        assert (tmp_path / "pkg" / "lock.py").read_text() == files["pkg/lock.py"]
     for module in ("direct", "lock"):
         with (tmp_path / "pkg" / f"{module}.py").open("a") as handle:
             handle.write(_SUMMARY.format(name=module))
     second = _dry(tmp_path, types=True)
     assert second.returncode == 0, second.stdout + second.stderr
-    assert "Extract common code from summary_direct" in second.stdout, second.stdout
-    rewritten = ast.parse((tmp_path / "pkg" / "lock.py").read_text())
-    summary = next(
-        node
-        for node in rewritten.body
-        if isinstance(node, ast.FunctionDef) and node.name == "summary_lock"
-    )
-    assert ast.unparse(summary.args) == "values: list[int]"
-    assert isinstance(summary.body[-1], ast.Return)
-    assert isinstance(summary.body[-1].value, ast.Call)
-    assert "__extracted_func" in ast.unparse(summary.body[-1].value)
+    if lifetime_order_certified():
+        assert "Extract common code from summary_direct" in second.stdout, second.stdout
+        rewritten = ast.parse((tmp_path / "pkg" / "lock.py").read_text())
+        summary = next(
+            node
+            for node in rewritten.body
+            if isinstance(node, ast.FunctionDef) and node.name == "summary_lock"
+        )
+        assert ast.unparse(summary.args) == "values: list[int]"
+        assert isinstance(summary.body[-1], ast.Return)
+        assert isinstance(summary.body[-1].value, ast.Call)
+        assert "__extracted_func" in ast.unparse(summary.body[-1].value)
+    else:
+        assert "lifetime_order_uncertified" in second.stdout
+        for module in ("direct", "lock"):
+            expected = files[f"pkg/{module}.py"] + _SUMMARY.format(name=module)
+            assert (tmp_path / "pkg" / f"{module}.py").read_text() == expected
     imports_in_every_order(
         tmp_path,
         ["pkg.direct", "pkg.lock"],

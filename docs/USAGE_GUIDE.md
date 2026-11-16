@@ -119,7 +119,7 @@ cases are judged by the configured checker and source correspondence; a guard
 alone does not forbid an Optional-aware consumer. See
 [preserving narrowing](TYPING.md#preserving-narrowing).
 
-After each applied proposal, the engine re-analyzes only the changed files to enqueue *localized* follow-up proposals immediately. This accelerates chained extractions without rescanning the entire project every iteration. When that queue drains, a *global* pass re-pairs the project for cross-file duplicates; after the first, a global pass re-pairs only the functions in files rewritten since the previous global pass, which is exact (the argument is in [ARCHITECTURE.md](ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)). Construct the engine with `incremental_global_passes=False` to re-pair everything each time; the output is byte-identical.
+After each applied proposal, the engine re-analyzes only the changed files to enqueue *localized* follow-up proposals immediately. This accelerates chained extractions without rescanning the entire project every iteration. When that queue drains, a *global* pass re-pairs the project for cross-file duplicates; after the first, a global pass re-pairs only the functions in files rewritten since the previous global pass, which is exact (the argument is in [ARCHITECTURE.md](design/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)). Construct the engine with `incremental_global_passes=False` to re-pair everything each time; the output is byte-identical.
 
 ## Command-Line Usage
 
@@ -178,7 +178,7 @@ and formatting tools, while the bare API defaults for those callbacks are `None`
 | `cross_module_helpers` | `False` | Also share a helper between duplicates in different modules, importing it into the others (`--cross-module/--no-cross-module`). Off, only duplicates within a module are paired and no import of a project module that runs is written. |
 | `excluded_directories` | `()` | Names of directories or files to leave unchanged (`--exclude`), at any depth. The checks that read the whole program still read them, and one that does not parse is taken for no part of the program; the program's import model reads nothing in an excluded directory. |
 | `max_candidate_pairs` | `20_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
-| `skip_trivial_helpers` | `True` | Apply optional forwarding and complete generated-syntax cost filters, including larger bodies and control flow. `False` bypasses those output-quality filters, not semantic checks or unconditional no-logic refusals. See [the calibration](DECISIONS.md#2026-11-08-complete-extractions-must-repay-their-generated-syntax). |
+| `skip_trivial_helpers` | `True` | Apply optional forwarding and complete generated-syntax cost filters, including larger bodies and control flow. `False` bypasses those output-quality filters, not semantic checks or unconditional no-logic refusals. See [the calibration](design/DECISIONS.md#2026-11-08-complete-extractions-must-repay-their-generated-syntax). |
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
 | `type_oracle` | `None` | A `TypeOracle` (`towel.type_inference`) that reveals types, decides subtyping, and checks generated code; without one no type inference or project type validation runs. Binding, lifetime and instantiation checks remain active; the CLI wires its oracle through `--types/--no-types`. |
 | `snippet_formatter` | `None` | One text-to-text formatter for every inserted snippet; mutually exclusive with `snippet_formatter_for_file`. |
@@ -186,7 +186,7 @@ and formatting tools, while the bare API defaults for those callbacks are `None`
 | `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports: called with the file's path and new text, while the file at that path still holds the text the change started from. |
 | `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). The rehearing that ends a run re-pairs everything regardless. |
 | `promote_equal_hof_literals` | `False` | Explicit API opt-in to expose equal literal arguments of higher-order factory calls as helper parameters after all sites pass its checks. The CLI has no corresponding flag. |
-| `settings` | `None` | A `towel.diagnostics.Settings`: what Towel reads from the environment (worker cap, debug switches). When omitted, the engine reads the environment once at construction; the command line and the analysis session each read it once as well (see *Diagnostics and settings* in [ARCHITECTURE.md](ARCHITECTURE.md)). |
+| `settings` | `None` | A `towel.diagnostics.Settings`: what Towel reads from the environment (worker cap, debug switches). When omitted, the engine reads the environment once at construction; the command line and the analysis session each read it once as well (see *Diagnostics and settings* in [ARCHITECTURE.md](design/ARCHITECTURE.md)). |
 
 `reuse_existing_functions` is deprecated and does nothing: a duplicate that is
 the whole body of a function once made the other sites call that function, and
@@ -364,7 +364,7 @@ bound by the host class; static helpers infer fresh parameters from explicit
 arguments. Fresh method parameters are declared before the host class
 at module scope. Every candidate is checked with its rewritten calls
 and unchanged consumers before it is accepted; `--no-types` does not synthesize
-generic contracts. See the [design and supported boundaries](proposals/type-parameters.md).
+generic contracts. See the [design and supported boundaries](design/proposals/type-parameters.md).
 
 Each fixed-point call starts a new run and checks the original before creating
 an output copy. Direct `apply_refactoring` calls share an implicit run; call

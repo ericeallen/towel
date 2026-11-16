@@ -22,15 +22,21 @@ formatting, follow-ups and the final cold confirmation.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
-import json
+import re
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
+from tests.test_checker_failure_reporting import _Oracle
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
+from tests.test_cli_integration import invoke
+from tests.test_progress_modes import _make_fixture, _two_round_project
+from tests.typed_fixtures import requires_mypy
 from towel import cli
 from towel.diagnostics import LOG
 from towel.filesystem import StagedProject, staged_project
@@ -39,10 +45,6 @@ from towel.type_inference import CheckFailure, CheckSuccess, TypeDiagnostic, Typ
 from towel.unification import fixed_point
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_checker_failure_reporting import _Oracle
-from tests.test_cli_integration import DUPLICATES, invoke
-from tests.test_progress_modes import _make_fixture, _two_round_project
-from tests.typed_fixtures import requires_mypy
 
 
 def _contents(target: Path) -> dict[str, bytes]:
@@ -88,6 +90,11 @@ def _capture_preview(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Path, dict[s
     return completed
 
 
+def _counted(count: int, reason: str, stdout: str) -> bool:
+    """Whether the run's reasons list ``reason`` once, ``count`` times: ``  1  <sentence> [reason]``."""
+    return bool(re.search(rf"^ +{count}  .*\[{re.escape(reason)}\]$", stdout, re.MULTILINE))
+
+
 @pytest.mark.parametrize("directory", [False, True])
 @pytest.mark.parametrize("cap, count", [(0, 2), (1, 1)])
 def test_complete_preview_matches_dry_bytes_and_requested_cap(
@@ -105,7 +112,10 @@ def test_complete_preview_matches_dry_bytes_and_requested_cap(
     preview = invoke(["preview", str(target), *flags])
     assert preview.status == 0, preview
     assert f"Would apply {count} refactoring(s)" in preview.stdout
-    assert f"Termination: {'iteration_cap' if cap else 'fixed_point'}" in preview.stdout
+    # 2.0 says why a run stopped only when it stopped at the cap, in words.
+    stopped = "Stopped at the limit of 1 refactoring (--max-refactorings)."
+    assert (stopped in preview.stdout) == bool(cap)
+    assert "Termination:" not in preview.stdout
     assert "Applied " not in preview.stdout
     assert "towel-preview-" not in preview.stdout + preview.stderr
     assert "--- before/" in preview.stdout and "+++ after/" in preview.stdout
@@ -141,14 +151,17 @@ def test_preview_passes_every_shared_option_to_dry() -> None:
         "--no-format",
         "--progress",
         "detail",
+        "--quiet",
     ]
     preview = cli.PreviewOptions.from_namespace(parser.parse_args(["preview", "src", *flags]))
     dry = cli.DryOptions.from_namespace(
         parser.parse_args(["dry", "src", "out", "--no-interactive", *flags])
     )
     assert preview.dry_options("out") == dry
+    assert preview.quiet and dry.quiet
     defaults = cli.PreviewOptions.from_namespace(parser.parse_args(["preview", "src"]))
     assert defaults.types and defaults.format and not defaults.quick
+    assert not defaults.quiet
     assert defaults.max_refactorings == 0
 
 
@@ -217,7 +230,7 @@ def test_complete_preview_keeps_cross_module_followups_and_exclusions(
     assert "Would apply 4 refactoring(s)" in preview.stdout
     assert "Discovered 2 proposal(s)" in preview.stderr
     assert "Discovered 1 proposal(s)" in preview.stderr
-    assert "Termination: fixed_point" in preview.stdout
+    assert "Termination:" not in preview.stdout and "Stopped at the limit" not in preview.stdout
     assert "towel-preview-" not in preview.stdout + preview.stderr
     output = tmp_path / "output"
     dry = invoke(["dry", str(root), str(output), "--no-interactive", *flags])
@@ -277,8 +290,8 @@ def test_complete_preview_excludes_a_structural_proposal_the_checker_refuses(
     dry = invoke(["dry", str(target), str(output), "--no-interactive", *flags])
     assert preview.status == dry.status == 0, (preview, dry)
     assert "Would apply 0 refactoring(s)" in preview.stdout
-    assert "refused by the type checker 1" in preview.stdout
-    assert "refused by the type checker 1" in dry.stdout
+    assert _counted(1, "refused by the type checker", preview.stdout)
+    assert _counted(1, "refused by the type checker", dry.stdout)
     assert "Call sites (- before / + after):" not in preview.stdout
     assert all(oracle.checks > 1 for oracle in oracles)
     assert _contents(output) == _contents(target)
@@ -293,11 +306,11 @@ def test_complete_preview_uses_original_config_and_whole_project_staging(
     package = root / "pkg"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
-    source = DUPLICATES.replace("(x):", "(x: int) -> int:")
+    source = DUPLICATES.replace("():", "() -> int:")
     (package / "module.py").write_text(source)
     config = "[tool.mypy]\nstrict = true\n[tool.black]\nline-length = 88\n"
     (root / "pyproject.toml").write_text(config)
-    (root / "consumer.py").write_text("from pkg.module import first\nvalue: int = first(3)\n")
+    (root / "consumer.py").write_text("from pkg.module import first\nvalue: int = first()\n")
     before = _snapshot(root)
     observed: list[Path] = []
 
@@ -413,8 +426,8 @@ def test_formatter_refusals_are_not_shown_as_applicable_changes(
     dry = invoke(["dry", str(target), str(output), "--no-interactive", *flags])
     assert preview.status == dry.status == 0, (preview, dry)
     assert "Would apply 0 refactoring(s)" in preview.stdout
-    assert "the formatter changed its code or failed 1" in preview.stdout
-    assert "the formatter changed its code or failed 1" in dry.stdout
+    assert _counted(1, "the formatter changed its code or failed", preview.stdout)
+    assert _counted(1, "the formatter changed its code or failed", dry.stdout)
     assert selections == [target, target]
     assert _contents(output) == _contents(target)
 

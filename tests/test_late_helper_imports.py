@@ -26,6 +26,7 @@ import sys
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 _BODY = """def {name}(values):
@@ -112,6 +113,7 @@ def test_helper_import_does_not_advance_a_late_module_load(
 
 def test_an_already_loaded_host_still_shares_the_helper(tmp_path: Path) -> None:
     package = _program(tmp_path, "print('host')\n", "import pkg.a\n", "")
+    original = {path: path.read_bytes() for path in package.rglob("*.py")}
     expected = "host\n55 105\n"
     assert _run(tmp_path) == expected
     engine = UnificationRefactorEngine(
@@ -121,7 +123,12 @@ def test_an_already_loaded_host_still_shares_the_helper(tmp_path: Path) -> None:
         results, _ = engine.refactor_directory_to_fixed_point(
             str(package), str(package), progress="none"
         )
-    assert results, "an import that already ran must not prevent safe sharing"
+    if lifetime_order_certified():
+        assert results, "an import that already ran must not prevent safe sharing"
+    else:
+        assert results == {}
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert {path: path.read_bytes() for path in original} == original
     assert _run(tmp_path) == expected
 
 

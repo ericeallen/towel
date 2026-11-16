@@ -34,6 +34,7 @@ from typing import Mapping
 
 import pytest
 
+from tests.test_helpers import child_mode_flags, lifetime_order_certified
 import towel
 from towel.cli import DryOptions, PreviewOptions, _build_parser
 from towel.diagnostics import Settings
@@ -105,6 +106,7 @@ def _dry(target: Path, output: Path, *flags: str) -> str:
             "--no-format",
             "--progress",
             "none",
+            *child_mode_flags(),
             *flags,
         ],
         capture_output=True,
@@ -189,15 +191,20 @@ def test_a_duplicate_across_modules_is_shared_only_when_asked(tmp_path: Path) ->
 
     alone = tmp_path / "alone"
     log = _dry(root / "zzshared", alone / "zzshared")
-    assert "No refactorings found!" in log, log
+    # 2.0: without --cross-module the modules' blocks are never compared (audit finding 3).
+    assert "No repeated code found in 3 files." in log, log
     for name, text in originals.items():
         assert (alone / "zzshared" / name).read_text(encoding="utf-8") == text
 
     shared = tmp_path / "shared"
-    _dry(root / "zzshared", shared / "zzshared", "--cross-module")
+    report = _dry(root / "zzshared", shared / "zzshared", "--cross-module")
     written = {name: (shared / "zzshared" / name).read_text(encoding="utf-8") for name in originals}
-    assert sum("def __extracted_func_0(" in text for text in written.values()) == 1
-    assert sum("import __extracted_func_0" in text for text in written.values()) == 1
+    if lifetime_order_certified():
+        assert sum("def __extracted_func_0(" in text for text in written.values()) == 1
+        assert sum("import __extracted_func_0" in text for text in written.values()) == 1
+    else:
+        assert "lifetime_order_uncertified" in report
+        assert written == originals
     assert _results(shared) == expected
 
 
@@ -205,9 +212,13 @@ def test_a_cross_module_proposal_built_elsewhere_is_refused_by_default(tmp_path:
     """Pairing never forms one; a caller that brings one gets no import between modules."""
     root = _package(tmp_path / "project")
     paths = [str(root / "zzshared" / name) for name in ("first.py", "second.py")]
-    (proposal,) = UnificationRefactorEngine(
-        min_lines=3, cross_module_helpers=True, settings=SERIAL
-    ).analyze_files(paths, progress="none")
+    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True, settings=SERIAL)
+    proposals = engine.analyze_files(paths, progress="none")
+    if not lifetime_order_certified():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        return
+    (proposal,) = proposals
     with pytest.raises(RefactoringError, match="--cross-module"):
         UnificationRefactorEngine(min_lines=3, settings=SERIAL).apply_refactoring_multi_file(
             proposal

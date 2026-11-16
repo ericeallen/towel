@@ -9,7 +9,7 @@ with 1.946 observed mean times 2.58% higher for Click, 8.84% higher for Rich
 and 1.25% higher for Voluptuous. All distinct generated outputs preserved
 their original consumer outcomes. The completed release corpus also passed
 Sphinx, PrettyTable and Croniter; see the
-[publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026).
+[publication record](maintainers/PRODUCTION_READINESS.md#1947-published-release-october-26-2026).
 The earlier investigations below retain their original source and outcome.
 
 The October 25 [Sphinx investigation](#1947-sphinx-memory-and-parsing-investigation)
@@ -31,7 +31,7 @@ The October 18 whole-command profile at `0b3494c` measured Rich +7.6% versus
 1.792 on a shared native macOS/Python 3.12 host. Click's noisier difference
 includes one more extraction. The maintainer subsequently requested scoped source-correspondence memoization
 in 1.946. It is now implemented; the earlier profile does not measure its benefit.
-See [the profile and attribution](RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+See [the profile and attribution](maintainers/RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
 
 The earlier October 10 container cohorts compare versioned 1.946 source `a6dc6ed` with
 published 1.792 source `44d7795`: Voluptuous was 3.75% lower and Click 23.39%
@@ -244,8 +244,8 @@ their original source and artifact identities.
 
 ### October 10 versioned warning-guard cohorts
 
-The [portable record](../tests/release_evidence/1.946-warning-guard/README.md)
-and [raw samples](../tests/release_evidence/1.946-warning-guard/measurements.json)
+The [portable record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-warning-guard/README.md)
+and [raw samples](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-warning-guard/measurements.json)
 bind eight complete cold default CLI observations to versioned 1.946 source
 `a6dc6ed4c75fa9c1b65aa9029f2a6361ec7dce77` and published 1.792 source
 `44d779563578a32e24f8213fba96f43c6698ab43`.
@@ -356,8 +356,8 @@ ln(7) ≈ 1.945910149; no performance-restoration claim was established. The com
 `9d57b0d25f3ee743e0ce0035ed13df65b2344164` with released source
 `44d779563578a32e24f8213fba96f43c6698ab43`. Each arm used a fresh offline wheel
 built from its named source; both wheels declared **1.792**. The retained
-[measurement record](../tests/release_evidence/1.946-preparation/measurements.json)
-and [evidence guide](../tests/release_evidence/1.946-preparation/README.md) bind
+[measurement record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-preparation/measurements.json)
+and [evidence guide](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-preparation/README.md) bind
 all samples to their source, artifacts, inputs and external raw observations.
 
 | Workload | Released source mean (range), seconds | Audited source mean (range), seconds | Difference | Samples per source |
@@ -426,7 +426,7 @@ with identical requests and answers. Packaging's full command remained
 effectively flat (39.98 versus 39.77 seconds) while the candidate applied one
 more extraction. These are separate workloads and timing boundaries; no
 whole-corpus speedup is established. The
-[comparison report](proposals/published-1772-comparison.md)
+[comparison report](design/proposals/published-1772-comparison.md)
 records the precise source/artifact identities, alternating runs and ordinary
 background activity. The older timings below retain their historical scope.
 
@@ -452,7 +452,7 @@ A separate instrumented six-function public fixed-point control makes 160
 queries in both arms; fresh computations fall from 160 to 80 with identical
 output and observed results/effects. That work reduction is scoped to a single
 unification's immutable inputs, rather than a cross-run cache or CLI speed claim.
-The [retained evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md)
+The [retained evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-parameter-audit-fixes/README.md)
 binds drivers, raw observations, source, configuration and outputs. This is no
 new comparison with published 1.772 and does not clear matrix/corpus gates.
 
@@ -489,14 +489,14 @@ controls pass. Instrumented complete CLI runs each performed 185 mypy exchanges
 and 30 materializations: all five earlier completed refusals predated the last
 project change, so revision 19 correctly invalidated them before rehearing. This
 fixture supplies no applicable repeated refusal for the new optimization to skip.
-The [retained evidence](../tests/release_evidence/1.792-performance-optimization/README.md)
+The [retained evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-performance-optimization/README.md)
 binds all three comparisons to source, wheel, dependencies and output hashes.
 These measurements predate removal of the inner rendered-variant refusal memo.
 That removal makes each submitted variant issue a fresh project-check request;
 no new timing for it is claimed here. The outer completed-proposal rehearing
 cache remains separately qualified. Matrix and corpus reruns were pending
 explicit authorization at that October 6 checkpoint; the completed 1.792
-publication has its own [release record](PRODUCTION_READINESS.md#1792-published-release-october-8-2026).
+publication has its own [release record](maintainers/PRODUCTION_READINESS.md#1792-published-release-october-8-2026).
 
 ### October 5 repaired candidate comparison
 
@@ -542,7 +542,7 @@ rejection, retaining identity, dependency, input, output and typed-CLI checks.
 It does not claim a quiet-host preflight pass, continuous whole-system
 telemetry or an interference-free machine.
 
-The [retained observations](../tests/release_evidence/1.792-audit-fixes/README.md)
+The [retained observations](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-audit-fixes/README.md)
 include all 12 timings and CLI logs, runtime/input/output hashes, original
 completion records and the capacity experiment's declared changes. Complete
 background-load records remain in the external handoff. The following
@@ -583,7 +583,7 @@ unknown answers are retried. All project checks and final cold validation
 remain. This differs from the cold-analysis fixture's much larger speedup;
 that fixture does not measure a complete command.
 
-The [retained measurements](../tests/release_evidence/post-1772-typed-cli/README.md)
+The [retained measurements](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/post-1772-typed-cli/README.md)
 include every timing sample, runtime and input hashes, output identities,
 dependency versions and conditions. The earlier comparisons above are
 historical results from their named source states.
@@ -632,12 +632,12 @@ The Sphinx-only rerun at `29454ab` took 5,660 s (about 94 minutes) and changed
 using Python 3.12, `TOWEL_WORKERS=1`, `--cross-module`, and default typing
 (mypy and Pyright both strict). These are measured conditions, not minimum
 resource requirements or time guarantees. The typed checks are nearly all of
-that time; the [release report](PRODUCTION_READINESS.md)
+that time; the [release report](maintainers/PRODUCTION_READINESS.md)
 distinguishes this rerun from the preceding full corpus.
 
 ### Why larger projects take longer
 
-The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets.
+The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](design/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets.
 
 Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add to an annotated project's time in proportion to the number of applied refactorings, each of which is type-checked: Towel's own source (commit `8cb8b8c`, September 24, 2026, one core) applies 22 refactorings in 35 s with `--no-types --no-format` and 21 in 138 s with the defaults, its one configured checker, mypy, verifying the complete prospective project through an owned mypy worker that forks a child per build (a project that configures pyright is also checked by a long-lived pyright language server over a private copy of the project).
 

@@ -30,6 +30,7 @@ avoids the cycle.
 
 from __future__ import annotations
 
+import ast
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,7 @@ import unittest
 import pytest
 from pathlib import Path
 
+from tests.compiler_golden_profiles import lifetime_refusal_profile
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # A block duplicated within ``a`` (a1/a2), within ``b`` (b1/b2), and across the
@@ -99,14 +101,16 @@ class TestOutOfPlaceCycleRegression(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _refactor_and_adopt(self) -> None:
+    def _refactor_and_adopt(self) -> UnificationRefactorEngine:
         cleaned = self.tmp / "work" / "cleaned"
-        UnificationRefactorEngine(cross_module_helpers=True).refactor_directory_to_fixed_point(
+        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine.refactor_directory_to_fixed_point(
             str(self.pkg), str(cleaned), max_iterations=0, progress="none"
         )
         # Adopt the cleaned copy back over the package (as the harness does).
         shutil.rmtree(self.pkg)
         shutil.copytree(cleaned, self.pkg)
+        return engine
 
     def _import(self, module: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -129,10 +133,30 @@ class TestOutOfPlaceCycleRegression(unittest.TestCase):
 
     @pytest.mark.strict_mode
     def test_owned_duplicates_use_fresh_module_local_helpers(self) -> None:
-        self._refactor_and_adopt()
+        originals = {name: (self.pkg / name).read_bytes() for name in ("a.py", "b.py")}
+        engine = self._refactor_and_adopt()
         for filename in ("a.py", "b.py"):
             source = (self.pkg / filename).read_text()
-            self.assertIn("def __extracted_func", source)
+            if lifetime_refusal_profile():
+                self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+                if filename == "a.py":
+                    self.assertEqual((self.pkg / filename).read_bytes(), originals[filename])
+                else:
+                    # The b3/b4 loop body is still a safe smaller extraction.
+                    self.assertIn("def __extracted_func", source)
+
+                    def owned_functions(text: str) -> list[str]:
+                        return [
+                            ast.dump(node)
+                            for node in ast.parse(text).body
+                            if isinstance(node, ast.FunctionDef) and node.name in {"b1", "b2"}
+                        ]
+
+                    self.assertEqual(
+                        owned_functions(source), owned_functions(originals[filename].decode())
+                    )
+            else:
+                self.assertIn("def __extracted_func", source)
             self.assertNotRegex(source, r"from (?:app\.|\.)[ab] import __extracted_func")
 
     def test_shared_helper_is_kept_and_placed_in_the_safe_module(self) -> None:

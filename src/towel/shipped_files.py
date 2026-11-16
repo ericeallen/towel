@@ -19,7 +19,7 @@ A build ships what its configuration selects, not the tree. hatch's
 package ships, and a MANIFEST.in ``prune`` keeps a directory out of the sdist
 that ``uv build`` and ``python -m build`` then build the wheel from. A helper
 hosted in such a module and imported from one that ships breaks the installed
-program. Towel takes no names from this configuration (docs/DECISIONS.md,
+program. Towel takes no names from this configuration (docs/design/DECISIONS.md,
 "Import names come from the program"): a module it leaves out is only a host in
 doubt. So every reading errs toward leaving out. A pattern covers at least what
 the backend's own matcher would, an include that could put a file back is not

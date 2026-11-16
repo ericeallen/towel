@@ -16,7 +16,7 @@
 
 Relaxed mode assumes a program does not depend on when its objects are
 finalized once it has stopped using them, so a helper's return releases the
-locals of the block it took (docs/DECISIONS.md, "Relaxed mode is the default;
+locals of the block it took (docs/design/DECISIONS.md, "Relaxed mode is the default;
 strict mode keeps exact lifetimes"). That assumption fails for an object
 whose finalizer destroys something the program can still reach another way::
 

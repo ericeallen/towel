@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Callable, Generator, List, Sequence, TypedDict, Unpack
 
 import towel.cli
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -46,6 +47,26 @@ def child_mode_flags() -> List[str]:
     ``towel`` in one adds these flags to its command line.
     """
     return ["--strict"] if towel.cli.DEFAULT_STRICT else []
+
+
+def lifetime_order_certified() -> bool:
+    """Whether a test's lifetime expectations of 3.11 to 3.13 hold in its default mode here.
+
+    Strict mode's lifetime proofs are certified for CPython 3.11 to 3.13 only;
+    on later interpreters strict mode declines what they would extract, with
+    ``lifetime_order_uncertified`` (``argument_ownership._supported_runtime``).
+    Relaxed mode, the default, does not promise release order and never
+    consults that predicate, so a test expects the refusal only where its
+    engines and command lines are strict by default (``conftest``'s
+    ``strict_mode`` marker or ``--towel-strict``). A test that calls the
+    ownership proof directly, or chooses a mode itself, reads the predicate.
+    """
+    return argument_ownership._supported_runtime() or not towel.cli.DEFAULT_STRICT
+
+
+def strict_lifetime_refusal() -> bool:
+    """Whether this test's default mode declines for release order here: the converse of the above."""
+    return not lifetime_order_certified()
 
 
 @contextmanager

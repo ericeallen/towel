@@ -52,13 +52,8 @@ where = ["src"]
 def _body(name: str, threshold: int, extra: str) -> str:
     return f"""
 
-def f_{name}(items):
-    total = 0
-    for item in items:
-        if item > {threshold}:
-            total += item * 2
-        else:
-            total -= item
+def f_{name}():
+    total = {threshold}
     # Shared computation must repay the public CLI helper interface.
     total = total + 17
     total = total * 19
@@ -98,7 +93,7 @@ CASES: Dict[str, Case] = {
         },
         "src/pkg",
         ("pkg.a pkg.b", "pkg.b pkg.a", "other.c pkg.a", "other.c pkg.b"),
-        "from pkg import a, b; print(a.f_a([1, 5, 9]), b.f_b([1, 5, 9]))",
+        "from pkg import a, b; print(a.f_a(), b.f_b())",
     ),
     # The target is a subpackage; the cycle runs through its parent package.
     "parent_package_cycle": Case(
@@ -113,7 +108,7 @@ CASES: Dict[str, Case] = {
         },
         "src/pkg/sub",
         ("pkg.sub.a pkg.sub.b", "pkg.sub.b pkg.sub.a", "pkg.other"),
-        "from pkg.sub import a, b; print(a.f_a([1, 5, 9]), b.f_b([1, 5, 9]))",
+        "from pkg.sub import a, b; print(a.f_a(), b.f_b())",
     ),
     # Importing the helper's host runs a sibling package's import-time effect,
     # which importing the borrower never used to.
@@ -129,7 +124,7 @@ CASES: Dict[str, Case] = {
         },
         "src/pkg",
         ("pkg.b", "pkg.a pkg.b", "pkg.b pkg.a"),
-        "from pkg import b; print(b.f_b([1, 5, 9]))",
+        "from pkg import b; print(b.f_b())",
     ),
 }
 
@@ -232,7 +227,10 @@ def test_every_reported_path_names_the_output_not_the_stage(tmp_path: Path) -> N
     ran = _dry(project / case.target, output)
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "towel-stage" not in ran.stdout + ran.stderr
-    assert f"{output / 'b.py'}: 1 refactoring(s)" in ran.stdout, ran.stdout
+    # Since 2.0 the summary names files relative to the target (audit finding 7),
+    # under "Refactoring directory: <output>"; neither names the stage.
+    assert f"Refactoring directory: {output}\n" in ran.stdout, ran.stdout
+    assert "\n  b.py: 1 refactoring(s)\n" in ran.stdout, ran.stdout
     sidecar = json.loads((output / ".towel-helpers.json").read_text(encoding="utf-8"))
     files = {site["file"] for sites in sidecar["helpers"].values() for site in sites}
     assert files == {"a.py", "b.py"}
@@ -258,19 +256,18 @@ def test_a_checked_run_out_of_place_accepts_what_the_run_in_place_accepts(tmp_pa
         self.tag = "{name[0]}"
 
     def render(self, width: int) -> str:
-        body = str(self.tag).strip()
-        body = body.replace('\\t', ' ')
-        body = body.replace('\\r', ' ')
-        body = body.replace('\\n', ' ')
-        body = body.replace('  ', ' ')
-        body = body.replace(' -', '-')
-        body = body.replace('- ', '-')
-        body = body.replace(' .', '.')
-        body = body.replace(' ,', ',')
-        body = body.removeprefix(' ')
-        body = body.removesuffix(' ')
-        padded = body.rjust(width, ".")
-        return padded.upper()
+        str(self.tag).strip()
+        self.tag.replace('\\t', ' ')
+        self.tag.replace('\\r', ' ')
+        self.tag.replace('\\n', ' ')
+        self.tag.replace('  ', ' ')
+        self.tag.replace(' -', '-')
+        self.tag.replace('- ', '-')
+        self.tag.replace(' .', '.')
+        self.tag.replace(' ,', ',')
+        self.tag.removeprefix(' ')
+        self.tag.removesuffix(' ')
+        return self.tag.rjust(width, ".").upper()
 """
                 for name in ("alpha", "beta")
             },

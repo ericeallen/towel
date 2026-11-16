@@ -9,7 +9,7 @@ names, formatting, timing, diagnostic wording or human-readable console output.
 
 ## Supported environments
 
-The validated range is Python 3.11–3.13 on macOS and Linux. Package metadata
+The validated range is Python 3.11–3.15 on macOS and Linux. Package metadata
 allows newer Python versions for evaluation, but the CLI warns when its
 interpreter is outside that range. A successful installation on a newer
 interpreter does not establish support. Windows is not supported.
@@ -40,6 +40,7 @@ or a declined confirmation is cancellation, not completed work.
 | `0` | The requested operation completed; no applicable extraction is also a completed result. |
 | `1` | The operation failed, was refused, or was cancelled at confirmation. |
 | `2` | Invalid command-line arguments. For `rename-helpers`, also a rename mapping that was rejected or a consumer scope that could not be established; nothing is renamed. |
+| `3` | `preview --check` completed and would change code. |
 | `124` | The elapsed-time budget expired before publication. |
 | `130` | Interrupted with SIGINT. |
 | `143` | Terminated with SIGTERM. |
@@ -148,10 +149,10 @@ period as supported CLI flags.
 ## Upgrades and support
 
 Versions use PEP 440 ordering, not a strict Semantic Versioning promise. Read
-the [changelog](../CHANGELOG.md), upgrade in a branch, and run your project's
+the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md), upgrade in a branch, and run your project's
 tests against the generated result. Pin Towel and optional tool versions in CI;
 update those pins deliberately.
 
 Security fixes are provided for the latest released version under the
-[security policy](../SECURITY.md). This is a solo-maintained project with
+[security policy](https://github.com/ericeallen/towel/blob/main/SECURITY.md). This is a solo-maintained project with
 best-effort support and no response-time commitment.

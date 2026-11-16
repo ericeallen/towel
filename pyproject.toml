@@ -37,6 +37,8 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Software Development :: Quality Assurance",
     "Typing :: Typed",
 ]
@@ -64,11 +66,17 @@ dev = [
     "tqdm>=4.66.0",
 ]
 
+# The documentation site's generator (`just docs`). A dependency group, not an
+# extra: it is never published with the package, and `uv sync --extra dev` does
+# not install it.
+[dependency-groups]
+docs = ["zensical>=0.1.1"]
+
 # No URL names a release tag: `just bump-version` rewrites only the version line,
 # so a tagged link here would describe the previous release on every new PyPI page.
 [project.urls]
 Homepage = "https://github.com/ericeallen/towel"
-Documentation = "https://github.com/ericeallen/towel/blob/HEAD/docs/README.md"
+Documentation = "https://ericeallen.github.io/towel/"
 Changelog = "https://github.com/ericeallen/towel/blob/HEAD/CHANGELOG.md"
 "Release notes" = "https://github.com/ericeallen/towel/releases"
 Issues = "https://github.com/ericeallen/towel/issues"

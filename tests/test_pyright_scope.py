@@ -31,14 +31,14 @@ import importlib.util
 import shutil
 import textwrap
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Mapping, Sequence
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_helpers import method_helper_calls
-
 from towel.pyright_session import (
     UNSEEN_MARKER_TIMEOUT_SECONDS,
     PyrightSession,
@@ -160,7 +160,31 @@ VERSION = """\
     """
 
 
-def _refactored(root: Path, oracle: object) -> Sequence[str]:
+# The literal calculations exercise both checker configurations even when the
+# method fixture's argument-ownership proof is unavailable on this interpreter.
+LITERAL_VERSION = """\
+    class Version:
+        def __init__(self, release: tuple[int, ...], commit: str | None) -> None:
+            self.release = release
+            self.commit = commit
+
+
+    def first() -> int:
+        total = 2
+        doubled = total * 2
+        answer = doubled - 3
+        return answer
+
+
+    def second() -> int:
+        total = 2
+        doubled = total * 2
+        answer = doubled - 3
+        return answer
+    """
+
+
+def _refactored(root: Path, oracle: object) -> tuple[Sequence[str], Mapping[str, int]]:
     engine = UnificationRefactorEngine(
         min_lines=3,
         type_oracle=oracle,  # type: ignore[arg-type]
@@ -172,12 +196,13 @@ def _refactored(root: Path, oracle: object) -> Sequence[str]:
         )
     finally:
         oracle.close()  # type: ignore[attr-defined]
-    return sorted(Path(path).name for path in results)
+    return sorted(Path(path).name for path in results), engine.declined_pairs
 
 
 @requires_pyright
 @requires_mypy
-def test_a_file_pyright_ignores_is_verified_by_mypy(tmp_path: Path) -> None:
+@pytest.mark.parametrize("source", [VERSION, LITERAL_VERSION], ids=["owned", "literal"])
+def test_a_file_pyright_ignores_is_verified_by_mypy(tmp_path: Path, source: str) -> None:
     """P2-1, param's version.py: pyright ignores it, mypy checks it, and the change is made."""
     from towel.type_inference import PyrightOracle
 
@@ -189,17 +214,26 @@ def test_a_file_pyright_ignores_is_verified_by_mypy(tmp_path: Path) -> None:
                 '[tool.pyright]\ninclude = ["pkg"]\nignore = ["pkg/version.py"]\n'
             ),
             "pkg/__init__.py": "",
-            "pkg/version.py": VERSION,
+            "pkg/version.py": source,
         },
     )
+    path = tmp_path / "pkg" / "version.py"
+    original = path.read_bytes()
     oracle = CombinedOracle(MypyInferrer(), [PyrightOracle()])
-    assert _refactored(tmp_path, oracle) == ["version.py"]
-    assert "__extracted_func_0" in (tmp_path / "pkg" / "version.py").read_text(encoding="utf-8")
+    results, declined = _refactored(tmp_path, oracle)
+    if source == VERSION and not lifetime_order_certified():
+        assert results == []
+        assert "lifetime_order_uncertified" in declined
+        assert path.read_bytes() == original
+    else:
+        assert results == ["version.py"]
+        assert "__extracted_func_0" in path.read_text(encoding="utf-8")
 
 
 @pytest.mark.strict_mode
 @requires_pyright
-def test_a_directory_pyright_excludes_costs_no_wait(tmp_path: Path) -> None:
+@pytest.mark.parametrize("source", [VERSION, LITERAL_VERSION], ids=["owned", "literal"])
+def test_a_directory_pyright_excludes_costs_no_wait(tmp_path: Path, source: str) -> None:
     """D12: the server used to wait a minute for a marker in the excluded directory."""
     from towel.type_inference import PyrightOracle
 
@@ -209,21 +243,33 @@ def test_a_directory_pyright_excludes_costs_no_wait(tmp_path: Path) -> None:
             "pyrightconfig.json": '{"exclude": ["pkg/legacy"]}',
             "pkg/__init__.py": "",
             "pkg/legacy/__init__.py": "",
-            "pkg/legacy/version.py": VERSION,
+            "pkg/legacy/version.py": source,
             "pkg/core.py": "from pkg.legacy.version import Version\n\n\nV = Version((1,), None)\n",
         },
     )
+    path = tmp_path / "pkg" / "legacy" / "version.py"
+    original = path.read_bytes()
     started = time.monotonic()
     oracle = PyrightOracle()
-    assert _refactored(tmp_path, oracle) == ["version.py"]
+    results, declined = _refactored(tmp_path, oracle)
     assert time.monotonic() - started < UNSEEN_MARKER_TIMEOUT_SECONDS / 2
-    written = (tmp_path / "pkg" / "legacy" / "version.py").read_text(encoding="utf-8")
+    if source == VERSION and not lifetime_order_certified():
+        assert results == []
+        assert "lifetime_order_uncertified" in declined
+        assert path.read_bytes() == original
+        return
+    assert results == ["version.py"]
+    written = path.read_text(encoding="utf-8")
     tree = ast.parse(written)
     helper = next(
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
     )
+    if source == LITERAL_VERSION:
+        assert helper.args.posonlyargs == helper.args.args == []
+        assert helper.returns is not None and ast.unparse(helper.returns) == "int"
+        return
     assert [parameter.arg for parameter in helper.args.posonlyargs] == ["self", "__param_0"]
     assert (
         helper.args.vararg,

@@ -27,6 +27,7 @@ from typing import List, Optional
 
 import pytest
 
+from tests.test_helpers import strict_lifetime_refusal
 from towel.unification.models import Replacement
 from towel.unification.narrowing import narrowed_names, narrowing_lost_at_call_site
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -103,13 +104,18 @@ def test_a_guard_separated_from_its_use_is_refused(tmp_path: Path) -> None:
 
 def test_a_guard_whose_narrowing_nothing_left_behind_needs_is_kept(tmp_path: Path) -> None:
     """The refusal must cost only the extractions that would actually break."""
-    assert _proposals(tmp_path, INDEPENDENT) != []
+    assert bool(_proposals(tmp_path, INDEPENDENT)) is not strict_lifetime_refusal()
     # Test the narrowing boundary, including small but semantically valid moves.
     engine = UnificationRefactorEngine(
         min_lines=2, reuse_existing_functions=False, skip_trivial_helpers=False
     )
     written, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "m.py"), progress="none")
-    assert applied > 0
+    if strict_lifetime_refusal():
+        assert applied == 0
+        assert written == INDEPENDENT
+        assert engine.declined_pairs["lifetime_order_uncertified"] > 0
+    else:
+        assert applied > 0
     for source in (INDEPENDENT, written):
         namespace: dict[str, object] = {}
         exec(

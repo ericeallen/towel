@@ -40,6 +40,7 @@ from typing import Callable, Dict, Mapping, Sequence, cast
 
 import pytest
 
+from tests.test_helpers import strict_lifetime_refusal
 import towel
 from towel.diagnostics import Settings
 from towel.formatting import BlackSettings, SnippetFormatter, black_formatter, checked
@@ -121,17 +122,21 @@ def _assert_same_refactoring_without_comments(path: Path, result: str, **options
     assert ast.dump(ast.parse(result)) == ast.dump(ast.parse(_refactor(bare, **options)))
 
 
-_LOOP = """
-    def first(values):
+# Comment tests use module-owned inputs and one local, so they exercise
+# rendering independently of version-specific frame cleanup proofs.
+_NESTED = """
+    value = 2
+
+    def first():
         total = 0
-        for value in values:
+        if value:
             total += value * 2{comment}
         return total + 1
 
 
-    def second(values):
+    def second():
         total = 0
-        for value in values:
+        if value:
             total += value * 2{comment}
         return total + 1
     """
@@ -153,7 +158,7 @@ _DIRECTIVES = [
 def test_a_directive_every_site_carries_stays_on_its_line_in_the_helper(
     tmp_path: Path, directive: str
 ) -> None:
-    path = _write(tmp_path, _LOOP.format(comment="  " + directive))
+    path = _write(tmp_path, _NESTED.format(comment="  " + directive))
     result = _refactor(path)
     helper = _helper_source(result)
     assert _line_holding(helper, "total += value * 2").endswith("  " + directive), helper
@@ -169,7 +174,7 @@ def test_the_formatter_leaves_each_directive_on_its_line(
 ) -> None:
     if importlib.util.find_spec(formatter) is None:
         pytest.skip(f"{formatter} absent")
-    path = _write(tmp_path, _LOOP.format(comment="  " + directive))
+    path = _write(tmp_path, _NESTED.format(comment="  " + directive))
     result = _refactor(path, snippet_formatter=_formatter(formatter, path))
     helper = _helper_source(result)
     assert _line_holding(helper, "total += value * 2").endswith("  " + directive), helper
@@ -187,10 +192,13 @@ def _formatter(name: str, path: Path) -> SnippetFormatter:
 
 
 _EXPLAINED = """
-    def first(values, limit):
+    value = 2
+    limit = 1
+
+    def first():
         # Start from nothing.
         total = 0
-        for value in values:
+        if value:
             if value > limit:  # large values count double
                 total += value * 2
                 # the bonus for a large value
@@ -199,10 +207,10 @@ _EXPLAINED = """
         return total + 1
 
 
-    def second(values, limit):
+    def second():
         # Start from nothing.
         total = 0
-        for value in values:
+        if value:
             if value > limit:  # large values count double
                 total += value * 2
                 # the bonus for a large value
@@ -217,7 +225,7 @@ def test_explanatory_comments_keep_their_statements_and_order(tmp_path: Path) ->
     path = _write(tmp_path, _EXPLAINED)
     result = _refactor(path)
     helper = _helper_source(result)
-    assert helper.split("\n")[1:3] == ["    total = 0", "    for value in values:"], helper
+    assert helper.split("\n")[1:3] == ["    total = 0", "    if value:"], helper
     assert _line_holding(helper, "if value > limit:").endswith("  # large values count double")
     lines = helper.split("\n")
     bonus = lines.index("            # the bonus for a large value")
@@ -226,14 +234,16 @@ def test_explanatory_comments_keep_their_statements_and_order(tmp_path: Path) ->
     assert result.count("# the bonus for a large value") == 1
     assert result.count("# large values count double") == 1
     # A comment above the block is the call site's own, and stays with each call.
-    assert result.count("    # Start from nothing.\n    _towel_arguments = ") == 2, result
+    assert result.count("    # Start from nothing.\n    return __extracted_func_") == 2, result
     _assert_same_refactoring_without_comments(path, result)
 
 
 _CLAUSES = """
-    def first(values):
+    value = 2
+
+    def first():
         found = []
-        for value in values:
+        if value:
             try:  # the parse may fail
                 found.append(int(value))
             # only malformed numbers are skipped
@@ -246,9 +256,9 @@ _CLAUSES = """
         return found
 
 
-    def second(values):
+    def second():
         found = []
-        for value in values:
+        if value:
             try:  # the parse may fail
                 found.append(int(value))
             # only malformed numbers are skipped
@@ -282,28 +292,26 @@ def test_comments_on_clause_headers_stay_on_their_headers(tmp_path: Path, format
 
 
 _CALLS = """
-    def first(numerator, denominator):
+    def first():
         ratio = numerator / denominator
-        formatted = format_ratio(
+        return ratio, format_ratio(
             numerator,
             denominator,
             product_fmt="*",  # TODO: should this be ''?
             power_fmt="{{}}**{{}}",  # the power, with no spaces
             parentheses_fmt=r"({{}})",
         )
-        return ratio, formatted
 
 
-    def second(numerator, denominator):
+    def second():
         ratio = numerator / denominator
-        formatted = format_ratio(
+        return ratio, format_ratio(
             numerator,
             denominator,
             product_fmt="{{}} * {{}}",
             power_fmt="{{}} ** {{}}",  # the power, with no spaces
             parentheses_fmt=r"({{}})",
         )
-        return ratio, formatted
     """
 
 
@@ -346,12 +354,13 @@ def test_a_comment_inside_brackets_stays_beside_its_argument(
         exec(compile(source, "comment-fixture", "exec"), namespace)
         values: list[object] = []
         for name in ("first", "second"):
-            function = cast(Callable[[float, float], object], namespace[name])
-            values.extend(
-                function(numerator, denominator) for numerator, denominator in ((6, 2), (7, 3))
-            )
+            function = cast(Callable[[], object], namespace[name])
+            for numerator, denominator in ((6, 2), (7, 3)):
+                namespace.update(numerator=numerator, denominator=denominator)
+                values.append(function())
+            namespace.update(numerator=1, denominator=0)
             with pytest.raises(ZeroDivisionError):
-                function(1, 0)
+                function()
         return values, calls
 
     before = observe(path.read_text())
@@ -364,20 +373,18 @@ _GROUPED = """
     from typing import Any, Awaitable, Callable, Optional
 
 
-    def first(key: Optional[Callable[[Any], Awaitable[Any]]]) -> str:
+    def first() -> str:
         a_key: Callable[[Any], Awaitable[Any]] = (
             awaitify(key) if key is not None else _identity  # type: ignore
         )
-        name = repr(a_key)
-        return name.upper()
+        return repr(a_key).upper()
 
 
-    def second(key: Optional[Callable[[Any], Awaitable[Any]]]) -> str:
+    def second() -> str:
         a_key: Callable[[Any], Awaitable[Any]] = (
             awaitify(key) if key is not None else _identity  # type: ignore
         )
-        name = repr(a_key)
-        return name.upper()
+        return repr(a_key).upper()
     """
 
 
@@ -402,13 +409,13 @@ def test_an_ignore_inside_grouping_parentheses_keeps_them_under_either_formatter
 def test_a_formatter_that_moves_a_directive_is_not_used_for_that_helper(tmp_path: Path) -> None:
     """The helper is inserted as rendered when formatting would split a directive's line."""
     source = textwrap.dedent("""
-        def first(values):
+        def first():
             total = 0
             total += sum(values, 0) + len(values) + max(values) + min(values)  # pyright: ignore
             return total + 1
 
 
-        def second(values):
+        def second():
             total = 0
             total += sum(values, 0) + len(values) + max(values) + min(values)  # pyright: ignore
             return total + 1
@@ -441,27 +448,27 @@ def test_comments_that_differ_between_sites_are_all_kept_in_site_order(tmp_path:
         """
         class Query:
             def __getattr__(self, item):
-                query = type(self)()
+                self.query = type(self)()
 
                 # Now we add the accessed item to the query path ...
-                query._path = self._path + (item,)
-                query._hash = None
-                return query
+                self.query._path = self._path + (item,)
+                self.query._hash = None
+                return self.query
 
             def map(self, fn):
-                query = type(self)()
+                self.query = type(self)()
 
                 # Now we add the callable to the query path ...
-                query._path = self._path + (fn,)
-                query._hash = None
-                return query
+                self.query._path = self._path + (fn,)
+                self.query._hash = None
+                return self.query
         """,
     )
     result = _refactor(path)
     helper = _helper_source(result).split("\n")
     first = helper.index("        # Now we add the accessed item to the query path ...")
     assert helper[first + 1] == "        # Now we add the callable to the query path ..."
-    assert helper[first + 2].strip().startswith("query._path = self._path + (")
+    assert helper[first + 2].strip().startswith("self.query._path = self._path + (")
     _assert_same_refactoring_without_comments(path, result)
 
 
@@ -476,7 +483,7 @@ def _declined(path: Path, source: str = "", **options: object) -> Mapping[str, i
 
 def test_a_directive_only_one_site_carries_declines_the_pair(tmp_path: Path) -> None:
     """mashumaro's type_name: the ignore one copy needs would silence the other's line too."""
-    path = _write(tmp_path, _LOOP.format(comment="{comment}").format(comment=""))
+    path = _write(tmp_path, _NESTED.format(comment="{comment}").format(comment=""))
     text = path.read_text(encoding="utf-8").replace(
         "total += value * 2\n", "total += value * 2  # type: ignore[operator]\n", 1
     )
@@ -485,7 +492,7 @@ def test_a_directive_only_one_site_carries_declines_the_pair(tmp_path: Path) -> 
 
 
 def test_directives_written_differently_decline_the_pair(tmp_path: Path) -> None:
-    path = _write(tmp_path, _LOOP.format(comment="  # noqa: E501"))
+    path = _write(tmp_path, _NESTED.format(comment="  # noqa: E501"))
     text = path.read_text(encoding="utf-8")
     at = text.rindex("# noqa: E501")
     path.write_text(text[:at] + "# noqa: E741" + text[at + len("# noqa: E501") :])
@@ -493,7 +500,7 @@ def test_directives_written_differently_decline_the_pair(tmp_path: Path) -> None
 
 
 def test_a_directive_spaced_differently_is_the_same_directive(tmp_path: Path) -> None:
-    path = _write(tmp_path, _LOOP.format(comment="  # type: ignore[operator]"))
+    path = _write(tmp_path, _NESTED.format(comment="  # type: ignore[operator]"))
     text = path.read_text(encoding="utf-8")
     at = text.rindex("# type: ignore[operator]")
     path.write_text(text[:at] + "#type:ignore[operator]" + text[at + 24 :])
@@ -508,14 +515,14 @@ def test_an_ignore_over_code_that_becomes_an_argument_declines_the_pair(tmp_path
     path = _write(
         tmp_path,
         """
-        def first(record):
+        def first():
             total = 0
             total += record.alpha.count()  # type: ignore[attr-defined]
             total = total * 2
             return total
 
 
-        def second(record):
+        def second():
             total = 0
             total += record.beta.count()  # type: ignore[attr-defined]
             total = total * 2
@@ -529,14 +536,14 @@ def test_an_ignore_over_a_name_that_becomes_an_argument_moves(tmp_path: Path) ->
     path = _write(
         tmp_path,
         """
-        def first(record, alpha):
+        def first():
             total = 0
             total += count(alpha)  # type: ignore[arg-type]
             total = total * 2
             return total
 
 
-        def second(record, beta):
+        def second():
             total = 0
             total += count(beta)  # type: ignore[arg-type]
             total = total * 2
@@ -558,14 +565,14 @@ _CHECKER_IGNORES = {
 }
 
 _CHECKED = """
-    def first(record, alpha):
+    def first():
         total = 0{above}
         total += count({first}){trailing}
         total = total * 2
         return total
 
 
-    def second(record, beta):
+    def second():
         total = 0{above}
         total += count({second}){trailing}
         total = total * 2
@@ -610,14 +617,14 @@ def test_a_checker_ignore_over_a_name_argument_moves_with_its_code(
 def test_an_ignore_above_the_blocks_first_statement_declines_the_pair(tmp_path: Path) -> None:
     """It would stay above the call, silencing the call and not the helper's line."""
     source = """
-        def first(record):
+        def first():
             # pyrefly: ignore[missing-attribute]
             total = record.alpha.count()
             total = total * 2
             return total + 1
 
 
-        def second(record):
+        def second():
             # pyrefly: ignore[missing-attribute]
             total = record.alpha.count()
             total = total * 2
@@ -627,7 +634,7 @@ def test_an_ignore_above_the_blocks_first_statement_declines_the_pair(tmp_path: 
 
 
 _REGION = """
-    def first(values):
+    def first():
         total = 0
         # fmt: off
         total += sum( values )
@@ -635,7 +642,7 @@ _REGION = """
         return total + 1
 
 
-    def second(values):
+    def second():
         total = 0
         # fmt: off
         total += sum( values )
@@ -657,7 +664,7 @@ def test_a_region_directive_reaching_past_the_block_declines_the_pair(tmp_path: 
     path = _write(
         tmp_path,
         """
-        def first(values):
+        def first():
             total = 0
             # fmt: off
             total += sum( values )
@@ -667,7 +674,7 @@ def test_a_region_directive_reaching_past_the_block_declines_the_pair(tmp_path: 
             return total
 
 
-        def second(values):
+        def second():
             total = 0
             # fmt: off
             total += sum( values )
@@ -689,18 +696,28 @@ def test_a_region_directive_reaching_past_the_block_declines_the_pair(tmp_path: 
     assert "directive_outlives_block" in engine.declined_pairs
 
 
-def _package(root: Path, comment: str) -> Sequence[Path]:
+def _package(root: Path, comment: str, *, owned_locals: bool = False) -> Sequence[Path]:
     block = """
-        def {name}(values):
+        def {name}():
             print({tag!r})
             total = 0
-            for value in values:
-                if value > 1:
-                    total += value * 2{comment}
+            if 2:
+                if 2 > 1:
+                    total += total * 2{comment}
                 else:
-                    total -= value
+                    total -= 2
             return total
         """
+    if owned_locals:
+        # Preserve the historical typed argument/loop-local case alongside
+        # the independent comment materialization fixture.
+        block = (
+            block.replace("def {name}():", "def {name}(values):")
+            .replace("if 2:", "for value in values:")
+            .replace("if 2 > 1:", "if value > 1:")
+            .replace("total += total * 2", "total += value * 2")
+            .replace("total -= 2", "total -= value")
+        )
     (root / "zzshared").mkdir(parents=True)
     (root / "zzshared" / "__init__.py").write_text("")
     paths = []
@@ -730,7 +747,7 @@ def test_a_helper_shared_across_modules_carries_the_comments(tmp_path: Path) -> 
     (proposal,) = engine.analyze_files([str(path) for path in paths], progress="none")
     written = engine.apply_refactoring_multi_file(proposal)
     host = written[proposal.file_path]
-    assert _line_holding(_helper_source(host), "total += value * 2").endswith("  # noqa: E501")
+    assert _line_holding(_helper_source(host), "total += total * 2").endswith("  # noqa: E501")
     assert sum(text.count("# noqa: E501") for text in written.values()) == 1
 
 
@@ -761,16 +778,22 @@ def test_adapted_helper_comments_preserve_the_actual_rendered_tree(
 
 
 @requires_mypy
+@pytest.mark.parametrize("owned_locals", [False, True])
 def test_typed_shared_helper_with_comments_is_applicable_without_mutating_proposal(
     tmp_path: Path,
+    owned_locals: bool,
 ) -> None:
     from towel.type_inference import CheckSuccess, MypyInferrer
 
     root = tmp_path.resolve() / "project"
-    paths = _package(root, "  # noqa: E501")
+    paths = _package(root, "  # noqa: E501", owned_locals=owned_locals)
     (root / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
     for path in paths:
-        path.write_text(path.read_text().replace("(values):", "(values: list[int]) -> int:"))
+        path.write_text(
+            path.read_text()
+            .replace("():", "() -> int:")
+            .replace("(values):", "(values: list[int]) -> int:")
+        )
     originals = {str(path): path.read_text() for path in paths}
     oracle = MypyInferrer()
     try:
@@ -778,6 +801,11 @@ def test_typed_shared_helper_with_comments_is_applicable_without_mutating_propos
             cross_module_helpers=True, type_oracle=oracle, reuse_existing_functions=False
         )
         proposals = engine.analyze_files([str(path) for path in paths], progress="none")
+        if owned_locals and strict_lifetime_refusal():
+            assert not proposals
+            assert "lifetime_order_uncertified" in engine.declined_pairs
+            assert {str(path): path.read_text() for path in paths} == originals
+            return
         assert proposals, engine.declined_pairs
         proposal = proposals[0]
         original_helper = ast.dump(proposal.extracted_function, include_attributes=True)
@@ -786,13 +814,18 @@ def test_typed_shared_helper_with_comments_is_applicable_without_mutating_propos
         assert engine.apply_refactoring_multi_file(proposal) == written
         assert ast.dump(proposal.extracted_function, include_attributes=True) == original_helper
         host = _helper_source(written[proposal.file_path])
-        assert _line_holding(host, "total += value * 2").endswith("# noqa: E501")
+        statement = "total += value * 2" if owned_locals else "total += total * 2"
+        assert _line_holding(host, statement).endswith("# noqa: E501")
         helper = ast.parse(host).body[0]
         assert isinstance(helper, ast.FunctionDef)
-        assert any(
-            isinstance(arg.annotation, ast.Constant)
-            for arg in (*helper.args.posonlyargs, *helper.args.args)
-        )
+        if owned_locals:
+            assert any(
+                isinstance(arg.annotation, ast.Constant)
+                for arg in (*helper.args.posonlyargs, *helper.args.args)
+            )
+        else:
+            assert isinstance(helper.returns, ast.Constant)
+            assert helper.returns.value == "int"
         assert oracle.check_project(written) == CheckSuccess()
         assert {str(path): path.read_text() for path in paths} == originals
     finally:
@@ -807,25 +840,27 @@ def test_a_file_directive_does_not_move_to_another_module(tmp_path: Path) -> Non
 
 
 def test_a_file_directive_moves_within_its_module(tmp_path: Path) -> None:
-    path = _write(tmp_path, _LOOP.format(comment="  # flake8: noqa"))
+    path = _write(tmp_path, _NESTED.format(comment="  # flake8: noqa"))
     result = _refactor(path)
     assert _line_holding(_helper_source(result), "total += value * 2").endswith("# flake8: noqa")
 
 
 def test_every_clustered_site_must_carry_the_directives(tmp_path: Path) -> None:
-    source = textwrap.dedent(_LOOP.format(comment="  # type: ignore[operator]")) + textwrap.dedent(
+    source = textwrap.dedent(
+        _NESTED.format(comment="  # type: ignore[operator]")
+    ) + textwrap.dedent(
         """
 
-        def third(values):
+        def third():
             total = 0
-            for value in values:
+            if value:
                 total += value * 2  # type: ignore[operator]
             return total + 1
 
 
-        def fourth(values):
+        def fourth():
             total = 0
-            for value in values:
+            if value:
                 total += value * 2
             return total + 1
         """
@@ -837,10 +872,13 @@ def test_every_clustered_site_must_carry_the_directives(tmp_path: Path) -> None:
     assert sites == 3
     result = engine.apply_refactoring(str(path), proposals[0])
     assert result.count("# type: ignore[operator]") == 1
-    assert "def fourth(values):\n    total = 0\n    for value in values:" in result
+    assert "def fourth():\n    total = 0\n    if value:" in result
 
 
-def test_a_method_helper_carries_comments_at_its_class_indentation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("owned_locals", [False, True])
+def test_a_method_helper_carries_comments_at_its_class_indentation(
+    tmp_path: Path, owned_locals: bool
+) -> None:
     path = _write(
         tmp_path,
         """
@@ -860,17 +898,31 @@ def test_a_method_helper_carries_comments_at_its_class_indentation(tmp_path: Pat
                 return total + 1
         """,
     )
+    if not owned_locals:
+        path.write_text(
+            path.read_text()
+            .replace("total", "self.total")
+            .replace("for value in values:", "if values:")
+            .replace("value * 2", "self.value * 2")
+        )
+    elif strict_lifetime_refusal():
+        original = path.read_text()
+        assert "lifetime_order_uncertified" in _declined(path)
+        assert path.read_text() == original
+        return
     result = _refactor(path)
     helper = _helper_source(result)
-    assert "            # doubled on purpose\n            total += value * 2  # type: ignore" in (
-        helper
-    ), helper
+    statement = "total += value * 2" if owned_locals else "self.total += self.value * 2"
+    assert f"            # doubled on purpose\n            {statement}  # type: ignore" in helper
     compile(result, str(path), "exec")
     _assert_same_refactoring_without_comments(path, result)
 
 
 @requires_mypy
-def test_an_ignore_the_checker_needs_lets_the_helper_type_check(tmp_path: Path) -> None:
+@pytest.mark.parametrize("owned_locals", [False, True])
+def test_an_ignore_the_checker_needs_lets_the_helper_type_check(
+    tmp_path: Path, owned_locals: bool
+) -> None:
     """packaging's ``_from_dict``: without its ignore no signature makes the helper check."""
     from towel.type_inference import CheckSuccess, MypyInferrer
 
@@ -904,11 +956,30 @@ def test_an_ignore_the_checker_needs_lets_the_helper_type_check(tmp_path: Path) 
             return count
         """,
     )
+    if not owned_locals:
+        # The same necessary ignore reaches a helper with one local and a
+        # module-owned mapping; no argument or cleanup-order proof is needed.
+        path.write_text(
+            path.read_text()
+            .replace('T = TypeVar("T")', 'T = TypeVar("T")\nd: Mapping[str, Any] = {}')
+            .replace("(d: Mapping[str, Any]) -> int:", "() -> int:")
+            .replace(
+                'hashes = _get(d, Mapping, "hashes")  # type: ignore[type-abstract]\n'
+                "    count = len(hashes or {})",
+                'count = len(_get(d, Mapping, "hashes") or {})  # type: ignore[type-abstract]',
+            )
+        )
     oracle = MypyInferrer()
     try:
         assert oracle.check(str(path), path.read_text()) == CheckSuccess()
         engine = _engine(type_oracle=oracle, reuse_existing_functions=False)
         proposals = engine.analyze_file(str(path))
+        if owned_locals and strict_lifetime_refusal():
+            original = path.read_text()
+            assert not proposals
+            assert "lifetime_order_uncertified" in engine.declined_pairs
+            assert path.read_text() == original
+            return
         assert proposals, engine.declined_pairs
         result = engine.apply_refactoring(str(path), proposals[0])
         assert oracle.check(str(path), result) == CheckSuccess(), result
@@ -918,7 +989,13 @@ def test_an_ignore_the_checker_needs_lets_the_helper_type_check(tmp_path: Path) 
     assert _line_holding(helper, "_get(d, Mapping").endswith("  # type: ignore[type-abstract]")
     # Preserve the exact Mapping type as well as the necessary ignore. The
     # generated subscription is quoted so extraction adds no runtime lookup.
-    assert "d: 'Mapping[str, Any]'" in helper, helper
+    if owned_locals:
+        assert "d: 'Mapping[str, Any]'" in helper, helper
+    else:
+        assert "d: Mapping[str, Any] = {}" in result
+        parsed_helper = ast.parse(helper).body[0]
+        assert isinstance(parsed_helper, ast.FunctionDef)
+        assert not parsed_helper.args.args
     # Checked again by the command line, strictly, with unused ignores reported.
     checked_copy = tmp_path / "checked"
     checked_copy.mkdir()
@@ -972,14 +1049,14 @@ def test_a_helper_inside_the_enclosing_function_carries_its_comments(tmp_path: P
 
 
 _OVER_ARGUMENT = """
-    def first(record, alpha):
+    def first():
         total = 0
         total += len({first}){comment}
         total = total * 2
         return total
 
 
-    def second(record, beta):
+    def second():
         total = 0
         total += len({second}){comment}
         total = total * 2
@@ -1042,14 +1119,14 @@ def test_a_pragma_on_a_clause_reaches_the_arguments_inside_it(tmp_path: Path) ->
     path = _write(
         tmp_path,
         """
-        def first(record):
+        def first():
             total = 0
             if total == 0:  # pragma: no cover
                 total += len(record.alpha.items())
             return total * 2
 
 
-        def second(record):
+        def second():
             total = 0
             if total == 0:  # pragma: no cover
                 total += len(record.beta.items())
@@ -1224,13 +1301,13 @@ def test_functions_under_an_excluded_main_block_keep_their_code(tmp_path: Path) 
         tmp_path,
         """
         if __name__ == "__main__":  # pragma: no cover
-            def first(values):
+            def first():
                 total = 0
                 for value in values:
                     total += value * 2
                 return total + 1
 
-            def second(values):
+            def second():
                 total = 0
                 for value in values:
                     total += value * 2
@@ -1265,16 +1342,18 @@ def test_one_excluded_site_among_measured_ones_still_moves(tmp_path: Path) -> No
 
 
 _MAIN_BLOCK = """
+    value = 2
+
     if __name__ == "__main__":{pragma}
-        def first(values):
+        def first():
             total = 0
-            for value in values:
+            if value:
                 total += value * 2
             return total + 1
 
-        def second(values):
+        def second():
             total = 0
-            for value in values:
+            if value:
                 total += value * 2
             return total + 1
     """
@@ -1377,8 +1456,10 @@ def test_a_configured_exclusion_over_an_argument_declines_the_pair(tmp_path: Pat
     assert "directive_on_argument" in _declined(path)
 
 
+@pytest.mark.parametrize("owned_locals", [False, True])
 def test_an_excluded_decorator_of_the_enclosing_methods_declines_the_pair(
     tmp_path: Path,
+    owned_locals: bool,
 ) -> None:
     """``@abstractmethod`` excludes each whole method; a method helper would not be."""
     (tmp_path / "pyproject.toml").write_text(
@@ -1406,7 +1487,21 @@ def test_an_excluded_decorator_of_the_enclosing_methods_declines_the_pair(
                 return total + 1
         """,
     )
-    assert "directive_around_block" in _declined(path)
+    if not owned_locals:
+        path.write_text(
+            path.read_text()
+            .replace("total", "self.total")
+            .replace("for value in values:", "if values:")
+            .replace("value * 2", "self.value * 2")
+        )
+    reason = (
+        "lifetime_order_uncertified"
+        if owned_locals and strict_lifetime_refusal()
+        else "directive_around_block"
+    )
+    original = path.read_text()
+    assert reason in _declined(path)
+    assert path.read_text() == original
 
 
 def test_an_unreadable_configuration_falls_back_to_the_defaults_and_says_so(
@@ -1414,7 +1509,7 @@ def test_an_unreadable_configuration_falls_back_to_the_defaults_and_says_so(
 ) -> None:
     (tmp_path / ".coveragerc").write_text("[report\nexclude_lines = x\n")
     excluded = _write(tmp_path, _MAIN_BLOCK.format(pragma="  # pragma: no cover"), "a.py")
-    plain = _write(tmp_path, _LOOP.format(comment=""), "b.py")
+    plain = _write(tmp_path, _NESTED.format(comment=""), "b.py")
     engine = _engine()
     with caplog.at_level(logging.WARNING, logger="towel"):
         # coverage.py's default pragma still excludes; the rest still moves.
@@ -1434,7 +1529,7 @@ def test_the_run_reports_an_unreadable_configuration(tmp_path: Path) -> None:
     (project / ".coveragerc").write_text("[report\nexclude_lines = x\n")
     # Give the public CLI useful shared work so this control reaches the
     # extraction and configuration-warning paths with its default policy.
-    source = textwrap.dedent(_LOOP.format(comment="")).replace(
+    source = textwrap.dedent(_NESTED.format(comment="")).replace(
         "    return total + 1",
         """    total = total + 17
     total = total * 19
@@ -1488,4 +1583,9 @@ def test_original_opaque_message_partial_remains_refused(tmp_path: Path) -> None
         disable="pass",
         start_comment="",
     )
-    assert "owned_binding_frame_boundary" in _declined(tmp_path / "m.py", source)
+    reason = (
+        "lifetime_order_uncertified"
+        if strict_lifetime_refusal()
+        else "owned_binding_frame_boundary"
+    )
+    assert reason in _declined(tmp_path / "m.py", source)

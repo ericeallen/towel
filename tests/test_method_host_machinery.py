@@ -33,7 +33,8 @@ from typing import Dict, Tuple
 
 import pytest
 
-from tests.test_helpers import method_helper_calls, refactor_to_fixed_point_silently
+from tests.test_helpers import lifetime_order_certified
+from tests.test_helpers import method_helper_calls
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 METHODS = """
@@ -84,11 +85,14 @@ def _refactored(
     path = tmp_path / "box.py"
     path.write_text(source)
     before = _run(tmp_path, driver)
-    final, applied = refactor_to_fixed_point_silently(
-        str(path), skip_trivial_helpers=False, min_lines=3
-    )
-    assert (applied > 0) == moves
-    assert moves or final == source
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
+    with contextlib.redirect_stdout(io.StringIO()):
+        final, applied, _ = engine.refactor_to_fixed_point(str(path), max_iterations=0)
+    expected = moves and lifetime_order_certified()
+    assert (applied > 0) == expected
+    assert expected or final == source
+    if moves and not expected:
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     path.write_text(final)
     return before, _run(tmp_path, driver), final
 
@@ -100,12 +104,17 @@ def _refactored_project(
     for name, text in files.items():
         (tmp_path / name).write_text(textwrap.dedent(text).lstrip("\n"))
     before = _run(tmp_path, driver)
+    original = {path: path.read_bytes() for path in tmp_path.glob("*.py")}
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(tmp_path), str(tmp_path), progress="none"
         )
-    assert (sum(applied for applied, _ in results.values()) > 0) == moves
+    expected = moves and lifetime_order_certified()
+    assert (sum(applied for applied, _ in results.values()) > 0) == expected
+    if moves and not expected:
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert {path: path.read_bytes() for path in original} == original
     return before, _run(tmp_path, driver), (tmp_path / "box.py").read_text()
 
 
@@ -170,7 +179,7 @@ def test_a_receiver_annotated_as_its_own_class_keeps_the_method_helper(
     )
     before, after, final = _refactored(tmp_path, source)
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 input requires Python 3.12")
@@ -182,7 +191,7 @@ def test_a_receiver_of_a_type_parameter_bound_to_its_class_keeps_the_method_help
     )
     before, after, final = _refactored(tmp_path, source)
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()
 
 
 def test_a_receiver_of_a_variable_bound_elsewhere_takes_a_module_helper(tmp_path: Path) -> None:
@@ -243,7 +252,7 @@ def test_implicit_class_hooks_allow_private_method_helpers(
 ) -> None:
     before, after, final = _refactored(tmp_path, _module(prelude, header), driver)
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()
 
 
 @pytest.mark.parametrize("inherited", [False, True])
@@ -258,7 +267,7 @@ def test_attribute_lookup_hooks_allow_private_method_helpers(
     header = "class Box(Base):\n    v = 1\n" if inherited else "class Box:\n    v = 1\n" + lookup
     before, after, final = _refactored(tmp_path, _module(prelude, header))
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()
 
 
 def test_logging_attribute_lookup_does_not_block_private_helpers(tmp_path: Path) -> None:
@@ -269,7 +278,7 @@ def test_logging_attribute_lookup_does_not_block_private_helpers(tmp_path: Path)
     )
     before, after, final = _refactored(tmp_path, source)
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()
     # The ordinary computation is preserved. Reflecting on the additional
     # lookup sees the helper, as the documented boundary permits.
     observed = _run(
@@ -277,7 +286,8 @@ def test_logging_attribute_lookup_does_not_block_private_helpers(tmp_path: Path)
         "from box import Box, LOOKUPS\nBox().first(1)\n"
         "print(any(name.startswith('_Box__extracted_func_') for name in LOOKUPS))\n",
     )
-    assert observed.endswith("True\n|")
+    expected_lookup = "True\n|" if lifetime_order_certified() else "False\n|"
+    assert observed.endswith(expected_lookup)
 
 
 def test_a_class_whose_getattr_serves_missing_names_keeps_the_method_helper(tmp_path: Path) -> None:
@@ -291,7 +301,7 @@ def test_a_class_whose_getattr_serves_missing_names_keeps_the_method_helper(tmp_
     )
     before, after, final = _refactored(tmp_path, source, driver)
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()
 
 
 def test_a_metaclass_hosts_private_method_helpers(tmp_path: Path) -> None:
@@ -302,7 +312,7 @@ def test_a_metaclass_hosts_private_method_helpers(tmp_path: Path) -> None:
     )
     before, after, final = _refactored(tmp_path, source, driver)
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()
 
 
 def test_a_super_subclass_hosts_private_method_helpers(tmp_path: Path) -> None:
@@ -318,7 +328,7 @@ def test_a_super_subclass_hosts_private_method_helpers(tmp_path: Path) -> None:
     before, after, final = _refactored(tmp_path, source, driver)
     assert before.endswith("4 6\n|")
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()
 
 
 def test_an_imported_base_with_a_metaclass_allows_private_method_helpers(tmp_path: Path) -> None:
@@ -331,7 +341,7 @@ def test_an_imported_base_with_a_metaclass_allows_private_method_helpers(tmp_pat
         DRIVER,
     )
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()
 
 
 def test_a_base_imported_from_the_project_is_judged_where_it_is_defined(tmp_path: Path) -> None:
@@ -344,7 +354,7 @@ def test_a_base_imported_from_the_project_is_judged_where_it_is_defined(tmp_path
         DRIVER,
     )
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()
 
 
 ENUM_BOX = "class Box(enum.Enum):\n    ONE = 1\n\n    @property\n    def v(self):\n        return self.value\n"
@@ -376,4 +386,4 @@ def test_standard_class_forms_allow_private_method_helpers(
     )
     before, after, final = _refactored(tmp_path, _module(prelude, header), driver)
     assert after == before
-    assert method_helper_calls(final)
+    assert bool(method_helper_calls(final)) is lifetime_order_certified()

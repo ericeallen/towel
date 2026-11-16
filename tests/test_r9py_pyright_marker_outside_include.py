@@ -32,6 +32,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.pyright_runtime_profiles import native_workspace_completion_refused
 from towel import pyright_session
 from towel.pyright_session import (
     FileChange,
@@ -94,6 +95,17 @@ def test_r9py_a_change_outside_include_is_answered_at_once(
     monkeypatch.setattr(pyright_session, "UNSEEN_MARKER_TIMEOUT_SECONDS", bound)
     command = _pyright_langserver_command()
     assert command is not None
+    if native_workspace_completion_refused():
+        started = time.monotonic()
+        with pytest.raises(pyright_session.SessionFailure, match="cannot certify completion"):
+            session = PyrightSession(command, root, sys.executable)
+            try:
+                changed = root / "tests/test_core.py"
+                session.diagnostics_after({changed: FileChange.CHANGED}, beside=[changed])
+            finally:
+                session.close()
+        assert time.monotonic() - started < bound / 3
+        return
     session = PyrightSession(command, root, sys.executable)
     try:
         changed = root / "tests/test_core.py"

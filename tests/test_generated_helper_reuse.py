@@ -31,6 +31,7 @@ import sys
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.type_inference import CheckSuccess, MypyInferrer
 from towel.unification.function_index import FunctionIndex
 from towel.unification.models import RefactoringProposal, Replacement, is_generated_helper_name
@@ -206,7 +207,12 @@ def test_names_already_in_input_keep_independent_monkeypatch_behavior(
     source.write_text(f"def {name}(n):\n{BODY}\ndef other(n):\n{BODY}")
     engine = UnificationRefactorEngine(min_lines=3)
     final, count, _ = engine.refactor_to_fixed_point(str(source), progress="none")
-    assert count == 1
+    if lifetime_order_certified():
+        assert count == 1
+    else:
+        assert count == 0
+        assert engine.run_report.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert final == source.read_text()
     namespace: dict[str, object] = {}
     exec(final, namespace)
     other = namespace["other"]
@@ -432,34 +438,40 @@ def test_owned_cross_module_bodies_keep_fresh_holder_abi(tmp_path: Path) -> None
     results, reason = engine.refactor_directory_to_fixed_point(
         str(root), str(output), progress="none"
     )
-    assert results and reason == "fixed_point"
-    (helper,) = _helpers(output / "pkg")
-    parameters = helper.args.posonlyargs + helper.args.args
-    assert parameters[-1].arg.startswith("_towel_owner")
-    assert not any(
-        "in place of its restatement" in desc for _, descs in results.values() for desc in descs
-    )
-    handed = 0
-    for path in sorted((output / "pkg").glob("*.py")):
-        for node in ast.parse(path.read_text()).body:
-            if isinstance(node, ast.FunctionDef) and node.name.endswith("_one"):
-                if any(isinstance(statement, ast.Delete) for statement in node.body):
-                    handed += 1
-                    assert isinstance(node.body[0], ast.Assign) and isinstance(
-                        node.body[1], ast.Delete
-                    )
-                    assert any(
-                        isinstance(call, ast.Call)
-                        and isinstance(call.func, ast.Attribute)
-                        and call.func.attr == "pop"
-                        for call in ast.walk(node.body[-1])
-                    )
-                else:
-                    expected_body = ast.parse("def untouched(n):\n" + BODY).body[0]
-                    assert isinstance(expected_body, ast.FunctionDef)
-                    assert [ast.dump(statement) for statement in node.body] == [
-                        ast.dump(statement) for statement in expected_body.body
-                    ]
-    assert handed == 2
+    assert reason == "fixed_point"
+    if lifetime_order_certified():
+        assert results and reason == "fixed_point"
+        (helper,) = _helpers(output / "pkg")
+        parameters = helper.args.posonlyargs + helper.args.args
+        assert parameters[-1].arg.startswith("_towel_owner")
+        assert not any(
+            "in place of its restatement" in desc for _, descs in results.values() for desc in descs
+        )
+        handed = 0
+        for path in sorted((output / "pkg").glob("*.py")):
+            for node in ast.parse(path.read_text()).body:
+                if isinstance(node, ast.FunctionDef) and node.name.endswith("_one"):
+                    if any(isinstance(statement, ast.Delete) for statement in node.body):
+                        handed += 1
+                        assert isinstance(node.body[0], ast.Assign) and isinstance(
+                            node.body[1], ast.Delete
+                        )
+                        assert any(
+                            isinstance(call, ast.Call)
+                            and isinstance(call.func, ast.Attribute)
+                            and call.func.attr == "pop"
+                            for call in ast.walk(node.body[-1])
+                        )
+                    else:
+                        expected_body = ast.parse("def untouched(n):\n" + BODY).body[0]
+                        assert isinstance(expected_body, ast.FunctionDef)
+                        assert [ast.dump(statement) for statement in node.body] == [
+                            ast.dump(statement) for statement in expected_body.body
+                        ]
+        assert handed == 2
+    else:
+        assert results == {}
+        assert engine.run_report.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert _helpers(output / "pkg") == []
     assert _runtime(output, 3) == expected
     assert {path.name: path.read_bytes() for path in package.iterdir()} == before

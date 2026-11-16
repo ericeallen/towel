@@ -106,6 +106,12 @@ taken not to analyze that directory at all, which no later wait would cure."""
 
 _MARKER_NAME = f"{PROBE_PREFIX}settled.py"
 
+WORKSPACE_COMPLETION_UNAVAILABLE = (
+    "pyright's workspace analysis cannot certify completion after reporting its "
+    "string.templatelib stub"
+)
+"""The observed signature of microsoft/pyright#11925; the CLI remains usable."""
+
 
 @dataclass(frozen=True)
 class Diagnostic:
@@ -867,6 +873,19 @@ class PyrightSession:
         if path is None:
             raise SessionFailure("pyright diagnostics have no local file URI")
         entries = list(_diagnostics_of(path, publication))
+        if Path(path).parts[-4:] == (
+            "typeshed-fallback",
+            "stdlib",
+            "string",
+            "templatelib.pyi",
+        ):
+            # Pyright 1.1.414 counts this implicit Python 3.14+ stub as a
+            # workspace file but never completes its progress token (#11925).
+            # Observe the affected target through the actual publication rather
+            # than duplicating the checker's version/configuration inference.
+            # Reject the session; the caller checks the full project with the
+            # CLI. Neither a quiet server nor a marker overrides progress.
+            raise SessionFailure(WORKSPACE_COMPLETION_UNAVAILABLE)
         if Path(path).name == _MARKER_NAME:
             # The marker is this session's own and no part of the project's picture.
             self._marker_answered |= self._marker.answered_by(path, entries)

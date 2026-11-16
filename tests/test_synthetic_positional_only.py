@@ -117,13 +117,15 @@ def test_method_receiver_precedes_positional_only_synthetic_parameters(
     ast.parse(ast.unparse(helper))
 
 
-SOURCE = """def first(value: int) -> int:
+SOURCE = """value: int = 3
+
+def first() -> int:
     print("first")
     answer = value * 2
     print(answer)
     return answer
 
-def second(value: int) -> int:
+def second() -> int:
     print("second")
     answer = value * 2
     print(answer)
@@ -136,7 +138,12 @@ def _observed(source: str) -> tuple[object, str]:
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         exec(
-            compile(source + "\nobserved = (first(3), second(4))\n", "program.py", "exec"),
+            compile(
+                source
+                + "\nvalue = 3\nfirst_result = first()\nvalue = 4\nobserved = (first_result, second())\n",
+                "program.py",
+                "exec",
+            ),
             namespace,
         )
     return namespace["observed"], output.getvalue()
@@ -210,14 +217,15 @@ def test_typed_method_helpers_keep_receiver_dispatch_with_synthetic_inputs(
     receiver = "self" if method_kind == "instance" else "cls"
     parameters = "value: int" if method_kind == "staticmethod" else f"{receiver}, value: int"
     operand = "3" if method_kind == "staticmethod" else f"{receiver}.base"
-    source = "class Box:\n    base: int = 3\n"
+    source = "class Box:\n    base: int = 3\n    answer: int = 0\n"
+    owner = "Box" if method_kind == "staticmethod" else receiver
     for name in ["first", "second", "third"]:
         source += (
             decorator
             + f"    def {name}({parameters}) -> int:\n"
             + f'        print("{name}")\n'
-            + f"        answer = value * {operand}\n"
-            + "        print(answer)\n        return answer\n"
+            + f"        {owner}.answer = value * {operand}\n"
+            + f"        print({owner}.answer)\n        return {owner}.answer\n"
         )
     path = tmp_path / "program.py"
     path.write_text(source)
@@ -289,7 +297,7 @@ def test_cross_module_repeated_passes_preserve_binding_and_origin_target(
     tmp_path: Path, target: str, expected_slash: bool
 ) -> None:
     root, output = tmp_path / "input", tmp_path / "output"
-    package = _package(root, 3)
+    package = _package(root, 3, binding_free=True)
     configuration = root / "pyproject.toml"
     configuration.write_text(configuration.read_text() + f'requires-python = ">={target}"\n')
     for multiplier, name in enumerate("abc", 2):

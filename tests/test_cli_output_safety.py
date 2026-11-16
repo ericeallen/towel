@@ -15,12 +15,13 @@
 """CLI output operations must preserve existing files and honor cancellation."""
 
 import argparse
+import io
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from towel.cli import _build_parser, _run_dry
+from towel.cli import RunCancelled, _build_parser, _run_dry
 
 
 def arguments(source: Path, destination: Path) -> argparse.Namespace:
@@ -57,11 +58,26 @@ def test_overlapping_paths_rejected(tmp_path: Path, ancestor: bool) -> None:
     assert not (source / "output").exists()
 
 
+# A complete integer pipeline repays the generated helper's call interface.
+_BODY = (
+    "    a = x + 1\n    b = a * 2\n    c = b + 3\n"
+    "    d = c + 4\n    e = d * 3\n    f = e - 12\n"
+    "    g = f // 3\n    h = g + 9\n    i = h * 2\n"
+    "    j = i - 18\n    k = j // 2\n    return k\n"
+)
+# Literal inputs, as the python lane made the CLI tests: no argument is handed over.
+_DUPLICATES = "def first():\n    x = 1\n" + _BODY + "\ndef second():\n    x = 2\n" + _BODY
+
+
 def test_cancel_does_not_create_output(tmp_path: Path) -> None:
+    """Declining the question asked after the analysis writes nothing (audit finding 7)."""
     source = tmp_path / "source.py"
-    source.write_text("x = 1\n")
+    source.write_text(_DUPLICATES)
     destination = tmp_path / "output.py"
-    with patch("builtins.input", return_value="n"), pytest.raises(ValueError, match="Aborted"):
+    with (
+        patch("sys.stdin", io.StringIO("n\n")),
+        pytest.raises(RunCancelled, match="Cancelled; nothing was written."),
+    ):
         _run_dry(arguments(source, destination))
     assert not destination.exists()
-    assert source.read_text() == "x = 1\n"
+    assert source.read_text() == _DUPLICATES

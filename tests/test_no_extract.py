@@ -55,8 +55,28 @@ BODY = """    total = 0
 """
 
 
+LITERAL_BODY = """    total = 1
+    total = total * 2
+    total = total + 3
+    total += 7
+    total = total + 17
+    total = total - 17
+    total = total * 19
+    total = total // 19
+    total = total + 23
+    total = total - 23
+    total = total * 29
+    total = total // 29
+    total = total + 31
+    total = total - 31
+    total = total * 37
+    total = total // 37
+    return total
+"""
+
+
 def _function(name: str, marker: str = "") -> str:
-    return f"def {name}(values):{marker}\n{BODY}\n"
+    return f"def {name}():{marker}\n{LITERAL_BODY}\n"
 
 
 def _reusable_function(name: str, marker: str = "") -> str:
@@ -422,7 +442,7 @@ def test_adding_or_removing_a_marker_invalidates_discovery_even_with_identical_a
     path = _write(tmp_path, source)
     engine = UnificationRefactorEngine(min_lines=3)
     assert engine.analyze_file(str(path))
-    marked = source.replace("def alpha(values):", "def alpha(values):  # towel: no-extract")
+    marked = source.replace("def alpha():", "def alpha():  # towel: no-extract")
     assert ast.dump(ast.parse(source)) == ast.dump(ast.parse(marked))
     path.write_text(marked)
     assert not engine.analyze_file(str(path))

@@ -176,7 +176,7 @@ def test_invalid_later_rename_mapping_cannot_partially_apply(tmp_path):
 def test_planning_is_repeatable_does_not_mutate_and_rejects_stale_source(tmp_path):
     path = tmp_path / "source.py"
     path.write_text(
-        "def a(x):\n    y = x + 1\n    z = y * 2\n    return z\n\ndef b(x):\n    y = x + 1\n    z = y * 2\n    return z\n"
+        "def a():\n    x = 3\n    y = x + 1\n    z = y * 2\n    return z\n\ndef b():\n    x = 3\n    y = x + 1\n    z = y * 2\n    return z\n"
     )
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     proposal = engine.analyze_file(str(path))[0]
@@ -260,7 +260,7 @@ def test_sync_failures_preserve_recoverable_state(tmp_path, failure_call):
 def test_crlf_fixed_point_uses_original_bytes_for_stale_check(tmp_path):
     path = tmp_path / "windows.py"
     path.write_bytes(
-        b"def a(x):\r\n    y=x+1\r\n    z=y*2\r\n    return z\r\n\r\ndef b(x):\r\n    y=x+1\r\n    z=y*2\r\n    return z\r\n"
+        b"def a():\r\n    x=3\r\n    y=x+1\r\n    z=y*2\r\n    return z\r\n\r\ndef b():\r\n    x=3\r\n    y=x+1\r\n    z=y*2\r\n    return z\r\n"
     )
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     result, count, _ = engine.refactor_to_fixed_point(str(path), max_iterations=1)
@@ -270,7 +270,7 @@ def test_crlf_fixed_point_uses_original_bytes_for_stale_check(tmp_path):
     assert path.read_bytes() == result.encode("utf-8").replace(b"\n", b"\r\n")
     scope: dict[str, Any] = {}
     exec(result, scope)
-    assert scope["a"](3) == scope["b"](3) == 8
+    assert scope["a"]() == scope["b"]() == 8
 
 
 # --- The error branches of apply_changes (round 4 found them untested) -------

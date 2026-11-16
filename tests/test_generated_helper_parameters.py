@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from towel.unification import argument_ownership
+from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.substitution import Substitution
 from towel.unification.unifier import Unifier
@@ -124,6 +126,14 @@ def second(other, value):
 print(first(Config(), 2), second(Config(), 4))
 """
     result, count = _extract(tmp_path, source)
+    if not argument_ownership._supported_runtime():
+        assert count == 0 and result == source
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3, annotate_helpers=False
+        )
+        assert engine.analyze_file(str(tmp_path / "before.py")) == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        return
     assert count, result
     helpers = [
         node

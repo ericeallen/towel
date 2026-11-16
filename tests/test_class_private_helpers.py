@@ -14,7 +14,7 @@
 
 """A method helper is class-private, so nothing outside its class can reach it.
 
-docs/DECISIONS.md ("A method helper lives in the class that holds both
+docs/design/DECISIONS.md ("A method helper lives in the class that holds both
 duplicates") names the helper ``__extracted_func_0``, which its class ``A``
 stores as ``_A__extracted_func_0`` and its methods call as
 ``self.__extracted_func_0()``. A subclass, in the project or outside it, that
@@ -44,6 +44,7 @@ from typing import Dict, List, Mapping
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.class_private import (
     is_class_private,
     mangled,
@@ -104,8 +105,9 @@ def _run(directory: Path, driver: str, *path: Path) -> str:
     return completed.stdout + "|" + "".join(completed.stderr.strip().splitlines()[-1:])
 
 
-def _refactor(package: Path, **options: object) -> int:
+def _refactor(package: Path, *, expect_lifetime_refusal: bool = False, **options: object) -> int:
     """Refactor ``package`` in place to a fixed point; the number of refactorings applied."""
+    originals = {path: path.read_bytes() for path in package.rglob("*.py")}
     engine = UnificationRefactorEngine(
         min_lines=3, skip_trivial_helpers=False, **options  # type: ignore[arg-type]
     )
@@ -113,7 +115,12 @@ def _refactor(package: Path, **options: object) -> int:
         results, _ = engine.refactor_directory_to_fixed_point(
             str(package), str(package), progress="none"
         )
-    return sum(applied for applied, _ in results.values())
+    applied = sum(count for count, _ in results.values())
+    if expect_lifetime_refusal:
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert {path: path.read_bytes() for path in package.rglob("*.py")} == originals
+    return applied
 
 
 def _project(tmp_path: Path, files: Mapping[str, str]) -> Path:
@@ -174,6 +181,10 @@ def test_a_subclass_cannot_override_a_method_helper(tmp_path: Path, where: str) 
     )
     before = _run(root, driver, *path)
     assert "surprise" not in before
+    if not lifetime_order_certified():
+        assert _refactor(root / "pkg", expect_lifetime_refusal=True) == 0
+        assert _run(root, driver, *path) == before
+        return
     assert _refactor(root / "pkg") > 0
     assert _run(root, driver, *path) == before
     helpers = _class_helpers((root / "pkg" / "lib.py").read_text())["A"]
@@ -209,6 +220,10 @@ def test_a_subclass_defining_the_old_helper_name_no_longer_renumbers_the_helper(
         " Child().mine())\n"
     )
     before = _run(root, driver, root)
+    if not lifetime_order_certified():
+        assert _refactor(root / "pkg", expect_lifetime_refusal=True) == 0
+        assert _run(root, driver, root) == before
+        return
     assert _refactor(root / "pkg") > 0
     assert _run(root, driver, root) == before
     assert _class_helpers((root / "pkg" / "lib.py").read_text())["A"] == ["__extracted_func_0"]
@@ -335,6 +350,10 @@ def test_a_class_with_leading_underscores_stores_the_helper_without_them(
         " sorted(n for n in vars(type(box)) if 'extracted' in n))\n"
     )
     before = _run(root, driver, root)
+    if not lifetime_order_certified():
+        assert _refactor(root / "pkg", expect_lifetime_refusal=True) == 0
+        assert _run(root, driver, root) == before
+        return
     assert _refactor(root / "pkg") > 0
     after = _run(root, driver, root)
     assert after.split("[")[0] == before.split("[")[0]
@@ -352,6 +371,10 @@ def test_a_class_named_only_with_underscores_gets_a_module_helper(
     root = _project(tmp_path, {"pkg/__init__.py": "", "pkg/lib.py": library})
     driver = f"from pkg import lib\nbox = getattr(lib, {name!r})()\nprint(box.first([1]), box.second([2]))\n"
     before = _run(root, driver, root)
+    if not lifetime_order_certified():
+        assert _refactor(root / "pkg", expect_lifetime_refusal=True) == 0
+        assert _run(root, driver, root) == before
+        return
     assert _refactor(root / "pkg") > 0
     assert _run(root, driver, root) == before
     source = (root / "pkg" / "lib.py").read_text()
@@ -370,6 +393,10 @@ def test_a_nested_class_keeps_its_own_private_names(tmp_path: Path) -> None:
     root = _project(tmp_path, {"pkg/__init__.py": "", "pkg/lib.py": library})
     driver = "from pkg.lib import A\nprint(A().first([1]), A().second([2]), A.Inner().call())\n"
     before = _run(root, driver, root)
+    if not lifetime_order_certified():
+        assert _refactor(root / "pkg", expect_lifetime_refusal=True) == 0
+        assert _run(root, driver, root) == before
+        return
     assert _refactor(root / "pkg") > 0
     assert _run(root, driver, root) == before
     helpers = _class_helpers((root / "pkg" / "lib.py").read_text())
@@ -389,6 +416,10 @@ def test_the_stored_name_collides_with_nothing_the_class_already_has(
     root = _project(tmp_path, {"pkg/__init__.py": "", "pkg/lib.py": library})
     driver = "from pkg.lib import A\nprint(A().first([1]), A().second([2]), A()._A__extracted_func_0())\n"
     before = _run(root, driver, root)
+    if not lifetime_order_certified():
+        assert _refactor(root / "pkg", expect_lifetime_refusal=True) == 0
+        assert _run(root, driver, root) == before
+        return
     assert _refactor(root / "pkg") > 0
     assert _run(root, driver, root) == before
     helpers = _class_helpers((root / "pkg" / "lib.py").read_text())["A"]
@@ -414,6 +445,11 @@ def test_a_second_run_numbers_past_the_first_runs_helpers(tmp_path: Path) -> Non
         "print(A().first([1]), A().second([2]), A().third([3]), A().fourth([4]))\n"
     )
     before = _run(root, driver, root)
+    if not lifetime_order_certified():
+        assert _refactor(root / "pkg", expect_lifetime_refusal=True) == 0
+        assert _refactor(root / "pkg", expect_lifetime_refusal=True) == 0
+        assert _run(root, driver, root) == before
+        return
     # One helper per run: the first run is capped at a single refactoring.
     engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -605,6 +641,14 @@ def test_a_class_private_helper_passes_mypy_strict_and_pyright_strict(
             _, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "ledger.py"))
     finally:
         oracle.close()
+    if not lifetime_order_certified():
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert (tmp_path / "ledger.py").read_text() == TYPED.lstrip()
+        assert _run(tmp_path, driver, tmp_path) == before
+        for tool in ("mypy", "pyright"):
+            assert _strict_errors(tool, tmp_path / "ledger.py") == []
+        return
     assert applied == 1
     source = (tmp_path / "ledger.py").read_text()
     helpers = _class_helpers(source)

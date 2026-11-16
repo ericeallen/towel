@@ -20,6 +20,8 @@ from pathlib import Path
 from types import CodeType
 from typing import Mapping
 
+from towel.unification import argument_ownership
+
 # These inputs have parameter cells only when their comprehensions create
 # separate code objects. The ownership guard then retains exactly the original
 # four definitions; their other useful extractions remain required. Select
@@ -58,6 +60,35 @@ HISTORICAL_PARAMETER_CELL_GOLDENS = frozenset(
 )
 
 
+# Python 3.14 and 3.15 reverse frame cleanup order. Strict ownership proofs
+# deliberately remain uncertified there; these reviewed overrides preserve
+# refused definitions while requiring every remaining safe extraction.
+LIFETIME_REFUSAL_GOLDENS = frozenset(
+    {
+        "edge_cases_stress_test.py",
+        # The unify lane's f-string parameters made its strict extraction a
+        # whole-body handoff of user_id, which an uncertified runtime declines.
+        "example1_simple.py",
+        "example4_complex.py",
+        "nested_structures.py",
+        "real_world_patterns.py",
+        "syntactic_coverage_comprehensive.py",
+    }
+)
+LIFETIME_REFUSAL_CROSSFILE_GOLDENS: frozenset[str] = frozenset()
+
+
+def lifetime_refusal_profile() -> bool:
+    """Select the same lifetime certification boundary as the product."""
+    return not argument_ownership._supported_runtime()
+
+
+def crossfile_baseline(project: Path, expected_output: Path) -> Path:
+    if lifetime_refusal_profile() and project.name in LIFETIME_REFUSAL_CROSSFILE_GOLDENS:
+        return expected_output / "lifetime_refusals" / project.name
+    return expected_output / project.name
+
+
 def _compiled_parameter_cells(source: str, names: set[str]) -> dict[str, frozenset[str]]:
     matches: dict[str, list[CodeType]] = {name: [] for name in names}
 
@@ -91,6 +122,8 @@ def _uses_parameter_cell_golden(
 
 
 def _compiler_baseline(py_file: Path, expected_output: Path) -> Path:
+    if lifetime_refusal_profile() and py_file.name in LIFETIME_REFUSAL_GOLDENS:
+        return expected_output / "lifetime_refusals" / py_file.name
     expected_cells = PARAMETER_CELL_GOLDENS.get(py_file.name)
     if expected_cells is not None:
         actual = _compiled_parameter_cells(py_file.read_text(), set(expected_cells))
@@ -99,8 +132,18 @@ def _compiler_baseline(py_file: Path, expected_output: Path) -> Path:
     return expected_output / py_file.name
 
 
+def require_certified_baseline_generation() -> None:
+    """Keep the published baseline tied to certified ownership behavior."""
+    if lifetime_refusal_profile():
+        raise RuntimeError(
+            "Broad regeneration would overwrite the certified lifetime goldens. "
+            "Generate only the reviewed lifetime_refusals profile separately."
+        )
+
+
 def require_cell_free_baseline_generation(test_examples: Path) -> None:
     """Refuse broad generation before it can overwrite another compiler's goldens."""
+    require_certified_baseline_generation()
     for name in PARAMETER_CELL_GOLDENS:
         original = test_examples / name
         if (

@@ -34,6 +34,7 @@ from typing import Optional
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_helpers import parse_block
 from towel.diagnostics import Settings
 from towel.type_inference import project_configures_mypy
@@ -135,9 +136,13 @@ def test_validation_debugging_traces_both_blocks_of_a_pair(
         contextlib.redirect_stdout(io.StringIO()),
     ):
         proposals = engine.analyze_file(str(path))
-    assert [p.description for p in proposals] == [
-        "Reuse first (m.py) for duplicated code in second"
-    ]
+    if lifetime_order_certified():
+        assert [p.description for p in proposals] == [
+            "Reuse first (m.py) for duplicated code in second"
+        ]
+    else:
+        assert not proposals
+        assert "lifetime_order_uncertified" in engine.declined_pairs
     messages = [r.getMessage() for r in caplog.records if r.name == "towel.validation"]
     assert "\n=== Block1 Validation Debug ===" in messages
     assert "\n=== Block2 Validation Debug ===" in messages

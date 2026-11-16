@@ -14,7 +14,7 @@
 
 """Restricting global re-passes to changed files changes cost, not outcome.
 
-The argument is in docs/ARCHITECTURE.md ("Incremental global passes, and
+The argument is in docs/design/ARCHITECTURE.md ("Incremental global passes, and
 why they are exact"). This test pins the observable claim: the fixed point
 over a multi-file project produces byte-identical files with the
 restriction on and off, and the restriction really skips pairs.
@@ -34,6 +34,7 @@ import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.models import CodeBlockPair
+from tests.test_progress_modes import _two_round_project as _write_two_round_project
 
 EXAMPLES = Path(__file__).parent.parent / "test_examples_crossfile"
 PROJECTS = sorted(p.name for p in EXAMPLES.iterdir() if p.is_dir())
@@ -132,58 +133,6 @@ def test_local_refresh_preserves_restriction_and_omits_unchanged_pairs(tmp_path:
     assert restriction == changed
     assert 0 < len(restricted_pairs) < len(full_pairs)
     assert all(pair.file_path in changed or pair.file_path2 in changed for pair in restricted_pairs)
-
-
-def _write_two_round_project(source: Path) -> None:
-    """Two cross-file duplicates; the second is found only once the first is applied.
-
-    ``alpha`` and ``beta`` share a block across ``a.py`` and ``b.py``;
-    ``alpha_two`` and ``gamma`` share another across ``a.py`` and ``c.py``.
-    After the first extraction rewrites ``a.py`` and ``b.py``, the restricted
-    global pass re-pairs only their functions, and must still pair the
-    rewritten ``a.py`` against the untouched ``c.py``.
-    """
-    source.mkdir()
-    (source / "a.py").write_text(
-        "def alpha(items):\n"
-        "    total = 0\n"
-        "    for item in items:\n"
-        "        total += item * 3\n"
-        '    print(total, "alpha")\n'
-        "    return total\n"
-        "\n"
-        "\n"
-        "def alpha_two(records):\n"
-        "    names = []\n"
-        "    for record in records:\n"
-        "        names.append(record.name.strip().lower())\n"
-        '    print(names, "alpha_two")\n'
-        "    return names\n"
-    )
-    # Two top-level modules share a helper only when the borrower already
-    # imports the host; b and c import a.
-    (source / "b.py").write_text(
-        "import a\n"
-        "\n"
-        "\n"
-        "def beta(values):\n"
-        "    total = 0\n"
-        "    for value in values:\n"
-        "        total += value * 3\n"
-        '    print(total, "beta")\n'
-        "    return total\n"
-    )
-    (source / "c.py").write_text(
-        "import a\n"
-        "\n"
-        "\n"
-        "def gamma(entries):\n"
-        "    names = []\n"
-        "    for entry in entries:\n"
-        "        names.append(entry.name.strip().lower())\n"
-        '    print(names, "gamma")\n'
-        "    return names\n"
-    )
 
 
 def test_a_restricted_pass_still_pairs_a_rewritten_file_with_an_untouched_one(

@@ -20,9 +20,9 @@ re-analyzes the files it rewrote for localized follow-ups, and when that
 queue drains re-pairs changed files and previously declined proposals.
 An unchanged project with only declined proposals is a fixed point.
 The run stops there or when the iteration bound is reached. Progress follows the
-progress mode: ``tqdm`` (tqdm bars; without tqdm a warning once per process
-and an inline bar on stderr in their place), ``auto`` (the same without the
-warning), ``detail`` (a line per pass), or ``none``.
+progress mode: ``auto`` (terminal-only bars, with a built-in fallback),
+``tqdm`` (the same with a warning if tqdm is unavailable), ``detail``
+(a line per pass), or ``none``.
 """
 
 from __future__ import annotations
@@ -33,12 +33,9 @@ import logging
 import os
 from dataclasses import dataclass, field
 import textwrap
-import threading
-import time
 
 from pathlib import Path
 import ast
-import sys
 from typing import (
     Callable,
     Iterator,
@@ -66,18 +63,22 @@ from .exceptions import (
     UntypeableExtraction,
     UnverifiableChangeError,
 )
-from .models import PairTally, RefactoringProposal, TerminationReason
+from .models import (
+    AnalysisCensus,
+    BlockLocation,
+    LeftAlone,
+    PairTally,
+    RefactoringProposal,
+    SkippedFile,
+    TerminationReason,
+)
 from .overlap import filter_overlapping_proposals
 from .progress import (
     DEFAULT_PROGRESS,
-    Heartbeat,
-    ProgressBar,
+    ProgressRenderer,
     ProgressBarFactory,
     ProgressMode,
-    load_tqdm,
     normalize_progress,
-    quietly,
-    render_inline_bar,
     wants_bar,
 )
 from towel.changes import ChangePlan, StaleSource, apply_changes
@@ -101,16 +102,6 @@ from .materialize import Materialization
 from .rehearing import exact_candidate_key, execution_context
 from .helper_merging import merge_module_helpers
 from .rebinding import rebinding_scope
-
-_TQDM_NOTED = False
-
-
-def _note_missing_tqdm() -> None:
-    """Say once per process that the bar the mode asked for is not installed."""
-    global _TQDM_NOTED
-    if not _TQDM_NOTED:
-        _TQDM_NOTED = True
-        LOG.warning("tqdm is not installed; progress is shown as inline bars on stderr instead")
 
 
 def _is_checker_failure(error: BaseException) -> bool:
@@ -154,6 +145,12 @@ class RunReport:
     ``signatures_refused`` count, over the whole run, the helper signatures the
     project's type checker accepted and refused, each rung of a proposal's
     annotation ladder one attempt.
+
+    ``files_analysed`` and ``functions_analysed`` count what the run's first
+    analysis read, and ``skipped_files`` what it could not read, and why.
+    ``left_alone`` locates each declined pair of the last whole analysis and
+    each proposal not applied, under the reason it is counted under; its
+    paths name files as the run's results do.
     """
 
     declined_pairs: Mapping[str, int] = field(default_factory=dict)
@@ -166,6 +163,34 @@ class RunReport:
     signatures_refused: int = 0
     first_unverifiable_reason: Optional[str] = None
     """The first import/type diagnostic from a proposal still declined for unresolved names."""
+    files_analysed: int = 0
+    functions_analysed: int = 0
+    skipped_files: Tuple[SkippedFile, ...] = ()
+    left_alone: Tuple[LeftAlone, ...] = ()
+
+
+@dataclass(frozen=True)
+class Publication:
+    """What a finished run is about to write, for a caller that may stop it first.
+
+    ``applied`` refactorings change ``files`` (named as the run's results name
+    them). ``destination`` is the output the run writes, or, when
+    ``in_place``, the target it changes.
+    """
+
+    applied: int
+    files: Tuple[str, ...]
+    destination: Path
+    in_place: bool
+
+
+BeforePublication = Callable[[Publication], None]
+"""Called once a run has finished and been confirmed, just before it writes anything.
+
+The time limit no longer runs when it is called. It may raise to stop the
+run: nothing is then written, and the exception propagates to the caller of
+the driver.
+"""
 
 
 _Reason = TypeVar("_Reason", bound=str)
@@ -194,6 +219,11 @@ class FixedPointDrivers(Materialization):
     # How the last whole analysis's pairs ended, and how many proposals it emitted.
     _last_pair_tally: PairTally = PairTally()
     _last_emitted: int = 0
+    # What the run's first analysis read; where the last whole analysis's
+    # declined pairs, and the proposals not applied, stand.
+    _run_census: Optional[AnalysisCensus] = None
+    _last_left_alone: Tuple[LeftAlone, ...] = ()
+    _declined_where: Dict[str, Tuple[BlockLocation, ...]] = {}
     # The stage copies of the files an in-place run must not write, since
     # the project holds them under more than one link.
     _unwritable_in_place: FrozenSet[Path] = frozenset()
@@ -205,6 +235,11 @@ class FixedPointDrivers(Materialization):
         for reason in self._declined.values():
             proposals[reason] = proposals.get(reason, 0) + 1
         tally = self._last_pair_tally
+        census = self._run_census or AnalysisCensus()
+        not_applied = tuple(
+            LeftAlone(self._declined_where.get(identity, ()), str(reason))
+            for identity, reason in self._declined.items()
+        )
         return RunReport(
             dict(self._last_declined_pairs),
             proposals,
@@ -223,6 +258,10 @@ class FixedPointDrivers(Materialization):
                 ),
                 None,
             ),
+            files_analysed=census.files,
+            functions_analysed=census.functions,
+            skipped_files=census.skipped,
+            left_alone=self._last_left_alone + not_applied,
         )
 
     def _note_analysis(
@@ -231,6 +270,9 @@ class FixedPointDrivers(Materialization):
         """Keep what a whole analysis of ``analyzed`` declined and emitted, for the run's report."""
         self._last_declined_pairs = dict(self._pair_rejections)
         self._last_pair_tally, self._last_emitted = self._pair_tally, emitted
+        self._last_left_alone = tuple(self._pair_left_alone)
+        if self._run_census is None:
+            self._run_census = self._census
         if reporter is not None and self._last_declined_pairs:
             reporter.detail(
                 f"Declined {sum(self._last_declined_pairs.values())} candidate pair(s): "
@@ -238,7 +280,36 @@ class FixedPointDrivers(Materialization):
             )
 
     def _decline(self, proposal: RefactoringProposal, reason: DeclineReason) -> None:
-        self._declined = {**self._declined, _RejectedProposals.identity(proposal): reason}
+        identity = _RejectedProposals.identity(proposal)
+        self._declined = {**self._declined, identity: reason}
+        self._declined_where = {
+            **self._declined_where,
+            identity: tuple(
+                BlockLocation(replacement.file_path or proposal.file_path, *replacement.line_range)
+                for replacement in proposal.replacements
+            ),
+        }
+
+    def _name_report_paths(self, public: Callable[[str], str]) -> None:
+        """Name the files the run's report locates by the paths the user knows them by."""
+
+        def located(blocks: Tuple[BlockLocation, ...]) -> Tuple[BlockLocation, ...]:
+            return tuple(dataclasses.replace(block, path=public(block.path)) for block in blocks)
+
+        self._last_left_alone = tuple(
+            dataclasses.replace(site, blocks=located(site.blocks)) for site in self._last_left_alone
+        )
+        self._declined_where = {
+            identity: located(blocks) for identity, blocks in self._declined_where.items()
+        }
+        if self._run_census is not None:
+            self._run_census = dataclasses.replace(
+                self._run_census,
+                skipped=tuple(
+                    dataclasses.replace(skipped, path=public(skipped.path))
+                    for skipped in self._run_census.skipped
+                ),
+            )
 
     def _applied(self, proposal: RefactoringProposal) -> None:
         """A proposal declined earlier and applied since, at a rehearing, was not declined."""
@@ -260,6 +331,8 @@ class FixedPointDrivers(Materialization):
         self._unchecked, self._unchecked_reason = frozenset(), ""
         self._declined, self._last_declined_pairs = {}, {}
         self._unverifiable_details = {}
+        self._run_census, self._last_left_alone, self._declined_where = None, (), {}
+        self._skips_reported = set()
         self._pair_tally = self._last_pair_tally = PairTally()
         self._last_emitted = self._signatures_verified = self._signatures_refused = 0
 
@@ -286,16 +359,6 @@ class FixedPointDrivers(Materialization):
             return None
         return queue.pop(0)
 
-    def _resolve_progress_backend(
-        self, progress: ProgressMode
-    ) -> Tuple[ProgressMode, Optional[ProgressBarFactory]]:
-        """The normalized progress mode and, when the mode wants tqdm and it loads, its factory."""
-        normalized = normalize_progress(progress)
-        factory = load_tqdm() if normalized in {"auto", "tqdm"} else None
-        if normalized == "tqdm" and factory is None:
-            _note_missing_tqdm()
-        return normalized, factory
-
     def refactor_to_fixed_point(
         self,
         file_path: str,
@@ -303,6 +366,7 @@ class FixedPointDrivers(Materialization):
         progress: ProgressMode = DEFAULT_PROGRESS,
         *,
         output_path: Optional[str] = None,
+        before_publication: Optional[BeforePublication] = None,
     ) -> Tuple[str, int, List[str]]:
         """Apply refactorings to one file, one at a time, until none remain.
 
@@ -319,10 +383,12 @@ class FixedPointDrivers(Materialization):
                 less runs to a fixed point.
             progress: How progress is shown: ``tqdm`` (tqdm bars, or inline
                 bars on stderr and a warning when tqdm is not installed),
-                ``auto`` (the same without the warning), ``detail`` (a log
+                ``auto`` (terminal-only bars without a warning), ``detail`` (a log
                 of each pass), or ``none``.
             output_path: An optional new file to write the result to instead,
                 when the run succeeds; the original is then only read.
+            before_publication: Called with what the run is about to write,
+                just before it writes it; see ``BeforePublication``.
 
         Returns:
             The final source, the number of refactorings applied, and their
@@ -363,7 +429,13 @@ class FixedPointDrivers(Materialization):
                 analysis_progress,
                 reporter,
             )
-            self._publish(stage)
+            applied = refactored[1]
+            files = (stage.public(str(stage.target)),) if applied else ()
+            self._publish(
+                stage,
+                before=before_publication,
+                publication=Publication(applied, files, destination, in_place),
+            )
             return refactored
 
     def _refuse_an_unreadable_program(self, target: Path) -> None:
@@ -377,17 +449,27 @@ class FixedPointDrivers(Materialization):
         """
         refuse_unparsed_program(target, self.import_graph.excluded_names)
 
-    @staticmethod
-    def _publish(stage: StagedProject, *, allow_empty: bool = False) -> None:
+    def _publish(
+        self,
+        stage: StagedProject,
+        *,
+        allow_empty: bool = False,
+        before: Optional[BeforePublication] = None,
+        publication: Optional[Publication] = None,
+    ) -> None:
         """Hand a finished, confirmed run to the user: the output, or the project itself.
 
         Nothing the user owns has been touched before this. An in-place run's
         combined change is one journaled plan, so an interruption part way
         through it is rolled back or recoverable with ``towel recover``.
+        ``before`` hears ``publication`` once the time limit has stopped, and
+        may raise to write nothing.
         """
         from towel.execution_budget import finish_before_publication
 
         finish_before_publication()
+        if before is not None and publication is not None:
+            before(publication)
         if stage.in_place:
             apply_changes(staged_changes(stage))
         else:
@@ -638,6 +720,8 @@ class FixedPointDrivers(Materialization):
         output_dir: str,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         progress: ProgressMode = DEFAULT_PROGRESS,
+        *,
+        before_publication: Optional[BeforePublication] = None,
     ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
         """
         Apply refactorings across a directory (recursively) until a fixed point.
@@ -662,8 +746,10 @@ class FixedPointDrivers(Materialization):
                 less runs to a fixed point.
             progress: How progress is shown: ``tqdm`` (tqdm bars, or inline
                 bars on stderr and a warning when tqdm is not installed),
-                ``auto`` (the same without the warning), ``detail`` (a log
+                ``auto`` (terminal-only bars without a warning), ``detail`` (a log
                 of each pass), or ``none``.
+            before_publication: Called with what the run is about to write,
+                just before it writes it; see ``BeforePublication``.
 
         Returns:
             (results_dict, termination_reason)
@@ -671,7 +757,7 @@ class FixedPointDrivers(Materialization):
         """
         self._change_log = []
         self._begin_counting_checker_failures()
-        reporter = _ApplyProgress(*self._resolve_progress_backend(progress))
+        reporter = _ApplyProgress(normalize_progress(progress))
 
         input_path = Path(input_dir)
         output_path = Path(output_dir)
@@ -698,10 +784,19 @@ class FixedPointDrivers(Materialization):
             results, termination_reason = self._refactor_directory_in_place(
                 stage.target, reporter, max_iterations
             )
-            self._publish(stage, allow_empty=True)
-            return {stage.public(path): result for path, result in results.items()}, (
-                termination_reason
+            public = {stage.public(path): result for path, result in results.items()}
+            self._publish(
+                stage,
+                allow_empty=True,
+                before=before_publication,
+                publication=Publication(
+                    sum(count for count, _ in public.values()),
+                    tuple(sorted(public)),
+                    destination,
+                    stage.in_place,
+                ),
             )
+            return public, termination_reason
 
     def _refactor_directory_in_place(
         self, directory: Path, reporter: "_ApplyProgress", max_iterations: int
@@ -809,6 +904,7 @@ class FixedPointDrivers(Materialization):
                     dataclasses.replace(change, path=stage.public(change.path))
                     for change in self._change_log
                 ]
+                self._name_report_paths(stage.public)
             except (OSError, ValueError, RefactoringError) as error:
                 _name_public_paths(error, stage.public_text)
                 raise
@@ -959,7 +1055,7 @@ class FixedPointDrivers(Materialization):
         """
         if run.global_revision == run.revision and not rehearing:
             return None
-        reporter.announce_analysis(output_path)
+        reporter.announce_analysis(output_path, self._find_python_files)
         restrict = (
             frozenset(run.changed_since_global | run.deferred_paths)
             if self.incremental_global_passes and passes_so_far > 0 and not rehearing
@@ -1222,83 +1318,40 @@ ProgressPhase = Literal["discovered", "localized", "apply", "applied"]
 
 
 class _ApplyProgress:
-    """How the directory driver reports progress: a tqdm bar, an inline bar, or detail lines.
-
-    Which of the three applies is fixed by the progress mode and by whether
-    tqdm loaded. The driver reports what happened and never asks which one
-    is showing it. The tqdm bar is created only once there are proposals to
-    apply, so a run never opens with an empty bar.
-    """
+    """Translate driver events into detail logs and the shared progress renderer."""
 
     _LISTING_CAP = 25
 
-    def __init__(self, mode: ProgressMode, factory: Optional[ProgressBarFactory]) -> None:
+    def __init__(self, mode: ProgressMode, factory: Optional[ProgressBarFactory] = None) -> None:
         self._mode = mode
-        self._factory = factory
-        self._bar: Optional[ProgressBar] = None
-        # What the run is doing now, for a redraw that no progress prompted.
-        self._doing = ""
-        self._counts = (0, 0)
-        self._drawing = threading.Lock()
-        self._started = time.monotonic()
-        self._heartbeat = Heartbeat(self._redraw)
+        self._renderer = ProgressRenderer(
+            mode, total=None, desc="apply", unit="it", factory=factory
+        )
 
     @classmethod
     def detail_only(cls, mode: ProgressMode) -> "_ApplyProgress":
-        """A reporter that writes the detail log under ``detail`` and draws nothing.
-
-        The single-file loop has no apply bar, only the analysis bars each
-        pass draws itself, but ``detail`` promises it the same log.
-        """
-        return cls("detail" if normalize_progress(mode) == "detail" else "none", None)
-
-    @property
-    def _use_tqdm(self) -> bool:
-        return self._factory is not None
+        """The single-file driver writes detail; its analysis phases own their bars."""
+        return cls("detail" if normalize_progress(mode) == "detail" else "none")
 
     @property
     def analysis_mode(self) -> ProgressMode:
-        """The mode each global analysis pass runs under: a bar when one is wanted."""
         return self._mode if wants_bar(self._mode) else "none"
 
-    def _active_bar(self) -> Optional[ProgressBar]:
-        return self._bar if self._use_tqdm else None
-
     def detail(self, message: str) -> None:
-        """A line of the detail log, in detail mode only."""
         if self._mode == "detail":
             LOG.info("[towel] %s", message)
 
     def inline(self, applied: int, queued: int, phase: ProgressPhase, desc: str) -> None:
-        """Redraw the inline bar, which stands in for the tqdm bar when tqdm is not installed.
+        self._renderer.set_postfix({"A": applied, "Q": queued, "on": f"{phase}: {desc}"})
 
-        It does so under ``tqdm`` as under ``auto``, as the analysis bars do:
-        verification is where a run spends its time, so a missing tqdm must
-        not leave that phase, of all of them, showing nothing.
-        """
-        if not wants_bar(self._mode) or self._use_tqdm:
-            return
-        denom = max(applied + queued, 1)
-        pct = int((applied / denom) * 100)
-        bar = render_inline_bar(pct, bar_len=32)
-        short = desc if len(desc) <= 40 else desc[:37] + "..."
-        elapsed = time.monotonic() - self._started
-        quietly(
-            lambda: print(
-                f"\r[towel] {phase:<10} [{bar}] {pct:3d}% "
-                f"| applied={applied} queued={queued} | {elapsed / 60:5.1f}m | {short}",
-                end="",
-                flush=True,
-                file=sys.stderr,
-            )
-        )
-
-    def announce_analysis(self, output_path: Path) -> None:
+    def announce_analysis(
+        self, output_path: Path, discover: Callable[[str], Sequence[str]]
+    ) -> None:
         """Say how many files the coming global pass will analyze."""
-        if self._mode == "none":
+        if self._mode != "detail":
             return
         try:
-            file_count = sum(1 for _ in output_path.rglob("*.py"))
+            file_count = len(discover(str(output_path)))
         except OSError:
             # Only the directory walk for a progress message; a real I/O
             # problem will resurface in the analysis that follows.
@@ -1316,100 +1369,25 @@ class _ApplyProgress:
                 LOG.info("    %2d. %s", position, short)
             if len(queue) > self._LISTING_CAP:
                 LOG.info("    ... %d more", len(queue) - self._LISTING_CAP)
-        self.inline(applied, len(queue), "discovered", "proposals queued")
-        if self._factory is not None and self._bar is None:
-            try:
-                # leave=False, so later prints do not duplicate the bar line.
-                self._bar = self._factory(
-                    total=max_iterations if max_iterations > 0 else None,
-                    desc="apply",
-                    unit="it",
-                    dynamic_ncols=True,
-                    leave=False,
-                )
-                self._postfix(0, len(queue))
-            except Exception:
-                # A bar that cannot be created costs only its display.
-                self._bar = None
-        if wants_bar(self._mode) and queue:
-            self._heartbeat.start()
+        if queue:
+            self._renderer.heartbeat(
+                applied,
+                max_iterations if max_iterations > 0 else None,
+                details={"A": applied, "Q": len(queue), "on": "discovered: proposals queued"},
+            )
 
     def applying(self, applied: int, queued: int, iteration: int, desc: str) -> None:
-        """About to weigh the ``iteration``-th proposal, which may take a while.
-
-        Verifying one proposal costs a whole-project check per candidate
-        signature and advances nothing, so this is where a run looks stalled.
-        The bar says which proposal is being weighed and the heartbeat keeps
-        its clock moving until the answer comes back.
-        """
-        with self._drawing:
-            self._doing, self._counts = f"#{iteration}: {desc}", (applied, queued)
-        bar = self._active_bar()
-        if bar is None:
-            self.inline(applied, queued, "apply", self._doing)
-            return
-        self._redraw()
-
-    def _redraw(self) -> None:
-        """Show what is happening now; called by the heartbeat as well as by the run."""
-        with self._drawing:
-            applied, queued = self._counts
-            bar = self._active_bar()
-            if bar is None:
-                if self._doing:
-                    self.inline(applied, queued, "apply", self._doing)
-                return
-            short = self._doing if len(self._doing) <= 44 else self._doing[:41] + "..."
-            quietly(lambda: bar.set_postfix({"A": applied, "Q": queued, "on": short}, refresh=True))
+        self.inline(applied, queued, "apply", f"#{iteration}: {desc}")
 
     def applied(self, applied: int, queued: int, iteration: int, desc: str) -> None:
-        """The ``iteration``-th proposal was applied."""
-        with self._drawing:
-            self._doing, self._counts = f"#{iteration}: {desc}", (applied, queued)
-        bar = self._active_bar()
-        if bar is None:
-            self.inline(applied, queued, "applied", self._doing)
-            return
-        with self._drawing:
-            quietly(lambda: bar.update(1))
-        self._redraw()
-
-    def _postfix(self, applied: int, queued: int) -> None:
-        self._counts = (applied, queued)
-        self._redraw()
+        self._renderer.update()
+        self.inline(applied, queued, "applied", f"#{iteration}: {desc}")
 
     def close(self) -> None:
-        """Release the display; safe to call more than once and after a failure.
-
-        A run that ends by raising never reaches ``finish_at_fixed_point``, and
-        a tqdm bar left open writes over whatever the terminal prints next.
-        """
-        self._heartbeat.stop()
-        bar, self._bar = self._bar, None
-        if bar is not None:
-            quietly(bar.close)
+        self._renderer.close()
 
     def finish_at_fixed_point(self) -> None:
-        """No proposals remain: close the bar, or end the inline bar's line."""
-        self._heartbeat.stop()
-        bar = self._active_bar()
-        if bar is not None:
-            self._bar = None  # Closed here, so ``close`` has nothing left to do.
-
-            def finish() -> None:
-                bar.refresh()
-                bar.close()
-
-            quietly(finish)
-        elif wants_bar(self._mode) and not self._use_tqdm:
-            print(file=sys.stderr)
+        self.close()
 
     def finish_at_cap(self) -> None:
-        """The iteration cap was reached: close the bar, or end the inline bar's line."""
-        self._heartbeat.stop()
-        bar = self._active_bar()
-        if bar is not None:
-            self._bar = None
-            quietly(bar.close)
-        elif wants_bar(self._mode) and not self._use_tqdm:
-            print(file=sys.stderr)
+        self.close()

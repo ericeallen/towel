@@ -24,6 +24,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.pipeline import AnalysisSession, SourceFileError, run_pipeline
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -230,6 +231,12 @@ def test_mutating_returned_engine_proposal_does_not_change_reanalysis(tmp_path):
     path = write_module(tmp_path, source=source)
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
     proposals = engine.analyze_files([path], progress="none")
+    if not lifetime_order_certified():
+        assert not proposals
+        assert "lifetime_order_uncertified" in engine.declined_pairs
+        assert engine.analyze_files([path], progress="none") == []
+        assert Path(path).read_text() == source
+        return
     assert [p.description for p in proposals] == ["Extract common code from first and second"]
     expected = [ast.dump(proposal.extracted_function) for proposal in proposals]
     proposals[0].extracted_function.body.clear()
@@ -263,7 +270,11 @@ def test_engine_invalidate_paths_drops_the_snapshot_and_reanalyzes_new_content(t
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
 
     first = engine.analyze_files([path], progress="none")
-    assert [p.description for p in first] == ["Extract common code from alpha and beta"]
+    if lifetime_order_certified():
+        assert [p.description for p in first] == ["Extract common code from alpha and beta"]
+    else:
+        assert not first
+        assert "lifetime_order_uncertified" in engine.declined_pairs
     assert engine.analysis_session.entry_count == 1
     assert engine.analysis_session.reusable(path)
 
@@ -273,7 +284,11 @@ def test_engine_invalidate_paths_drops_the_snapshot_and_reanalyzes_new_content(t
 
     Path(path).write_text(DUPLICATED_PAIR.replace("alpha", "gamma").replace("beta", "delta"))
     second = engine.analyze_files([path], progress="none")
-    assert [p.description for p in second] == ["Extract common code from gamma and delta"]
+    if lifetime_order_certified():
+        assert [p.description for p in second] == ["Extract common code from gamma and delta"]
+    else:
+        assert not second
+        assert "lifetime_order_uncertified" in engine.declined_pairs
     assert engine.analysis_session.reusable(path)
 
 

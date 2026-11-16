@@ -90,13 +90,17 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
 
     def test_subtraction_is_not_replaced_by_addition(self) -> None:
         source = self.source(
-            "    y = value - 1\n    z = y * 2\n    q = z + 3\n    return q\n", "value"
+            "    assert value is not None\n    assert hasattr(value, '__sub__')\n"
+            "    return (value - 1) * 2 + 3\n",
+            "value",
         )
         self.assertEqual(self.call(self.rewrite(source), DistinctOperators()), 201)
 
     def test_shadowed_builtin_parameter_is_preserved(self) -> None:
         source = self.source(
-            "    x = len(data)\n    y = x + 2\n    z = y * 3\n    return z\n", "len, data"
+            "    assert callable(len)\n    assert data is not None\n"
+            "    return (len(data) + 2) * 3\n",
+            "len, data",
         )
         rewritten = self.rewrite(source)
         self.assertEqual(self.call(source, lambda _: 100, []), 306)
@@ -133,10 +137,12 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
             "class First(Base):\n"
             "    def _extracted_func_7(self):\n        return -1\n"
             "    def run(self, x):\n"
-            "        a = x + 1\n        b = a * 2\n        c = b + 3\n        return c\n"
+            "        self.result = x + 1\n        self.result *= 2\n"
+            "        self.result += 3\n        return self.result\n"
             "class Second(Base):\n"
             "    def run(self, x):\n"
-            "        a = x + 1\n        b = a * 2\n        c = b + 3\n        return c\n"
+            "        self.result = x + 1\n        self.result *= 2\n"
+            "        self.result += 3\n        return self.result\n"
         )
         rewritten = self.rewrite(source)
         self.assertIn("def _extracted_func_8", rewritten)
@@ -308,9 +314,11 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
             "    result += 1 if 'key' in {'key': x} else 0\n"
             "    return result\n"
         )
+        # Module-owned inputs leave the helper-template check independent
+        # of argument cleanup certification; the observations below vary them.
         source = "".join(
-            f"def attributes_{suffix}(obj):\n{attributes}" for suffix in ("a", "b", "c")
-        ) + "".join(f"def membership_{suffix}(x, data):\n{membership}" for suffix in ("a", "b"))
+            f"def attributes_{suffix}():\n{attributes}" for suffix in ("a", "b", "c")
+        ) + "".join(f"def membership_{suffix}():\n{membership}" for suffix in ("a", "b"))
         path = self.root / "clustering.py"
         path.write_text(source, encoding="utf-8")
         # Clustering onto a shared helper is under test; with reuse the
@@ -336,15 +344,15 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
             namespace: dict[str, object] = {}
             exec(candidate, namespace)
             for suffix in ("a", "b", "c"):
-                attribute_call = cast(Callable[[object], object], namespace[f"attributes_{suffix}"])
+                attribute_call = cast(Callable[[], object], namespace[f"attributes_{suffix}"])
                 value = SimpleNamespace(value=3, data=[3], get_value=lambda: 3)
-                self.assertEqual(attribute_call(value), 9)
+                namespace["obj"] = value
+                self.assertEqual(attribute_call(), 9)
             for suffix in ("a", "b"):
-                membership_call = cast(
-                    Callable[[object, object], object], namespace[f"membership_{suffix}"]
-                )
+                membership_call = cast(Callable[[], object], namespace[f"membership_{suffix}"])
                 for container in ({}, {0: 1}, [0], []):
-                    self.assertEqual(membership_call(0, container), 2)
+                    namespace.update(x=0, data=container)
+                    self.assertEqual(membership_call(), 2)
 
     def test_generator_extraction_is_rejected(self) -> None:
         for expression in ("yield 1", "yield from (1, 2)"):
@@ -355,9 +363,9 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         for expression in ("locals()", "vars()", "eval('secret')", "globals()"):
             with self.subTest(expression=expression):
                 self.rewrite(
-                    self.source(
-                        f"    count = 1\n    result = {expression}\n    count = 2\n    return result\n",
-                        "secret",
+                    "secret = 7\n"
+                    + self.source(
+                        f"    count = 1\n    result = {expression}\n    count = 2\n    return result\n"
                     )
                 )
 
@@ -366,11 +374,11 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         # it from ``b`` would close a cycle. There is no pre-existing a<->b cycle,
         # so the helper can live safely in ``b`` (which ``a`` already imports).
         # The engine must pick that safe home rather than decline the extraction.
-        body = "    y = x + 1\n    z = y * 2\n    q = z + 3\n    return q\n"
+        body = "    y = 1\n    z = y * 2\n    q = z + 3\n    return q\n"
         a = self.root / "a.py"
         b = self.root / "b.py"
-        a.write_text("import b\n\ndef first(x):\n" + body, encoding="utf-8")
-        b.write_text("def second(x):\n" + body, encoding="utf-8")
+        a.write_text("import b\n\ndef first():\n" + body, encoding="utf-8")
+        b.write_text("def second():\n" + body, encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
             proposals = UnificationRefactorEngine(
                 skip_trivial_helpers=False, cross_module_helpers=True

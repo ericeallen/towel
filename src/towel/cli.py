@@ -32,7 +32,9 @@ import math
 import os
 import re
 import shlex
+import shutil
 import signal
+import subprocess  # nosec B404: runs only git, found on PATH, for a warning
 import sys
 import tempfile
 import textwrap
@@ -57,7 +59,7 @@ from typing import (
 if TYPE_CHECKING:
     from towel.import_model import ImportModel, ImportProblem, MissingModule
     from towel.type_inference import TypeOracle
-    from towel.unification.fixed_point import RunReport
+    from towel.unification.fixed_point import BeforePublication, RunReport
     from towel.unification.models import RefactoringProposal
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, journals_covering, pending_journal_remedy, recover
@@ -73,10 +75,21 @@ from towel.cli_reporting import (
     HelperScopeKind as HelperScopeKind,
     ParameterRecord as ParameterRecord,
     TypesStatus,
+    LARGEST_SHOWN,
+    analysed_record,
+    census_line,
+    left_alone_count,
+    left_alone_lines,
+    outcome_line,
+    reason_lines,
     render_preview,
+    shows_pairs,
+    run_outcome,
     source_diff,
+    stopped_at_limit,
 )
-from towel.diagnostics import LOG, REJECTIONS, Settings, configure_stderr_logging
+from towel.diagnostics import LOG, Settings, configure_stderr_logging
+from towel.config import ConfigurationError, apply_project_defaults
 from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
@@ -95,7 +108,13 @@ from towel.unification.defaults import (
     DEFAULT_MIN_LINES,
     DEFAULT_STRICT as DEFAULT_STRICT,
 )
-from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
+from towel.unification.progress import (
+    DEFAULT_PROGRESS,
+    ProgressMode,
+    normalize_progress,
+    progress_run,
+    write_note,
+)
 
 _MISSING_OUTPUT = gettext("the following arguments are required: %s") % "output"
 """argparse's message, in its own translation, for a dry command line that names no output."""
@@ -207,8 +226,9 @@ Run towel COMMAND --help for a command's options and examples, and see
 docs/QUICKSTART.md for a first run.
 
 Exit status: 0 done, including when there was nothing to change; 1 failed,
-refused, or answered "no"; 2 invalid arguments, or a rename refused; 124 time
-limit reached; 130 interrupted; 143 terminated.""",
+refused, or answered "no"; 2 invalid arguments, or a rename refused; 3 preview
+--check would change code; 124 time limit reached; 130 interrupted;
+143 terminated.""",
     )
 
     parser.add_argument(
@@ -232,28 +252,41 @@ def main() -> None:
     _install_signal_handling()
     parser = _build_parser()
     args = parser.parse_args()
+    try:
+        args = apply_project_defaults(parser, args, sys.argv[1:])
+    except ConfigurationError as error:
+        parser.error(str(error))
+    except (OSError, ValueError) as error:
+        _write_failure_result(args, "error", "error", str(error))
+        parser.exit(1, f"Error: {error}\n")
+    if args.config_path is not None:
+        print(f"Using [tool.towel] from {args.config_path}", file=sys.stderr)
     if args.command == "dry" and args.json and args.interactive:
         parser.error("dry --json requires --no-interactive")
     if (
         args.command == "preview"
         and args.quick
-        and any((args.json, args.summary, args.diff, args.inventory))
+        and any((args.json, args.summary, args.diff, args.inventory, args.stats, args.check))
     ):
-        parser.error("--quick cannot be combined with --json, --summary, --diff or --inventory")
+        parser.error(
+            "--quick cannot be combined with --json, --summary, --diff, --inventory, --stats or --check"
+        )
     result_stdout = sys.stdout
     configure_stderr_logging()
     _settings().enable_debug_logging()
-    if sys.version_info[:2] > (3, 13):
+    if sys.version_info[:2] > (3, 15):
         print(
-            "Warning: Towel is validated on Python 3.11–3.13; this interpreter is outside "
+            "Warning: Towel is validated on Python 3.11–3.15; this interpreter is outside "
             "that range. Review changes and run your project's tests.",
             file=sys.stderr,
         )
     try:
         with (
-            _explain_rejections(bool(getattr(args, "explain", False))),
+            progress_run(quiet=bool(getattr(args, "quiet", False))),
             execution_budget(getattr(args, "time_limit", None)),
         ):
+            if getattr(args, "quiet", False):
+                args.progress = "none"
             _dispatch(parser, args)
     except BudgetExpired:
         # A signal may arrive while redirect_stdout.__enter__ has assigned
@@ -273,18 +306,6 @@ def main() -> None:
 
 
 _SETTINGS: Optional[Settings] = None
-
-
-@contextmanager
-def _explain_rejections(enabled: bool) -> Iterator[None]:
-    """Source-located decline traces for this invocation, without changing later runs."""
-    previous = REJECTIONS.level
-    if enabled:
-        REJECTIONS.setLevel(logging.DEBUG)
-    try:
-        yield
-    finally:
-        REJECTIONS.setLevel(previous)
 
 
 def _settings() -> Settings:
@@ -332,6 +353,8 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
             _run_dry(args)
         except BrokenPipeError:
             raise
+        except RunCancelled as cancelled:
+            parser.exit(1, f"{cancelled}\n")
         except (OSError, ValueError, TowelError) as error:
             _write_failure_result(args, "error", "error", str(error))
             parser.exit(1, f"Error: {error}\n")
@@ -352,7 +375,9 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
             parser.exit(1, f"Error: {error}\n")
     elif args.command == "recover":
         try:
-            recover(args.journal)
+            restored = recover(args.journal)
+            noun = "file" if len(restored) == 1 else "files"
+            print(f"Restored {len(restored)} {noun}; journal removed.")
         except BrokenPipeError:
             raise
         except (OSError, ValueError) as error:
@@ -480,7 +505,7 @@ def _add_strict_flag(options: argparse._ActionsContainer) -> None:
     """Add ``--strict``, shared by the commands that analyze a project.
 
     Off by default: relaxed mode assumes a program does not depend on when its
-    objects are finalized (docs/DECISIONS.md, "Relaxed mode is the default;
+    objects are finalized (docs/design/DECISIONS.md, "Relaxed mode is the default;
     strict mode keeps exact lifetimes").
     """
     options.add_argument(
@@ -569,8 +594,10 @@ Examples, in a directory holding src/:
 
 When it changes anything, dry also writes .towel-helpers.json into output (or
 output.towel-helpers.json beside an output file): each new helper's call
-sites, for naming the helpers with rename-helpers. Delete it once you no
-longer need it. TOWEL_WORKERS=N limits the analysis to N worker processes.""",
+sites, for naming the helpers with rename-helpers. Use --no-helper-metadata
+to leave it out; rename-helpers then shows no call-site changes. Delete it
+once you no longer need it. TOWEL_WORKERS=N limits the analysis to N worker
+processes.""",
     )
 
     parser.add_argument(
@@ -595,6 +622,13 @@ longer need it. TOWEL_WORKERS=N limits the analysis to N worker processes.""",
     )
     sections.output.add_argument(  # earlier spelling, kept for scripts
         "--non-interactive", dest="interactive", action="store_false", help=argparse.SUPPRESS
+    )
+    sections.output.add_argument(
+        "--helper-metadata",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write .towel-helpers.json with call-site changes for rename-helpers (default: on). "
+        "--no-helper-metadata leaves it out; rename-helpers then shows no call-site changes.",
     )
     _add_json_flag(sections.output)
     _add_shared_options(sections)
@@ -639,6 +673,12 @@ def _add_shared_options(sections: _Sections) -> None:
     to both dataclasses too. Within a section they follow the options the
     command added first.
     """
+    sections.advanced.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Ignore [tool.towel] defaults in the project's pyproject.toml (default: read them). "
+        "Command-line options override project defaults.",
+    )
     _add_report_flags(sections.output)
     _add_exclude_flag(sections.scope)
     _add_cross_module_flag(sections.scope)
@@ -668,8 +708,9 @@ def _add_report_flags(options: argparse._ActionsContainer) -> None:
     options.add_argument(
         "--explain",
         action="store_true",
-        help="Print on stderr each pair of similar blocks that was not extracted, with its files, "
-        "lines and a reason code (docs/KNOWN_LIMITATIONS.md explains most codes).",
+        help="After the run, list every place with similar code that was left alone, largest "
+        "first, with its files, lines and the reason in a sentence (default: off, which lists "
+        f"the {LARGEST_SHOWN} largest).",
     )
     options.add_argument(
         "--stats",
@@ -772,9 +813,17 @@ def _add_progress_flag(parser: argparse.ArgumentParser, detail: str) -> None:
         "--progress",
         choices=["auto", "tqdm", "none", "detail"],
         default=DEFAULT_PROGRESS,
-        help="Progress display mode: 'tqdm' shows tqdm bars (the default), or inline bars and a "
-        "warning when tqdm is not installed; 'auto' does the same without the warning; 'none' "
-        f"disables output; {detail}.",
+        help="Progress display mode: 'auto' (default) shows a transient bar on a terminal, "
+        "using tqdm when installed or the built-in display otherwise; pipes show no bar. "
+        "'tqdm' also warns when tqdm is not installed; 'none' disables progress; "
+        f"{detail}.",
+    )
+
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress progress and notes; keep warnings, errors and results. Default: off.",
     )
 
 
@@ -805,6 +854,12 @@ Examples, in a directory holding src/:
         "target", help="The file or directory to examine; preview changes nothing in it."
     )
     sections = _sections(parser)
+    sections.output.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit with status 3 if the complete preview would change code, or 0 if it would "
+        "not (default: off). Failures keep their own status; cannot be used with --quick.",
+    )
     presentation = sections.output.add_mutually_exclusive_group()
     presentation.add_argument(
         "--summary", action="store_true", help="Print the summary only, without the diff."
@@ -903,6 +958,8 @@ Examples, in a directory holding src/:
   towel rename-helpers src/ --complete-scope""",
     )
 
+    _add_progress_flag(parser, "'detail' shows diagnostic detail where available")
+
     parser.add_argument(
         "target",
         help="The project directory: it must hold the helpers and every file that uses them.",
@@ -969,8 +1026,15 @@ Examples, in a directory holding src/:
     parser.add_argument(
         "--llm",
         choices=["claude", "gpt", "copilot", "generic"],
-        default="generic",
-        help="Format the LLM prompt for a specific AI assistant (default: generic)",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+
+    parser.add_argument(
+        "--format",
+        action="store_true",
+        help="Format touched files with the project's configured formatter (Ruff or Black; "
+        "default: off).",
     )
 
 
@@ -1175,14 +1239,12 @@ def _generated_code_formatter(
                 if choice.note == "no formatter configured"
                 else 'Install the format extra (pip install "code-towel[format]") to format it.'
             )
-            print(
+            write_note(
                 f"Note: {choice.note}, so generated code is inserted unformatted. {remedy}",
-                file=sys.stderr,
             )
         elif "not installed" in choice.note:
-            print(
+            write_note(
                 f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}.",
-                file=sys.stderr,
             )
 
     return formatter_factory_for_project(project_path, report)
@@ -1196,7 +1258,7 @@ def _file_finisher(
 
     choice = file_finisher_for_project(project_path, sort_imports=sort_imports)
     if "not installed" in choice.note:
-        print(f"Note: {choice.note}.", file=sys.stderr)
+        write_note(f"Note: {choice.note}.")
     return choice.tool
 
 
@@ -1252,6 +1314,10 @@ class DryOptions:
     inventory: bool = False
     strict: bool = DEFAULT_STRICT
     complete_scope: bool = False
+    explain: bool = False
+    quiet: bool = False
+    config_path: Optional[str] = None
+    helper_metadata: bool = True
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1276,6 +1342,10 @@ class DryOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
+            explain=bool(getattr(args, "explain", False)),
+            quiet=bool(getattr(args, "quiet", False)),
+            config_path=getattr(args, "config_path", None),
+            helper_metadata=bool(getattr(args, "helper_metadata", True)),
         )
 
 
@@ -1293,6 +1363,7 @@ class PreviewOptions:
     types: bool
     format: bool
     quick: bool
+    check: bool = False
     exclude: Tuple[str, ...] = ()
     cross_module: bool = False
     stats: bool = False
@@ -1302,6 +1373,9 @@ class PreviewOptions:
     inventory: bool = False
     strict: bool = DEFAULT_STRICT
     complete_scope: bool = False
+    explain: bool = False
+    quiet: bool = False
+    config_path: Optional[str] = None
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1318,6 +1392,7 @@ class PreviewOptions:
             complete_scope=bool(args.complete_scope),
             format=bool(args.format),
             quick=bool(args.quick),
+            check=bool(getattr(args, "check", False)),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
             stats=bool(args.stats),
@@ -1325,6 +1400,9 @@ class PreviewOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
+            explain=bool(getattr(args, "explain", False)),
+            quiet=bool(getattr(args, "quiet", False)),
+            config_path=getattr(args, "config_path", None),
         )
 
     def dry_options(self, output: str) -> DryOptions:
@@ -1350,6 +1428,9 @@ class PreviewOptions:
             summary=self.summary,
             diff=self.diff,
             inventory=self.inventory,
+            explain=self.explain,
+            quiet=self.quiet,
+            config_path=self.config_path,
         )
 
 
@@ -1364,11 +1445,13 @@ class RenameOptions:
     list: bool
     json: bool
     preview: bool
-    llm: str
+    llm: Optional[str]
     complete_scope: bool
+    format: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "RenameOptions":
+        raw_llm = getattr(args, "llm", None)
         return cls(
             target=Path(args.target),
             files=list(args.files) if args.files else None,
@@ -1377,8 +1460,9 @@ class RenameOptions:
             list=bool(args.list),
             json=bool(args.json),
             preview=bool(args.preview),
-            llm=str(args.llm),
+            llm=str(raw_llm) if raw_llm is not None else None,
             complete_scope=bool(args.complete_scope),
+            format=bool(getattr(args, "format", False)),
         )
 
 
@@ -1406,6 +1490,20 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
 
     is_file, is_dir = _existing_target(input_path)
 
+    if is_file and not input_path.endswith(".py"):
+        # The file was named explicitly, so it is analysed; the census says
+        # whether it was read as Python.
+        print(
+            f"Warning: '{input_path}' is not a Python file (.py); analysing it as one.",
+            file=sys.stderr,
+        )
+    if is_file and not preview and output_path.endswith(("/", os.sep)):
+        raise ValueError(
+            f"The input is one file, so the output must name a file, not the directory"
+            f" '{output_path}'; for example: towel dry {shlex.quote(input_path)}"
+            f" {shlex.quote(output_path + Path(input_path).name)}"
+        )
+
     # Resolve aliases before checking containment or creating any output.
     source = _resolve_cli_path(input_path)
     destination = _resolve_cli_path(output_path)
@@ -1427,7 +1525,13 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         print("This will apply refactorings one at a time until no more are found.")
         print("Helpers go before the first definition of their module,")
         print("or inside the class or function the duplicates share.")
+        if options.interactive:
+            print("Nothing is written until you confirm, once the run knows what it would change.")
         print()
+
+    if options.interactive:
+        for line in _verification_cost(Path(input_path), options.types, options.exclude):
+            print(line)
 
     journal = _pending_journal(source, options.exclude)
     if journal is not None and source == destination:
@@ -1445,6 +1549,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
     from towel.type_inference import CheckerNotInstalled, type_checkers_for_project
 
     annotate_helpers = options.types
+    ask = _ask_before_writing(options) if options.interactive and not preview else None
     try:
         if options.types:
             type_checkers_for_project(source)
@@ -1459,27 +1564,13 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         )
     oracle: Optional[TypeOracle] = None
     try:
-        if is_file and not input_path.endswith(".py"):
-            print(f"Warning: '{input_path}' is not a Python file (.py)")
-            # ``--no-interactive`` promises no prompt: an unattended run asked
-            # here would block on an open stdin, or read a closed one as "no"
-            # and exit 0 having written nothing. The file was named explicitly.
-            if options.interactive and not _confirm("Analyze anyway? (y/N): "):
-                raise ValueError("Aborted; no output was published")
-
-        if options.interactive:
-            for line in _verification_cost(Path(input_path), options.types, options.exclude):
-                print(line)
-            if not _confirm("Proceed? (y/N): "):
-                raise ValueError("Aborted; no output was published")
-
         oracle = _type_oracle(source) if annotate_helpers else None
         if oracle is None and annotate_helpers and _target_has_annotations(source, options.exclude):
-            print(
+            # Through the progress lane's display, which --quiet silences.
+            write_note(
                 "Note: neither mypy nor pyright is installed, so helper annotations are copied "
                 "from the call sites but not inferred or verified. Install the types extra "
-                '(pip install "code-towel[types]").',
-                file=sys.stderr,
+                '(pip install "code-towel[types]").'
             )
         types_status: TypesStatus = (
             "off" if not options.types else "verified" if oracle is not None else "unverified"
@@ -1506,28 +1597,21 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         if not preview:
             print()
 
+        results: Dict[str, Tuple[int, List[str]]]
         if is_file:
             if not preview:
                 print(f"Refactoring file: {output_path}")
-            final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
+            _, applied, descriptions = engine.refactor_to_fixed_point(
                 input_path,
                 max_iterations=options.max_refactorings,
                 progress=options.progress,
                 output_path=output_path,
+                before_publication=ask,
             )
-            applied = num_applied
-
             termination = (
                 "iteration_cap" if 0 < options.max_refactorings <= applied else "fixed_point"
             )
-            if preview:
-                _print_complete_preview(engine, options, applied, descriptions, termination)
-            elif num_applied > 0:
-                print(f"\nApplied {num_applied} refactoring(s):")
-                for i, desc in enumerate(descriptions, 1):
-                    print(f"  {i}. {desc}")
-            else:
-                print("\nNo refactorings found!")
+            results = {output_path: (applied, descriptions)} if applied else {}
         else:
             if not preview:
                 print(f"Refactoring directory: {output_path}")
@@ -1536,30 +1620,17 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 output_path,
                 max_iterations=options.max_refactorings,
                 progress=options.progress,
+                before_publication=ask,
             )
             applied = sum(count for count, _ in results.values())
             termination = termination_reason
 
-            if preview:
-                descriptions = [
-                    description for _, entries in results.values() for description in entries
-                ]
-                _print_complete_preview(engine, options, applied, descriptions, termination_reason)
-            elif results:
-                total_refactorings = applied
-                print(
-                    f"\nApplied {total_refactorings} refactoring(s) across {len(results)} file(s)"
-                )
-                print(f"  Termination: {termination_reason}")
-                for file_path, (count, descriptions) in sorted(results.items()):
-                    print(f"\n  {file_path}: {count} refactoring(s)")
-                    for desc in descriptions[:3]:
-                        print(f"    - {desc}")
-                    if len(descriptions) > 3:
-                        print(f"    ... and {len(descriptions) - 3} more")
-            else:
-                print(f"\nNo refactorings found! Termination: {termination_reason}")
-
+        report = engine.run_report
+        relative = _relative_to_run(options)
+        if preview:
+            _print_complete_preview(engine, options, applied, results, termination)
+        else:
+            _print_dry_summary(report, options, applied, results, termination, relative)
         if engine.checker_failures:
             # Applied refactorings were verified; these were not judged at all.
             print(
@@ -1567,11 +1638,12 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 " could not run for them (see the warnings above); they were not judged."
                 f" {UNTYPED_REMEDY}"
             )
-        if not (options.json or options.diff):
-            _print_declined(engine.run_report, applied, target=source)
+        if not preview and not (options.json or options.diff):
+            for line in _left_alone_report(report, options, applied, relative):
+                print(line)
         if options.stats:
-            _print_statistics(engine.run_report)
-        if not preview:
+            _print_statistics(report)
+        if not preview and options.helper_metadata:
             # Publication has succeeded. This optional naming aid cannot
             # retroactively make that source transaction a failed command.
             try:
@@ -1589,6 +1661,176 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
     finally:
         if oracle is not None:
             oracle.close()
+
+
+class RunCancelled(TowelError):
+    """The user declined to write what a finished ``dry`` run would change."""
+
+
+def _shown_path(path: str, is_dir: bool) -> str:
+    """``path`` as the user gave it, ending in a separator when it names a directory."""
+    return path if not is_dir or path.endswith(("/", os.sep)) else path + "/"
+
+
+def _ask_before_writing(options: DryOptions) -> "BeforePublication":
+    """The question ``dry`` asks once it knows what it would write, before writing it.
+
+    It is not asked when there is nothing to apply. Answering anything but
+    ``y`` or ``yes`` (any case), or no answer at all, cancels the run:
+    nothing is written.
+    """
+    from towel.unification.fixed_point import Publication
+
+    relative = _relative_to_run(options)
+
+    def ask(publication: Publication) -> None:
+        if not publication.applied:
+            return
+        sys.stdout.flush()
+        files = [relative(path) for path in publication.files]
+        listed = f": {', '.join(files)}" if len(files) <= LARGEST_SHOWN else ""
+        if publication.in_place:
+            where = (
+                f"will change {_shown_path(options.input, Path(options.input).is_dir())} in place"
+            )
+        else:
+            where = f"will write {_shown_path(options.output, Path(options.input).is_dir())}"
+        print(
+            f"\n{publication.applied} refactoring(s) in {len(files)} file(s){listed}; {where}.",
+            file=sys.stderr,
+        )
+        if publication.in_place:
+            dirty = _uncommitted(publication.files)
+            if dirty:
+                print(
+                    "Warning: these files have changes not committed to git, which this run"
+                    f" would change further: {', '.join(relative(path) for path in dirty)}",
+                    file=sys.stderr,
+                )
+        if not sys.stdin.isatty():
+            print(
+                "(Input is not a terminal; to write without this question, pass"
+                " --no-interactive.)",
+                file=sys.stderr,
+            )
+        if not _confirm("Write these changes? [y/N] "):
+            raise RunCancelled("Cancelled; nothing was written.")
+
+    return ask
+
+
+def _uncommitted(files: Sequence[str]) -> List[str]:
+    """Which of ``files`` git reports changed and not committed; none outside a work tree.
+
+    Only a warning rests on this, so a missing git, a directory that is not
+    a work tree, or a git that fails says nothing rather than stopping the run.
+    """
+    git = shutil.which("git")
+    if git is None or not files:
+        return []
+    try:
+        top = subprocess.run(  # nosec B603: git from PATH, fixed arguments
+            [git, "rev-parse", "--show-toplevel"],
+            cwd=Path(files[0]).parent,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if top.returncode != 0:
+            return []
+        root = Path(top.stdout.strip())
+        # Porcelain paths are relative to the work tree's root.
+        status = subprocess.run(  # nosec B603: git from PATH, fixed arguments
+            [git, "status", "--porcelain", "-z", "--", *files],
+            cwd=root,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if status.returncode != 0:
+        return []
+    changed = {
+        (root / entry[3:].decode("utf-8", "surrogateescape")).resolve()
+        for entry in status.stdout.split(b"\0")
+        if len(entry) > 3
+    }
+    return [path for path in files if Path(path).resolve() in changed]
+
+
+def _relative_to_run(options: DryOptions) -> Callable[[str], str]:
+    """How a run's report names a file: relative to the target, or to a file target's directory.
+
+    The engine names files by the output it writes (the target itself in
+    place, a private copy for preview); either way the part below the target
+    is the user's own path. A file outside both is named as it was given.
+    """
+    target_is_dir = Path(options.input).is_dir()
+    bases = []
+    for given in (options.output, options.input):
+        resolved = _resolve_cli_path(given)
+        bases.append(resolved if target_is_dir else resolved.parent)
+
+    def relative(path: str) -> str:
+        for candidate in (Path(os.path.abspath(path)), _resolve_cli_path(path)):
+            for base in bases:
+                if candidate.is_relative_to(base) and candidate != base:
+                    return str(candidate.relative_to(base))
+        return path
+
+    return relative
+
+
+def _print_dry_summary(
+    report: "RunReport",
+    options: DryOptions,
+    applied: int,
+    results: Mapping[str, Tuple[int, List[str]]],
+    termination: str,
+    relative: Callable[[str], str],
+) -> None:
+    """What a finished ``dry`` read and did, in the words every command uses."""
+    print()
+    print(census_line(report))
+    outcome = outcome_line(report, applied, options.input)
+    if outcome is not None:
+        print(outcome)
+    else:
+        print(f"Applied {applied} refactoring(s) across {len(results)} file(s).")
+        _print_changed_files(results, relative)
+    stopped = stopped_at_limit(termination, options.max_refactorings)
+    if stopped:
+        print(stopped)
+
+
+def _print_changed_files(
+    results: Mapping[str, Tuple[int, List[str]]], relative: Callable[[str], str]
+) -> None:
+    """Each changed file, with the first few of its refactorings."""
+    for file_path, (count, descriptions) in sorted(results.items()):
+        print(f"\n  {relative(file_path)}: {count} refactoring(s)")
+        for desc in descriptions[:3]:
+            print(f"    - {desc}")
+        if len(descriptions) > 3:
+            print(f"    ... and {len(descriptions) - 3} more")
+
+
+def _left_alone_report(
+    report: "RunReport", options: DryOptions, applied: int, relative: Callable[[str], str]
+) -> List[str]:
+    """Why code was left alone, then where: the largest places, or with --explain all of them."""
+    pairs = shows_pairs(applied, options.explain)
+    problem = report.first_unverifiable_reason
+    if problem:
+        # The typed lane's detail: the first unresolved name, in the user's own path.
+        target = Path(options.input).resolve()
+        root = target if target.is_dir() else target.parent
+        problem = problem.removeprefix(str(root) + os.sep)
+    return reason_lines(report, pairs=pairs, first_unverifiable=problem) + left_alone_lines(
+        report, relative, every=options.explain, pairs=pairs
+    )
 
 
 STRAY_COPY_REMEDY = (
@@ -1643,7 +1885,7 @@ def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
     """Report what keeps the program's imports from naming its modules; refuse when the target's own.
 
     A helper shared across modules is imported by the name the program's own
-    imports give its host (docs/DECISIONS.md, "Import names come from the
+    imports give its host (docs/design/DECISIONS.md, "Import names come from the
     program"). So every problem is named before anything is written. One that
     leaves a name of the package being refactored in doubt refuses the run
     (:func:`_problems_involving`): Towel cannot tell which reading of the
@@ -1800,74 +2042,6 @@ def _problems_involving(model: "ImportModel", target: Path) -> List["ImportProbl
     ]
 
 
-def _print_declined(report: "RunReport", applied: int, *, target: Optional[Path] = None) -> None:
-    """Say what the run declined, and why, so "No refactorings found!" is never the whole story.
-
-    Proposals that were built and then not applied are always counted. The
-    candidate pairs the analysis declined are counted when nothing was
-    applied, which is when a reader asks why.
-    """
-    from towel.type_baseline import TYPE_CHECKING_REMEDIES, UNTYPED_REMEDY
-    from towel.unification.exceptions import Untypeable
-    from towel.unification.fixed_point import DeclineReason, counted_reasons
-
-    lines: List[str] = []
-    profitability = (
-        "  The shared work does not repay the helper and caller complexity; "
-        "these blocks were left unchanged."
-    )
-    if unprofitable := report.declined_proposals.get("unprofitable helper", 0):
-        lines.append(
-            f"  {unprofitable} proposal(s) not applied: unprofitable helper {unprofitable}"
-        )
-        lines.append(profitability)
-    unresolved_reason: DeclineReason = (
-        "not verifiable: its file holds a name the type checker cannot type"
-    )
-    other_proposals = {
-        reason: count
-        for reason, count in report.declined_proposals.items()
-        if reason not in {unresolved_reason, "unprofitable helper"}
-    }
-    if other_proposals:
-        lines.append(
-            f"  {sum(other_proposals.values())} proposal(s) not applied: "
-            f"{counted_reasons(other_proposals)}"
-        )
-    if unresolved := report.declined_proposals.get(unresolved_reason, 0):
-        problem = report.first_unverifiable_reason
-        if problem and target is not None:
-            root = target if target.is_dir() else target.parent
-            problem = problem.removeprefix(str(root.resolve()) + os.sep)
-        detail = (
-            f" First problem: {problem}"
-            if problem
-            else " A name used by the code has no type the checker can establish."
-        )
-        lines.append(
-            f"  The type checker could not verify {unresolved} proposed refactoring(s), "
-            f"so those blocks were left unchanged.{detail}"
-        )
-    if any(
-        isinstance(reason, Untypeable)
-        or reason == "refused by the type checker"
-        or reason.startswith(("not judged:", "not verifiable:"))
-        for reason in report.declined_proposals
-    ):
-        lines.append(f"  {TYPE_CHECKING_REMEDIES if unresolved else UNTYPED_REMEDY}")
-    if not applied and report.declined_pairs:
-        lines.append(
-            f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "
-            f"{counted_reasons(report.declined_pairs)}"
-        )
-        if report.declined_pairs.get("unprofitable_helper", 0):
-            lines.append(profitability)
-    if lines:
-        print("\nDeclined (use --explain for source locations and reasons):")
-        for line in lines:
-            print(line)
-
-
 def _print_statistics(report: "RunReport") -> None:
     """Account for every candidate pair of the last whole analysis, and the run's signatures.
 
@@ -1983,12 +2157,17 @@ def _run_preview(args: argparse.Namespace) -> None:
     options = PreviewOptions.from_namespace(args)
     _warn_about_retired_flags(args)
     if options.quick:
-        if options.json or options.summary or options.diff or options.inventory:
+        if (
+            options.json
+            or options.summary
+            or options.diff
+            or options.inventory
+            or options.stats
+            or options.check
+        ):
             raise ValueError(
-                "--quick cannot be combined with --json, --summary, --diff or --inventory"
+                "--quick cannot be combined with --json, --summary, --diff, --inventory, --stats or --check"
             )
-        if options.stats:
-            print("--stats accounts for a complete run; a --quick list has no statistics.")
         _run_quick_preview(options)
         return
     _existing_target(options.target)
@@ -2004,7 +2183,9 @@ def _run_preview(args: argparse.Namespace) -> None:
                 else:
                     print(result["diff"], end="")
             else:
-                _execute_dry(dry_options, preview=True)
+                result = _execute_dry(dry_options, preview=True)
+    if options.check and result["status"] == "complete" and result["applied"] > 0:
+        sys.exit(3)
 
 
 def _preview_text(text: str, options: DryOptions) -> str:
@@ -2043,23 +2224,42 @@ def _print_complete_preview(
     engine: "UnificationRefactorEngine",
     options: DryOptions,
     applied: int,
-    descriptions: Sequence[str],
+    results: Mapping[str, Tuple[int, List[str]]],
     termination: str,
 ) -> None:
-    """Report only the completed pipeline's accepted changes, in their execution order."""
+    """Report only the completed pipeline's accepted changes, in their execution order.
+
+    The census and the outcome follow the count; what would change, file by
+    file, follows them, as ``dry`` lists it; why code was left alone comes
+    last, before the closing line.
+    """
     if options.json or options.diff:
         return
+    report = engine.run_report
+    relative = _relative_to_run(options)
+    headline = [census_line(report)]
+    outcome = outcome_line(report, applied, options.input)
+    if outcome is not None:
+        headline.append(outcome)
+    stopped = stopped_at_limit(termination, options.max_refactorings)
+    if stopped:
+        headline.append(stopped)
+    if results:
+        headline.append(f"Would change {len(results)} file(s):")
+        for file_path, (count, descriptions) in sorted(results.items()):
+            headline.append(f"  {relative(file_path)}: {count} refactoring(s)")
+            headline.extend(f"    - {description}" for description in descriptions)
     print(
         render_preview(
             applied,
-            termination,
-            bool(engine.run_report.declined_pairs or engine.run_report.declined_proposals),
+            headline,
             (
                 ""
                 if options.summary
                 else source_diff(Path(options.input), Path(options.output), options.exclude)
             ),
             _preview_inventory(engine, options) if options.inventory else None,
+            _left_alone_report(report, options, applied, relative),
         ),
         end="",
     )
@@ -2098,6 +2298,7 @@ def _command_result(
             LOG.warning("Helper inventory unavailable: %s", error)
     result: CommandResult = {
         "schema_version": 1,
+        "config_path": options.config_path,
         "command": "preview" if preview else "dry",
         "mode": mode_name(options.strict),
         "status": "complete",
@@ -2113,6 +2314,9 @@ def _command_result(
         ),
         "helpers": inventory,
         "error": None,
+        "outcome": run_outcome(engine.run_report, applied),
+        "analysed": analysed_record(engine.run_report, _relative_to_run(options)),
+        "left_alone": left_alone_count(engine.run_report, applied),
     }
     if types_status != "verified" or engine.type_check_ran:
         result["types"] = types_status
@@ -2129,6 +2333,7 @@ def _write_failure_result(
         return
     result: CommandResult = {
         "schema_version": 1,
+        "config_path": getattr(args, "config_path", None),
         "command": args.command,
         "mode": mode_name(bool(getattr(args, "strict", DEFAULT_STRICT))),
         "status": status,
@@ -2142,12 +2347,30 @@ def _write_failure_result(
         "diff": "",
         "helpers": None,
         "error": error,
+        "outcome": None,
+        "analysed": None,
+        "left_alone": 0,
     }
     try:
         print(json.dumps(result, indent=2))
     except BrokenPipeError:
         # Preserve the operation's failure status when its reader has gone.
         _close_stdout_quietly()
+
+
+def _quick_report(engine: "UnificationRefactorEngine") -> "RunReport":
+    """What one analysis read and declined, as a fixed-point run's report gives it."""
+    from towel.unification.fixed_point import RunReport
+
+    census = engine.last_census
+    return RunReport(
+        declined_pairs=engine.declined_pairs,
+        candidate_pairs=engine.last_pair_tally.candidate_pairs,
+        files_analysed=census.files,
+        functions_analysed=census.functions,
+        skipped_files=census.skipped,
+        left_alone=engine.last_left_alone,
+    )
 
 
 def _run_quick_preview(options: PreviewOptions) -> None:
@@ -2186,8 +2409,10 @@ def _run_quick_preview(options: PreviewOptions) -> None:
     # Analyze
     if is_file:
         if not target.endswith(".py"):
-            print(f"Note: '{target}' is not a Python file (.py)")
-            print()
+            print(
+                f"Warning: '{target}' is not a Python file (.py); analysing it as one.",
+                file=sys.stderr,
+            )
 
         print(f"Analyzing file: {target}")
         all_proposals = engine.analyze_files([target], progress=options.progress)
@@ -2195,11 +2420,19 @@ def _run_quick_preview(options: PreviewOptions) -> None:
         print(f"Analyzing directory: {target}")
         all_proposals = engine.analyze_directory(target, recursive=True, progress=options.progress)
 
-    print(f"\nFound {len(all_proposals)} refactoring opportunities")
-
-    if not all_proposals:
-        print("No duplicates found!")
+    report = _quick_report(engine)
+    relative = _relative_to_run(options.dry_options(target))
+    print()
+    print(census_line(report))
+    outcome = outcome_line(report, 0, target) if not all_proposals else None
+    if outcome is not None:
+        print(outcome)
+        for line in reason_lines(report) + left_alone_lines(
+            report, relative, every=options.explain
+        ):
+            print(line)
         return
+    print(f"Found {len(all_proposals)} refactoring opportunities")
 
     proposals = filter_overlapping_proposals(all_proposals)
 
@@ -2226,6 +2459,11 @@ def _run_quick_preview(options: PreviewOptions) -> None:
 def _run_rename_helpers(args: argparse.Namespace) -> None:
     """Run the rename-helpers command."""
     options = RenameOptions.from_namespace(args)
+    if options.llm is not None:
+        LOG.warning(
+            "--llm is deprecated since Towel 2.0 and will be removed in a future release; "
+            "the prompt is the same for every assistant."
+        )
     target = options.target
 
     if not target.exists():
@@ -2273,9 +2511,9 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
 
     if not options.complete_scope and inferred_rename_root(target) is None:
         reason = (
-            f"Cannot establish the consumer scope around {target}. Select the whole project "
-            "and pass --complete-scope to declare that target contains every ordinary consumer. "
-            "Use a file-qualified mapping key or --file to select definitions within that root."
+            f"No pyproject.toml, setup.cfg, setup.py or package __init__.py was found above "
+            f"{target}, so Towel cannot tell whether code outside it calls these helpers; "
+            "if nothing outside does, add --complete-scope."
         )
         if options.json:
             print(json.dumps({"applied": False, "dry_run": options.preview, "error": reason}))
@@ -2291,11 +2529,19 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
             options.preview,
             options.json,
             restrict_selection=bool(options.files or options.functions),
+            format_files=options.format,
         )
         return
 
     # Interactive LLM mode
-    _run_interactive_llm_mode(target, helpers, options.llm, options.preview)
+    _run_interactive_llm_mode(
+        target,
+        helpers,
+        options.llm or "generic",
+        options.preview,
+        restrict_selection=bool(options.files or options.functions),
+        format_files=options.format,
+    )
 
 
 def _find_extracted_helpers(
@@ -2328,8 +2574,10 @@ def _find_extracted_helpers(
                 continue
             lines = source.split("\n")
             start = node.lineno - 1
-            preview = "\n".join(lines[start : start + 5])
-            helpers.append((py_file, node.name, node.lineno, preview))
+            full_source = ast.get_source_segment(source, node) or "\n".join(
+                lines[start : node.end_lineno or start + 5]
+            )
+            helpers.append((py_file, node.name, node.lineno, full_source))
 
     return sorted(helpers, key=lambda x: (str(x[0]), x[2]))
 
@@ -2352,14 +2600,22 @@ def _load_modules(target: Path) -> Dict[Path, Tuple[str, ast.Module]]:
 
 
 def _confirm(prompt: str) -> bool:
-    """Ask a yes/no question; unavailable stdin declines, an interrupt propagates."""
+    """Ask a yes/no question on stderr: ``y`` or ``yes``, in any case, is yes.
+
+    Stdout carries the run's report, which a reader may be piping
+    elsewhere, so the question goes where messages go. Unavailable stdin
+    declines; an interrupt propagates.
+    """
+    print(prompt, end="", file=sys.stderr, flush=True)
     try:
-        return input(prompt).strip().lower() == "y"
-    except (EOFError, OSError, RuntimeError):
-        # A closed or lost stdin answers no; ``input`` raises RuntimeError for
-        # a closed descriptor and OSError for one that cannot be read.
-        print()
-        return False
+        answer = sys.stdin.readline()
+    except (OSError, RuntimeError, ValueError):
+        # A closed or lost stdin answers no.
+        answer = ""
+    if not answer or not sys.stdin.isatty():
+        # No terminal echoed the answer and its newline.
+        print(file=sys.stderr)
+    return answer.strip().lower() in {"y", "yes"}
 
 
 def _change_record(value: object) -> Optional[ChangeRecord]:
@@ -2504,7 +2760,11 @@ def helper_inventory(
         }
         qualnames = class_qualnames(tree)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.FunctionDef) or node.name != name or node.lineno != lineno:
+            if (
+                not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                or node.name != name
+                or node.lineno != lineno
+            ):
                 continue
             enclosing = parents.get(node)
             scope_kind: HelperScopeKind
@@ -2622,6 +2882,7 @@ def _apply_rename_file(
     as_json: bool = False,
     *,
     restrict_selection: bool = False,
+    format_files: bool = False,
 ) -> None:
     """Apply renamings from a JSON file, reporting a structured result when asked.
 
@@ -2638,12 +2899,13 @@ def _apply_rename_file(
         raise ValueError("Rename file must contain a JSON object (dict)")
 
     try:
-        total_changes = _apply_rename_mappings(
+        total_changes, touched_paths = _stage_and_apply_rename_mappings(
             target,
             renames,
             dry_run,
             quiet=as_json,
             selected_helpers=helpers if restrict_selection else None,
+            format_files=format_files,
         )
     except ValueError as error:
         if as_json:
@@ -2664,6 +2926,10 @@ def _apply_rename_file(
         )
         return
     print(f"\n{'[PREVIEW] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
+    if not dry_run and not format_files and touched_paths:
+        hint = _format_restore_hint(target, touched_paths)
+        if hint is not None:
+            print(hint)
 
 
 def _apply_rename_mappings(
@@ -2673,9 +2939,35 @@ def _apply_rename_mappings(
     quiet: bool = False,
     *,
     selected_helpers: Optional[List[Tuple[Path, str, int, str]]] = None,
+    format_files: bool = False,
 ) -> int:
     """Validate every mapping and stage the entire rename batch before any write."""
+    count, _ = _stage_and_apply_rename_mappings(
+        target,
+        renames,
+        dry_run,
+        quiet=quiet,
+        selected_helpers=selected_helpers,
+        format_files=format_files,
+    )
+    return count
+
+
+def _stage_and_apply_rename_mappings(
+    target: Path,
+    renames: Mapping[str, object],
+    dry_run: bool,
+    quiet: bool = False,
+    *,
+    selected_helpers: Optional[List[Tuple[Path, str, int, str]]] = None,
+    format_files: bool = False,
+) -> Tuple[int, List[Path]]:
+    """Validate, optionally format with the project's formatter, and apply a rename batch."""
+    from towel.changes import ChangePlan
+    from towel.renaming import plan_rename_batch
+
     specifications: List[Tuple[str, str, Optional[Path]]] = []
+    labels: List[str] = []
     for spec, new_name in renames.items():
         if not isinstance(new_name, str):
             raise ValueError(f"Invalid rename value for {spec}")
@@ -2684,16 +2976,17 @@ def _apply_rename_mappings(
         if ":" in spec:
             relative, name = spec.rsplit(":", 1)
             file_filter = (target / relative).resolve()
-            if target.resolve() not in file_filter.parents or not file_filter.is_file():
+            if target.resolve() not in file_filter.parents:
                 raise ValueError(
                     f"File-qualified rename must name a file within target: {relative}"
                 )
         if selected_helpers is None:
             specifications.append((name, new_name, file_filter))
+            labels.append(spec)
         else:
             # ``helper``, ``helper.parameter``, or a class-private
             # ``Class.helper[.parameter]``: the helper is the first part that
-            # names a selected one.
+            # names a selected one (or its already-applied new name).
             selected_names = {helper for _, helper, _, _ in selected_helpers}
             helper_name = next(
                 (part for part in name.split(".") if part in selected_names),
@@ -2705,13 +2998,193 @@ def _apply_rename_mappings(
                 if helper == helper_name and (file_filter is None or path.resolve() == file_filter)
             }
             if not matched:
-                raise ValueError(f"Rename is outside the selected helpers: {spec}")
-            specifications.extend((name, new_name, path) for path in sorted(matched))
-    count = _rename_batch(target, specifications, dry_run)
+                candidate_names = {new_name}
+                if "." in spec:
+                    parent_spec = spec.rsplit(".", 1)[0]
+                    parent_target = renames.get(parent_spec)
+                    if isinstance(parent_target, str):
+                        candidate_names.add(parent_target)
+                matched = {
+                    path.resolve()
+                    for path, helper, _, _ in selected_helpers
+                    if helper in candidate_names
+                    and (file_filter is None or path.resolve() == file_filter)
+                }
+            if not matched:
+                selected_keys: List[str] = []
+                for entry in helper_inventory(target, selected_helpers)["helpers"]:
+                    selected_keys.append(entry["rename_key"])
+                    for param in entry["parameters"]:
+                        if param["name"].startswith("__param_"):
+                            selected_keys.append(param["rename_key"])
+                available = ", ".join(dict.fromkeys(selected_keys)) or "none"
+                raise ValueError(
+                    f"Unknown rename key {spec!r} (outside the selected helpers); "
+                    f"available keys: {available}"
+                )
+            for path in sorted(matched):
+                specifications.append((name, new_name, path))
+                labels.append(spec)
+    planned = plan_rename_batch(target, specifications, labels=labels)
+    plan = planned.plan
+    if format_files and plan.changes:
+        before_map, after_map = _format_touched_sources(
+            [(c.path, c.before, c.after) for c in plan.changes]
+        )
+        plan = ChangePlan.from_sources(before_map, after_map)
+    if not dry_run:
+        apply_changes(plan)
     if not quiet:
+        already_set = set(planned.already_applied)
         for spec, new_name in renames.items():
-            print(f"  {spec} -> {new_name}")
-    return count
+            suffix = " (already applied)" if spec in already_set else ""
+            print(f"  {spec} -> {new_name}{suffix}")
+        if dry_run:
+            diff = _format_plan_diff(target, [(c.path, c.before, c.after) for c in plan.changes])
+            if diff:
+                print("\n" + diff.rstrip("\n"))
+    return planned.count, [c.path for c in plan.changes]
+
+
+def _configured_project_formatter(path: Path) -> Optional[str]:
+    """Return ``'ruff'`` or ``'black'`` when configured for ``path``, else ``None``."""
+    from towel.formatting import _ruff_configuration
+    from towel.project_layout import find_project_root, load_pyproject
+
+    ruff_config = _ruff_configuration(path)
+    absolute = path.resolve()
+    folder = absolute if absolute.is_dir() else absolute.parent
+    project_root = find_project_root(path).resolve()
+    black_config: Optional[Path] = None
+    for directory in (folder, *folder.parents):
+        pyproject = load_pyproject(directory)
+        tool = pyproject.get("tool", {}) if isinstance(pyproject, Mapping) else {}
+        if isinstance(tool, Mapping) and isinstance(tool.get("black"), Mapping):
+            black_config = directory / "pyproject.toml"
+            break
+        if directory == project_root:
+            break
+    if ruff_config is None and black_config is None:
+        return None
+    if ruff_config is not None and black_config is None:
+        return "ruff"
+    if black_config is not None and ruff_config is None:
+        return "black"
+    assert ruff_config is not None and black_config is not None
+    if ruff_config.parent in black_config.parent.parents:
+        return "black"
+    if black_config.parent in ruff_config.parent.parents or ruff_config.name != "pyproject.toml":
+        return "ruff"
+    tool = load_pyproject(ruff_config.parent).get("tool", {})
+    ruff_table = tool.get("ruff", {}) if isinstance(tool, Mapping) else {}
+    if isinstance(ruff_table, Mapping) and isinstance(ruff_table.get("format"), Mapping):
+        return "ruff"
+    return "black"
+
+
+def _format_touched_sources(
+    changes: List[Tuple[Path, bytes, bytes]],
+) -> Tuple[Dict[str, bytes], Dict[str, str]]:
+    """Format touched files only when the project configures Ruff or Black."""
+    from towel.formatting import (
+        FormatterUnavailable,
+        _RunFormatTools,
+        _black_for_project,
+        ruff_formatter,
+    )
+    from towel.source_text import decode_source
+
+    before_map: Dict[str, bytes] = {}
+    after_map: Dict[str, str] = {}
+    tools = _RunFormatTools()
+    try:
+        for path, before_bytes, after_bytes in changes:
+            before_map[str(path)] = before_bytes
+            text = decode_source(after_bytes)
+            kind = _configured_project_formatter(path)
+            if kind == "ruff":
+                try:
+                    formatter = ruff_formatter(path)
+                except FormatterUnavailable as error:
+                    raise ValueError(
+                        "Project configures Ruff, but 'ruff' is not installed; "
+                        "install ruff or omit --format"
+                    ) from error
+                rendered = formatter(text)
+                after_map[str(path)] = rendered + "\n" if rendered else text
+            elif kind == "black":
+                try:
+                    choice = _black_for_project(path, "Black", tools)
+                except ImportError as error:
+                    raise ValueError(
+                        "Project configures Black, but 'black' is not installed; "
+                        "install black or omit --format"
+                    ) from error
+                if choice.tool is not None:
+                    rendered = choice.tool(text)
+                    after_map[str(path)] = rendered + "\n" if rendered else text
+                else:
+                    after_map[str(path)] = text
+            else:
+                after_map[str(path)] = text
+    finally:
+        for worker in list(tools._tools.values()):
+            worker.close()
+    return before_map, after_map
+
+
+def _display_touched_path(target: Path, file_path: Path) -> str:
+    resolved = file_path.resolve()
+    cwd = Path.cwd().resolve()
+    if resolved.is_relative_to(cwd):
+        return resolved.relative_to(cwd).as_posix()
+    resolved_target = target.resolve()
+    if resolved.is_relative_to(resolved_target):
+        return str(target / resolved.relative_to(resolved_target))
+    return str(file_path)
+
+
+def _format_restore_hint(target: Path, touched_paths: List[Path]) -> Optional[str]:
+    """One-line command naming the project's configured formatter on touched files, if any."""
+    import shlex
+
+    by_tool: Dict[str, List[str]] = {}
+    for path in touched_paths:
+        kind = _configured_project_formatter(path)
+        if kind is not None:
+            by_tool.setdefault(kind, []).append(_display_touched_path(target, path))
+    if not by_tool:
+        return None
+    commands: List[str] = []
+    if "ruff" in by_tool:
+        commands.append(shlex.join(("ruff", "format", *by_tool["ruff"])))
+    if "black" in by_tool:
+        commands.append(shlex.join(("black", *by_tool["black"])))
+    return f"To restore formatting, run: {' && '.join(commands)}"
+
+
+def _format_plan_diff(target: Path, changes: List[Tuple[Path, bytes, bytes]]) -> str:
+    """Unified diff across staged file changes for human ``--preview`` review."""
+    from difflib import unified_diff
+    from towel.source_text import decode_source
+
+    resolved_target = target.resolve()
+    lines: List[str] = []
+    for path, before_bytes, after_bytes in changes:
+        try:
+            relative = path.resolve().relative_to(resolved_target).as_posix()
+        except ValueError:
+            relative = path.name
+        old = decode_source(before_bytes)
+        new = decode_source(after_bytes)
+        for line in unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"before/{relative}",
+            tofile=f"after/{relative}",
+        ):
+            lines.append(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n")
+    return "".join(lines)
 
 
 def _rename_function_in_directory(
@@ -2741,6 +3214,9 @@ def _run_interactive_llm_mode(
     helpers: List[Tuple[Path, str, int, str]],
     llm_type: str,
     dry_run: bool,
+    *,
+    restrict_selection: bool = False,
+    format_files: bool = False,
 ) -> None:
     """Run interactive mode: generate LLM prompt and apply suggestions."""
     print(f"\nFound {len(helpers)} extracted helper function(s) to rename.\n")
@@ -2758,17 +3234,17 @@ def _run_interactive_llm_mode(
     print("The response should be a JSON object mapping old names to new names.")
     print("You can use file-qualified names (e.g., 'path/to/file.py:func_name') to")
     print("rename functions only in specific files, or just the function name to rename")
-    print("across all files. A class-private helper, '__...' in a class, is named by its")
-    print("class ('path/to/file.py:Class.__func_name') and keeps a name starting with '__'.")
+    print("across all files. Generated parameters use 'path/to/file.py:func_name.__param_0'.")
+    print("A class-private helper, '__...' in a class, is named by its class")
+    print("('path/to/file.py:Class.__func_name') and keeps a name starting with '__'.")
     print()
     print("Example:")
     print('  {"__extracted_func_1": "calculate_total"}')
     print('  {"src/utils.py:__extracted_func_2": "validate_input"}')
+    print('  {"src/utils.py:__extracted_func_2.__param_0": "raw_value"}')
     print('  {"src/box.py:Box.__extracted_func_3": "__scaled_width"}')
     print()
-    print(
-        "Paste the JSON response below, then press ENTER followed by Ctrl+D (or Ctrl+Z on Windows):"
-    )
+    print("Paste the JSON response below, then press ENTER followed by Ctrl+D:")
     print()
 
     llm_response = sys.stdin.read().strip()
@@ -2796,8 +3272,22 @@ def _run_interactive_llm_mode(
     print("\n" + "=" * 70)
     _banner("STEP 2: APPLYING RENAMINGS")
 
-    total_changes = _apply_rename_mappings(target, renames, dry_run, selected_helpers=helpers)
+    try:
+        total_changes, touched_paths = _stage_and_apply_rename_mappings(
+            target,
+            renames,
+            dry_run,
+            selected_helpers=helpers if restrict_selection else None,
+            format_files=format_files,
+        )
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        sys.exit(2)
     print(f"\n{'[PREVIEW] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
+    if not dry_run and not format_files and touched_paths:
+        hint = _format_restore_hint(target, touched_paths)
+        if hint is not None:
+            print(hint)
 
 
 def _generate_llm_prompt(
@@ -2805,56 +3295,83 @@ def _generate_llm_prompt(
     helpers: List[Tuple[Path, str, int, str]],
     llm_type: str,
 ) -> str:
-    """Generate a prompt for an LLM to suggest better function names."""
+    """Generate a prompt for an LLM to suggest better function and parameter names."""
+    intro = (
+        "I have extracted duplicate code into helper functions, and both the functions and their\n"
+        "generated parameters still have placeholder names (__extracted_func_0, __param_0, etc.).\n"
+        "\n"
+        "Please review each helper, its generated parameter keys, and its call site, and suggest\n"
+        "descriptive names for both the helper functions and their __param_N parameters.\n"
+        "The new names should:\n"
+        "- Be descriptive and indicate each function's purpose and each parameter's role\n"
+        "- Follow Python naming conventions (lowercase with underscores)\n"
+        "- Be concise and meaningful, avoiding generic names like 'helper', 'utility', or 'arg'\n"
+        "- Name thunk parameters (called as name() inside the helper) for the value they yield\n"
+        "\n"
+        "Here are the extracted helpers:\n\n"
+    )
 
-    intro = """I have extracted duplicate code into helper functions, but they have generic names like __extracted_func_1, __extracted_func_2, etc.
-
-Please review each function and suggest a better, more descriptive name based on what the function does. The new names should:
-- Be descriptive and indicate the function's purpose
-- Follow Python naming conventions (lowercase with underscores)
-- Be concise but meaningful
-- Avoid generic names like "helper" or "utility"
-
-Here are the extracted functions:
-
-"""
-
-    keys = {
-        (entry["file"], entry["name"], entry["line"]): entry["rename_key"]
+    inventory_entries = {
+        (entry["file"], entry["name"], entry["line"]): entry
         for entry in helper_inventory(target, helpers)["helpers"]
     }
     functions_section = ""
     for i, (file_path, func_name, lineno, source_preview) in enumerate(helpers, 1):
         rel_path = file_path.relative_to(target)
-        key = keys.get((str(rel_path), func_name, lineno), func_name)
+        entry = inventory_entries.get((str(rel_path), func_name, lineno))
+        key = entry["rename_key"] if entry is not None else func_name
+        helper_source = entry["source"] if entry is not None and entry["source"] else source_preview
         functions_section += f"\n{i}. {func_name} ({rel_path}:{lineno}), rename key {key!r}\n"
-        if source_preview:
-            functions_section += "```python\n"
-            functions_section += source_preview + "\n"
-            functions_section += "```\n"
+        if helper_source:
+            functions_section += f"```python\n{helper_source}\n```\n"
+        if entry is not None:
+            generated_params = [
+                param for param in entry["parameters"] if param["name"].startswith("__param_")
+            ]
+            if generated_params:
+                functions_section += "Generated parameter rename keys:\n"
+                for param in generated_params:
+                    detail = ""
+                    if param["kind"] == "thunk":
+                        detail = f" (thunk, called as {param['name']}())"
+                    elif param["kind"] == "lifted":
+                        detail = " (callable)"
+                    samples = [b["expression"] for b in param["bindings"] if b["expression"]][:2]
+                    if samples:
+                        detail += f"; passed {', '.join(samples)}"
+                    functions_section += f"- {param['rename_key']!r}{detail}\n"
+            if entry["calls"] and entry["calls"][0]["statement"]:
+                call = entry["calls"][0]
+                functions_section += (
+                    f"Call site ({call['file']}:{call['line']}):\n"
+                    f"```python\n{call['statement']}\n```\n"
+                )
 
-    output_format = """
-
-Please provide your suggestions as a JSON object mapping old names to new names.
-
-If the same function name appears in multiple files, use file-qualified names (path:function_name)
-to rename them individually. Otherwise, you can use just the function name to rename across all files.
-A helper whose rename key names a class ("path.py:Class.__name") is class-private: use that key, and
-give it a new name that also starts with two underscores (and does not end with two), such as
-"__scaled_width", because the privacy is what keeps subclasses from overriding it.
-
-For example:
-
-```json
-{
-  "src/utils.py:__extracted_func_1": "calculate_total_price",
-  "src/validators.py:__extracted_func_1": "validate_email_format",
-  "__extracted_func_2": "format_date_string"
-}
-```
-
-Only include the JSON object in your response.
-"""
+    output_format = (
+        "\n"
+        "Please provide your suggestions as a JSON object mapping each rename key to its new\n"
+        "name, including both helper keys and generated __param_N parameter keys.\n"
+        "\n"
+        "Use the exact rename keys shown above (such as 'path.py:__extracted_func_0' for a\n"
+        "helper and 'path.py:__extracted_func_0.__param_0' for one of its parameters).\n"
+        "A helper whose rename key names a class ('path.py:Class.__name') is class-private:\n"
+        "use that key, and give it a new name that also starts with two underscores (and does\n"
+        "not end with two), such as '__scaled_width', because privacy keeps subclasses from\n"
+        "overriding it.\n"
+        "\n"
+        "For example:\n"
+        "\n"
+        "```json\n"
+        "{\n"
+        '  "src/utils.py:__extracted_func_1": "calculate_total_price",\n'
+        '  "src/utils.py:__extracted_func_1.__param_0": "tax_rate",\n'
+        '  "src/validators.py:__extracted_func_1": "validate_email_format",\n'
+        '  "__extracted_func_2": "format_date_string"\n'
+        "}\n"
+        "```\n"
+        "\n"
+        "Only include the JSON object in your response.\n"
+    )
 
     return intro + functions_section + output_format
 

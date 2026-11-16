@@ -16,7 +16,7 @@
 
 Audit findings 1 and 2 (user-perspective audit of 1.949): the lifetime rules
 decide what a first run looks like, so a run chooses between relaxed mode,
-the default, and strict mode (docs/DECISIONS.md, "Relaxed mode is the
+the default, and strict mode (docs/design/DECISIONS.md, "Relaxed mode is the
 default; strict mode keeps exact lifetimes"). These tests pin the switch
 itself; what each mode does is pinned in ``test_relaxed_mode.py``.
 """

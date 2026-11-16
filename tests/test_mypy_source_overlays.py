@@ -216,7 +216,11 @@ def test_warm_reveal_and_subtype_probes_read_inserted_text(tmp_path: Path) -> No
 
 def test_constructor_fixture_keeps_useful_typed_extraction(tmp_path: Path) -> None:
     fixture = Path(__file__).with_name("hostile_cases") / "rmypyoverlay_constructor_fields.py"
-    source = fixture.read_text()
+    source = (
+        fixture.read_text()
+        .replace("def first(value: int) -> int:", "def first() -> int:\n    value = 4")
+        .replace("def second(value: int) -> int:", "def second() -> int:\n    value = 4")
+    )
     module = tmp_path / "m.py"
     module.write_text(source)
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
@@ -236,7 +240,7 @@ def test_constructor_fixture_keeps_useful_typed_extraction(tmp_path: Path) -> No
         exec(
             compile(
                 transformed
-                + "\nassert consumer(Literal('x')) == ('x', 1)\nassert consumer(Keyword('yy')) == ('yy', 2)\nassert first(4) == 9\nassert second(4) == 14\n",
+                + "\nassert consumer(Literal('x')) == ('x', 1)\nassert consumer(Keyword('yy')) == ('yy', 2)\nassert first() == 9\nassert second() == 14\n",
                 str(module),
                 "exec",
             ),

@@ -15,7 +15,7 @@
 """Caller refinements constrain boundaries before expensive typed materialization.
 
 The positive examples matter as much as the refusals: a larger invalid window
-must not hide useful code within the narrowed region. See docs/DECISIONS.md,
+must not hide useful code within the narrowed region. See docs/design/DECISIONS.md,
 2026-09-27, for the policy this suite protects.
 
 These expectations are approved design requirements. A changed proposal list
@@ -34,6 +34,7 @@ import textwrap
 
 import pytest
 
+from tests.test_helpers import strict_lifetime_refusal
 from tests.typed_fixtures import CountingMypy, STRICT, apply_one, requires_mypy
 from towel.unification.narrowing import caller_narrowing_leaves_with_block
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -152,9 +153,7 @@ def test_narrowing_and_all_dependent_code_can_move_together(tmp_path: Path) -> N
     """A blanket ban on assertions loses this valid whole computation.
 
     No dependent caller code remains outside the helper, so no fact is lost."""
-    outcome = apply_one(
-        tmp_path,
-        """
+    source = textwrap.dedent("""
         from typing import Callable
 
         def first(value: str | None, transform: Callable[[str], str] = str.upper) -> str:
@@ -166,16 +165,25 @@ def test_narrowing_and_all_dependent_code_can_move_together(tmp_path: Path) -> N
             assert value is not None
             cleaned = value.strip()
             return transform(cleaned)
-        """,
-        pick="first and second",
-    )
-    assert outcome.error is None, outcome.error
-    assert any(isinstance(node, ast.Assert) for node in ast.walk(outcome.helper()))
-    assert outcome.prospective_checks == 1, outcome.checked_helpers
-    assert "Any" not in outcome.signature()
-    assert outcome.module is not None
+        """)
+    if strict_lifetime_refusal():
+        path = tmp_path / "module.py"
+        path.write_text(source)
+        engine = UnificationRefactorEngine(min_lines=2, skip_trivial_helpers=False)
+        assert engine.analyze_file(str(path)) == []
+        assert engine.declined_pairs["lifetime_order_uncertified"] > 0
+        assert path.read_text() == source
+        result = source
+    else:
+        outcome = apply_one(tmp_path, source, pick="first and second")
+        assert outcome.error is None, outcome.error
+        assert any(isinstance(node, ast.Assert) for node in ast.walk(outcome.helper()))
+        assert outcome.prospective_checks == 1, outcome.checked_helpers
+        assert "Any" not in outcome.signature()
+        assert outcome.module is not None
+        result = outcome.module
     namespace: dict[str, object] = {}
-    exec(outcome.module + "\nresult = (first(' AbC '), second(' AbC '))", namespace)
+    exec(result + "\nresult = (first(' AbC '), second(' AbC '))", namespace)
     assert namespace["result"] == ("ABC", "abc")
 
 

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 import textwrap
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise extraction mechanics independently of the usefulness policy.
@@ -54,16 +55,22 @@ def test_module_level_helper_call_from_class_uses_direct_name(tmp_path):
     file_path = tmp_path / "mod.py"
     file_path.write_text(textwrap.dedent(code).strip() + "\n", encoding="utf-8")
     proposals = engine.analyze_files([str(file_path)])
-    assert (
-        proposals
-    ), "Expected at least one proposal for identical methods across unrelated classes"
-    new_src = engine.apply_refactoring(str(file_path), proposals[0])
+    if lifetime_order_certified():
+        assert (
+            proposals
+        ), "Expected at least one proposal for identical methods across unrelated classes"
+        new_src = engine.apply_refactoring(str(file_path), proposals[0])
 
-    # Helper should be defined at module level with standard name
-    assert "def _extracted_func_" in new_src
+        # Helper should be defined at module level with standard name
+        assert "def _extracted_func_" in new_src
 
-    # Calls inside class methods must use the same unmangled module name.
-    assert "return _extracted_func_" in new_src
+        # Calls inside class methods must use the same unmangled module name.
+        assert "return _extracted_func_" in new_src
+    else:
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        new_src = file_path.read_text()
+        assert new_src == textwrap.dedent(code).strip() + "\n"
     namespace: dict[str, Any] = {}
     exec(new_src, namespace)
     assert namespace["A"]().m(3) == 8
@@ -114,12 +121,20 @@ def test_option_b_promotes_equal_literals_in_higher_order_factories(tmp_path):
     file_path = tmp_path / "mod.py"
     file_path.write_text(textwrap.dedent(src).strip() + "\n", encoding="utf-8")
     props = engine.analyze_files([str(file_path)])
-    assert props, "Expected a proposal for identical higher-order patterns"
-    out = engine.apply_refactoring(str(file_path), props[0])
+    if lifetime_order_certified():
+        assert props, "Expected a proposal for identical higher-order patterns"
+        out = engine.apply_refactoring(str(file_path), props[0])
+    else:
+        assert props == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        out = file_path.read_text()
+        assert out == textwrap.dedent(src).strip() + "\n"
     namespace: dict[str, Any] = {}
     exec(out, namespace)
     assert namespace["c"]([1, 5, 6, 10]) == [6, 10]
     assert namespace["d"]([1, 5, 6, 10]) == [6, 10]
+    if not lifetime_order_certified():
+        return
 
     # Extracted helper should take a parameter (e.g., __param_0) and use it when calling make_validator
     mod = ast.parse(out)
@@ -173,12 +188,20 @@ def test_option_b_disabled_keeps_equal_literals_inline(tmp_path):
     file_path = tmp_path / "mod.py"
     file_path.write_text(textwrap.dedent(src).strip() + "\n", encoding="utf-8")
     props = engine.analyze_files([str(file_path)])
-    assert props, "Expected a proposal for identical higher-order patterns"
-    out = engine.apply_refactoring(str(file_path), props[0])
+    if lifetime_order_certified():
+        assert props, "Expected a proposal for identical higher-order patterns"
+        out = engine.apply_refactoring(str(file_path), props[0])
+    else:
+        assert props == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        out = file_path.read_text()
+        assert out == textwrap.dedent(src).strip() + "\n"
     namespace: dict[str, Any] = {}
     exec(out, namespace)
     assert namespace["c"]([1, 5, 6, 10]) == [6, 10]
     assert namespace["d"]([1, 5, 6, 10]) == [6, 10]
+    if not lifetime_order_certified():
+        return
 
     mod = ast.parse(out)
     helpers = [

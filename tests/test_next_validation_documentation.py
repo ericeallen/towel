@@ -39,7 +39,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "tests/release_evidence/post-1772-validation"
-DOCUMENT = ROOT / "docs/proposals/next-validation.md"
+DOCUMENT = ROOT / "docs/design/proposals/next-validation.md"
 COMMIT = "3f09421f2139508c5c9549b6791eca43f30c5c41"
 RUNTIME = "747008c225808e48bfaf97455e1d808e8800aa59"
 TESTS = "829ef595f3249c06d92685ff702ed536e6b6c3a2"

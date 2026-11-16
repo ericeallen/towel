@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -344,7 +345,10 @@ def test_r9p2_a_hard_linked_file_is_left_alone_and_the_rest_refactored_in_place(
     assert run.returncode == 0, (run.stdout, run.stderr)
     assert f"{source.resolve()} has 2 hard links" in run.stderr
     assert run.stderr.count("hard links") == 1, run.stderr
-    assert "not writable in place: its file is hard-linked 1" in run.stdout + run.stderr
+    # Since 2.0 each reason is a line, its code in brackets (audit finding 7).
+    assert re.search(
+        r"^ +1  .*\[not writable in place: its file is hard-linked\]$", run.stdout, re.MULTILINE
+    )
     assert source.read_text() == outside.read_text() == SAFE_DUPLICATES
     assert source.stat().st_ino == outside.stat().st_ino
     assert other.read_text() != SAFE_DUPLICATES

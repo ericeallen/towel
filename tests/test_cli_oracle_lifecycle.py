@@ -108,14 +108,33 @@ def test_cli_reports_the_originals_errors_and_goes_on_to_close_the_checker(
     assert source.read_text() == "value = 3\n" == output.read_text()
 
 
-def test_cancelled_run_never_constructs_checker(
+def test_cancelled_run_closes_its_checker_and_writes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source = tmp_path / "input.py"
+    """Since 2.0 dry asks after the analysis (audit finding 7), so a cancelled run has
+    started its checker; it must still close it, and write nothing."""
+    from towel.unification.fixed_point import Publication
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    source, output = tmp_path / "input.py", tmp_path / "output.py"
     source.write_text("value = 3\n")
-    selector = Mock()
-    monkeypatch.setattr(cli, "_type_oracle", selector)
-    result = invoke(["dry", str(source), str(tmp_path / "output.py"), "--interactive"], stdin="n\n")
-    assert result.status == 1
-    selector.assert_not_called()
-    assert not (tmp_path / "output.py").exists()
+    oracle = Mock(spec=TypeOracle)
+    monkeypatch.setattr(cli, "_type_oracle", lambda path: oracle)
+
+    def finished_run(
+        self: UnificationRefactorEngine, file_path: str, **options: object
+    ) -> tuple[str, int, list[str]]:
+        ask = options["before_publication"]
+        assert callable(ask)
+        ask(Publication(1, (str(output),), output, False))
+        raise AssertionError("a declined run must not publish")
+
+    monkeypatch.setattr(UnificationRefactorEngine, "refactor_to_fixed_point", finished_run)
+    result = invoke(
+        ["dry", str(source), str(output), "--interactive", "--no-format", "--progress", "none"],
+        stdin="n\n",
+    )
+    assert result.status == 1, result.stderr
+    assert "Cancelled; nothing was written." in result.stderr
+    oracle.close.assert_called_once_with()
+    assert not output.exists()

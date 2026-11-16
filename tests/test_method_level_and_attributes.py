@@ -20,6 +20,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_helpers import write_file
 from towel.unification.models import is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -178,4 +179,11 @@ def b(xs):
 
         engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
         proposals = engine.analyze_file(str(src))
-        assert proposals, "Expected proposal from comprehension bodies with differing iter names"
+        if lifetime_order_certified():
+            assert (
+                proposals
+            ), "Expected proposal from comprehension bodies with differing iter names"
+        else:
+            assert proposals == []
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert src.read_text() == code

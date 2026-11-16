@@ -16,7 +16,7 @@
 
 Every import Towel writes, and every question about what an import runs, is
 answered by the model of the program's own imports (``towel.import_model``;
-docs/DECISIONS.md, "Import names come from the program"). A run refactors a
+docs/design/DECISIONS.md, "Import names come from the program"). A run refactors a
 stage, a private copy of the whole project at the same relative places, but
 the model is read from the project itself: the interpreter probe that tells
 an installed copy of a name from the project's own must see the project where

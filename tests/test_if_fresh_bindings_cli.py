@@ -25,6 +25,7 @@ import subprocess
 import sys
 
 import pytest
+from tests.test_helpers import lifetime_order_certified
 from tests.test_helpers import child_mode_flags
 import towel
 
@@ -512,7 +513,21 @@ def test_if_bindings_keep_lexical_errors_and_full_observations(
         records.append(repr((mode, before, after)))
         assert before == after, (case.name, mode, before, after)
     (tmp_path / "observations.txt").write_text("\n".join(records) + "\n")
-    if case.useful:
+    lifetime_refused = not lifetime_order_certified() and case.name in {
+        "five_arguments",
+        "additional_unsafe_caller",
+        "continuation",
+        "nested_if",
+        "callback_condition",
+        "renamed_outputs",
+    }
+    if lifetime_refused:
+        assert transformed == _source(case)
+        assert "lifetime_order_uncertified" in (tmp_path / "source-cli.log").read_text()
+        assert not re.search(
+            r"Applied [1-9]\d* refactoring", (tmp_path / "source-cli.log").read_text()
+        )
+    elif case.useful:
         assert (
             sum(
                 map(
@@ -557,7 +572,7 @@ def test_if_bindings_keep_lexical_errors_and_full_observations(
             )
     helpers = [node for name, node in functions.items() if name.startswith("__extracted_func_")]
     assert all(len(node.args.posonlyargs) + len(node.args.args) <= 5 for node in helpers)
-    if case.name == "five_arguments":
+    if case.name == "five_arguments" and not lifetime_refused:
         assert any(len(node.args.posonlyargs) + len(node.args.args) == 5 for node in helpers)
 
 
@@ -598,7 +613,12 @@ def test_cached_and_uncached_branch_helpers_agree(tmp_path: Path, name: str) -> 
     _, _, cached = _extract(tmp_path, case)
     _, _, uncached = _extract(tmp_path, case, uncached=True)
     assert cached == uncached
-    assert cached != _source(next(case for case in _CASES if case.name == "continuation"))
+    if lifetime_order_certified() or name == "both_arms":
+        assert cached != _source(case)
+    else:
+        assert cached == _source(case)
+        for source in ("source", "uncached"):
+            assert "lifetime_order_uncertified" in (tmp_path / f"{source}-cli.log").read_text()
     assert ast.dump(ast.parse(cached)) == ast.dump(ast.parse(uncached))
 
 

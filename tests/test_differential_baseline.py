@@ -28,6 +28,7 @@ checker cannot type is not changed at all.
 
 from __future__ import annotations
 
+import re
 import ast
 from collections.abc import Callable, Mapping, Sequence
 import importlib.util
@@ -40,7 +41,7 @@ import textwrap
 
 import pytest
 
-from tests.test_helpers import child_mode_flags
+from tests.test_helpers import lifetime_order_certified
 from towel.type_baseline import (
     KnownErrors,
     files_where_names_are_any,
@@ -399,6 +400,35 @@ LOOPS = textwrap.dedent("""
     """).lstrip()
 
 
+# Checker behavior must still be exercised when frame-transfer proofs are unavailable.
+# The original argument-owned fixtures above remain covered separately below.
+LITERAL_TWINS = TWINS.replace("value: int", "").replace("total = value + 1", "total = 2")
+LITERAL_OTHER = "\n\n".join(
+    f"def {name}() -> int:\n"
+    "    count = 1\n"
+    "    count = (count << 2) | 7\n"
+    "    count = count ^ 3\n"
+    "    return count\n"
+    for name in ("third", "fourth")
+)
+
+
+@pytest.mark.parametrize("source", [TWINS, LOOPS], ids=["arguments", "loop"])
+def test_original_owned_calculations_require_a_certified_lifetime_order(
+    tmp_path: Path, source: str
+) -> None:
+    path = tmp_path / "owned.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, annotate_helpers=False)
+    proposals = engine.analyze_file(str(path))
+    if lifetime_order_certified():
+        assert proposals
+    else:
+        assert proposals == []
+        assert "lifetime_order_uncertified" in engine.declined_pairs
+    assert path.read_text() == source
+
+
 def _text_of(sources: Mapping[str, str], name: str) -> str:
     """The text a check was given for the module called ``name``, wherever it was checked."""
     return next(text for path, text in sources.items() if Path(path).name == name)
@@ -409,34 +439,49 @@ def _resolved(path: Path) -> str:
 
 
 @pytest.mark.strict_mode
-def test_a_project_whose_check_reports_errors_is_refactored_with_types(tmp_path: Path) -> None:
+@pytest.mark.parametrize("source", [TWINS, LITERAL_TWINS], ids=["owned", "literal"])
+def test_a_project_whose_check_reports_errors_is_refactored_with_types(
+    tmp_path: Path, source: str
+) -> None:
     """Refused before: 'Original project check reported 1 type error(s)'."""
     program, consumer = tmp_path / "program.py", tmp_path / "consumer.py"
-    program.write_text(TWINS)
+    program.write_text(source)
     consumer.write_text('broken: int = "wrong"\n')
     existing = TypeDiagnostic(_resolved(consumer), "Incompatible types [assignment]", 1)
     oracle = _Oracle(lambda _: CheckSuccess((existing,)))
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=oracle)
-    proposal = engine.analyze_files([str(program), str(consumer)])[0]
+    proposals = engine.analyze_files([str(program), str(consumer)])
+    if source == TWINS and not lifetime_order_certified():
+        assert proposals == []
+        assert "lifetime_order_uncertified" in engine.declined_pairs
+        assert program.read_text() == source
+        assert consumer.read_text() == 'broken: int = "wrong"\n'
+        return
+    proposal = proposals[0]
     written = engine.apply_refactoring(str(program), proposal)
-    _typed_value_helper(written)
+    _typed_value_helper(written, owned=source == TWINS)
     assert oracle.inferences > 0, "the checker was asked what the helper's types are"
     assert len(oracle.checks) >= 2, "one baseline, then the candidate"
-    assert program.read_text() == TWINS and consumer.read_text() == 'broken: int = "wrong"\n'
+    assert program.read_text() == source and consumer.read_text() == 'broken: int = "wrong"\n'
 
 
-def _typed_value_helper(text: str, *, return_type: str | None = None) -> ast.FunctionDef:
+def _typed_value_helper(
+    text: str, *, return_type: str | None = None, owned: bool = False
+) -> ast.FunctionDef:
     helper = next(
         node
         for node in ast.parse(text).body
         if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
     )
     parameters = helper.args.posonlyargs + helper.args.args
-    assert [parameter.arg for parameter in parameters] == ["value", "_towel_owner"]
-    assert isinstance(parameters[0].annotation, ast.Name)
-    assert parameters[0].annotation.id == "int"
-    assert isinstance(parameters[1].annotation, ast.Constant)
-    assert parameters[1].annotation.value == "object"
+    if owned:
+        assert [parameter.arg for parameter in parameters] == ["value", "_towel_owner"]
+        assert isinstance(parameters[0].annotation, ast.Name)
+        assert parameters[0].annotation.id == "int"
+        assert isinstance(parameters[1].annotation, ast.Constant)
+        assert parameters[1].annotation.value == "object"
+    else:
+        assert parameters == []
     if return_type is not None:
         assert isinstance(helper.returns, ast.Name)
         assert helper.returns.id == return_type
@@ -456,8 +501,8 @@ def test_a_change_that_adds_an_error_is_rejected_and_one_that_adds_none_is_accep
     tmp_path: Path,
 ) -> None:
     first, second = tmp_path / "first.py", tmp_path / "second.py"
-    first.write_text(TWINS + WRONG)
-    second.write_text(LOOPS)
+    first.write_text(LITERAL_TWINS + WRONG)
+    second.write_text(LITERAL_OTHER)
 
     def verdict(sources: Mapping[str, str]) -> CheckResult:
         text = _text_of(sources, "first.py")
@@ -477,7 +522,7 @@ def test_a_change_that_adds_an_error_is_rejected_and_one_that_adds_none_is_accep
     )
     assert {Path(path).name for path in results} == {"first.py"}
     assert "_extracted_func" in first.read_text()
-    assert second.read_text() == LOOPS
+    assert second.read_text() == LITERAL_OTHER
     assert engine.run_report.declined_proposals == {"refused by the type checker": 1}
 
 
@@ -515,7 +560,14 @@ PARTIAL = textwrap.dedent("""
         answer = doubled - 3
         return answer + log
     """).lstrip() + WRONG
-"""Safe partials with no parameters or opaque caller locals, plus an untouched error."""
+"""Partials whose three local bindings require the certified cleanup order."""
+
+SINGLE_BINDING_PARTIAL = (
+    PARTIAL.replace("doubled = total * 2", "total = total * 2")
+    .replace("answer = doubled - 3", "total = total - 3")
+    .replace("return answer", "return total")
+)
+"""The same partial-extraction check with only one local binding to retain."""
 
 
 @pytest.mark.strict_mode
@@ -524,13 +576,21 @@ def test_original_owned_partials_do_not_bypass_the_frame_boundary(tmp_path: Path
     path.write_text(OWNED_PARTIAL)
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, annotate_helpers=False)
     assert engine.analyze_file(str(path)) == []
-    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    reason = (
+        "owned_binding_frame_boundary"
+        if lifetime_order_certified()
+        else "lifetime_order_uncertified"
+    )
+    assert reason in engine.declined_pairs
     assert path.read_text() == OWNED_PARTIAL
 
 
 @pytest.mark.parametrize("where_after", ["swapped into the helper", "kept", "moved with its block"])
+@pytest.mark.parametrize(
+    "source", [PARTIAL, SINGLE_BINDING_PARTIAL], ids=["three-locals", "one-local"]
+)
 def test_an_error_only_its_message_matches_is_not_one_the_project_had(
-    tmp_path: Path, where_after: str
+    tmp_path: Path, where_after: str, source: str
 ) -> None:
     """A real extraction, compared line by line where the change left the lines alone.
 
@@ -543,7 +603,7 @@ def test_an_error_only_its_message_matches_is_not_one_the_project_had(
     now in the helper.
     """
     path = tmp_path / "m.py"
-    path.write_text(PARTIAL)
+    path.write_text(source)
     message = "Incompatible types [assignment]"
 
     def verdict(sources: Mapping[str, str]) -> CheckResult:
@@ -561,7 +621,13 @@ def test_an_error_only_its_message_matches_is_not_one_the_project_had(
         return CheckSuccess((TypeDiagnostic(checked, message, line),))
 
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=_Oracle(verdict))
-    proposal = engine.analyze_file(str(path))[0]
+    proposals = engine.analyze_file(str(path))
+    if source == PARTIAL and not lifetime_order_certified():
+        assert proposals == []
+        assert "lifetime_order_uncertified" in engine.declined_pairs
+        assert path.read_text() == source
+        return
+    proposal = proposals[0]
     assert proposal.reused_function is None
     assert len(proposal.replacements) == 2 and "print" not in ast.unparse(
         proposal.extracted_function
@@ -577,14 +643,14 @@ def test_an_error_only_its_message_matches_is_not_one_the_project_had(
             engine.apply_refactoring(str(path), proposal)
     else:
         assert "__extracted_func_0" in engine.apply_refactoring(str(path), proposal)
-    assert path.read_text() == PARTIAL
+    assert path.read_text() == source
 
 
 def test_what_the_original_check_reports_is_said_before_anything_is_changed(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     program = tmp_path / "program.py"
-    program.write_text(TWINS)
+    program.write_text(LITERAL_TWINS)
     errors = tuple(
         TypeDiagnostic(_resolved(tmp_path / f"module_{index % 7}.py"), f"diagnostic {index}", 1)
         for index in range(9)
@@ -607,7 +673,7 @@ def test_a_checker_that_cannot_run_for_a_change_still_refuses_what_it_did_not_ju
     tmp_path: Path,
 ) -> None:
     program = tmp_path / "program.py"
-    program.write_text(TWINS)
+    program.write_text(LITERAL_TWINS)
     existing = TypeDiagnostic(_resolved(program), "Oops [misc]", 1)
 
     def verdict(sources: Mapping[str, str]) -> CheckResult:
@@ -618,7 +684,7 @@ def test_a_checker_that_cannot_run_for_a_change_still_refuses_what_it_did_not_ju
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=_Oracle(verdict))
     with pytest.raises(RefactoringError, match=r"(?s)could not run for 1 proposal.*--no-types"):
         engine.refactor_to_fixed_point(str(program), progress="none")
-    assert program.read_text() == TWINS
+    assert program.read_text() == LITERAL_TWINS
 
 
 def test_a_configured_checker_whose_first_answer_is_old_errors_does_not_speak_for_the_second(
@@ -626,7 +692,7 @@ def test_a_configured_checker_whose_first_answer_is_old_errors_does_not_speak_fo
 ) -> None:
     """Every checker must accept, and pre-existing errors from one are not a rejection."""
     program, consumer = tmp_path / "program.py", tmp_path / "consumer.py"
-    program.write_text(TWINS)
+    program.write_text(LITERAL_TWINS)
     consumer.write_text("value = 1\n")
     existing = TypeDiagnostic(_resolved(consumer), "Old error [misc]", 1)
     primary = _Oracle(lambda _: CheckSuccess((existing,)))
@@ -671,7 +737,7 @@ def test_a_later_change_cannot_spend_an_error_an_earlier_one_removed(tmp_path: P
     stands, whatever the original had.
     """
     program = tmp_path / "program.py"
-    program.write_text(TWINS + "\n\n" + LOOPS)
+    program.write_text(LITERAL_TWINS + "\n\n" + LITERAL_OTHER)
     message = "Unsupported operand [operator]"
 
     def verdict(sources: Mapping[str, str]) -> CheckResult:
@@ -680,7 +746,7 @@ def test_a_later_change_cannot_spend_an_error_an_earlier_one_removed(tmp_path: P
         errors = []
         if text.count("answer = doubled - 3") >= 2:  # the first pair, not yet extracted
             errors.append(TypeDiagnostic(path, message, 1))
-        if text.count("count += item * 3") == 1:  # the second pair, extracted
+        if text.count("count = count ^ 3") == 1:  # the second pair, extracted
             errors.append(TypeDiagnostic(path, message, 1))
         return CheckSuccess(tuple(errors))
 
@@ -689,28 +755,30 @@ def test_a_later_change_cannot_spend_an_error_an_earlier_one_removed(tmp_path: P
     result = program.read_text()
     assert applied == 1
     assert result.count("answer = doubled - 3") == 1, "the first pair was extracted"
-    assert result.count("count += item * 3") == 2, "the second was not"
+    assert result.count("count = count ^ 3") == 2, "the second was not"
 
 
 def test_a_file_whose_imports_the_checker_cannot_resolve_is_left_alone(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     first, second = tmp_path / "first.py", tmp_path / "second.py"
-    first.write_text("import gone\n\n\n" + TWINS)
-    second.write_text(LOOPS)
+    first.write_text("import gone\n\n\n" + LITERAL_TWINS)
+    second.write_text(LITERAL_OTHER)
     unresolved = TypeDiagnostic(
         _resolved(first),
         'Cannot find implementation or library stub for module named "gone"  [import-not-found]',
         1,
     )
     oracle = _Oracle(lambda _: CheckSuccess((unresolved,)))
-    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=oracle)
+    # Relaxed mode's policy, which declines only annotated changes there (the
+    # typed lane); strict mode attempts no change to the file at all.
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=oracle, strict=False)
     caplog.set_level(logging.WARNING, logger="towel")
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path), str(tmp_path), progress="none"
     )
     assert {Path(path).name for path in results} == {"second.py"}
-    assert first.read_text() == "import gone\n\n\n" + TWINS
+    assert first.read_text() == "import gone\n\n\n" + LITERAL_TWINS
     assert engine.run_report.declined_proposals == {
         "not verifiable: its file holds a name the type checker cannot type": 1
     }
@@ -736,6 +804,8 @@ def _mypy_run(tmp_path: Path, source: str) -> tuple[str, int]:
             skip_trivial_helpers=False, min_lines=3, type_oracle=oracle
         )
         _, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+        if not applied:
+            assert engine.run_report.declined_proposals == {"refused by the type checker": 1}
     finally:
         oracle.close()
     return path.read_text(encoding="utf-8"), applied
@@ -749,41 +819,41 @@ def test_mypy_an_error_below_the_helper_moves_with_it_and_is_still_the_same_erro
     written, applied = _mypy_run(
         tmp_path,
         """
-        def first(value: int) -> int:
-            total = value + 1
+        def first() -> int:
+            total = 2
             doubled = total * 2
             answer = doubled - 3
             return answer
 
 
-        def second(value: int) -> int:
-            total = value + 1
+        def second() -> int:
+            total = 2
             doubled = total * 2
             answer = doubled - 3
             return answer
 
 
-        WRONG: str = first(1)
+        WRONG: str = first()
         """,
     )
     assert applied == 1
     _typed_value_helper(written, return_type="int")
-    assert "WRONG: str = first(1)" in written
+    assert "WRONG: str = first()" in written
 
 
 @requires_mypy
 def test_mypy_a_message_naming_a_line_the_change_moves_fails_closed(tmp_path: Path) -> None:
-    """``already defined on line 15`` becomes ``on line 21``: a new error, so no change."""
+    """The line named by ``already defined on line 15`` moves: a new error, so no change."""
     source = """
-        def first(value: int) -> int:
-            total = value + 1
+        def first() -> int:
+            total = 2
             doubled = total * 2
             answer = doubled - 3
             return answer
 
 
-        def second(value: int) -> int:
-            total = value + 1
+        def second() -> int:
+            total = 2
             doubled = total * 2
             answer = doubled - 3
             return answer
@@ -810,15 +880,15 @@ def test_mypy_a_message_naming_a_line_the_change_leaves_in_place_is_the_same_err
         flag = 1
 
 
-        def first(value: int) -> int:
-            total = value + 1
+        def first() -> int:
+            total = 2
             doubled = total * 2
             answer = doubled - 3
             return answer
 
 
-        def second(value: int) -> int:
-            total = value + 1
+        def second() -> int:
+            total = 2
             doubled = total * 2
             answer = doubled - 3
             return answer
@@ -866,7 +936,7 @@ def test_the_cold_confirmation_compares_with_what_the_project_already_reports(
     """An error there all along confirms nothing wrong; one only the cold check sees still does."""
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n", encoding="utf-8")
     path = tmp_path / "m.py"
-    original = TWINS + "\n\nWRONG = 1\n"
+    original = LITERAL_TWINS + "\n\nWRONG = 1\n"
     path.write_text(original, encoding="utf-8")
     oracle = _WithAnOldError(only_cold="invented: missed while warm" if missed_while_warm else "")
     try:
@@ -925,7 +995,7 @@ def test_an_error_only_a_cold_check_reports_is_loud_only_if_the_original_lacks_i
     """A cold-only error the original has too is the checker's mode, not the run's doing."""
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n", encoding="utf-8")
     path = tmp_path / "m.py"
-    path.write_text(TWINS, encoding="utf-8")
+    path.write_text(LITERAL_TWINS, encoding="utf-8")
     oracle = _ColdSeesMore(only_with_the_change=only_with_the_change)
     try:
         engine = UnificationRefactorEngine(
@@ -936,7 +1006,7 @@ def test_an_error_only_a_cold_check_reports_is_loud_only_if_the_original_lacks_i
                 RefactoringError, match="did not report while the run was in progress"
             ):
                 engine.refactor_to_fixed_point(str(path), progress="none")
-            assert path.read_text(encoding="utf-8") == TWINS, "nothing was written"
+            assert path.read_text(encoding="utf-8") == LITERAL_TWINS, "nothing was written"
         else:
             _, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
             assert applied == 1 and "__extracted_func_0" in path.read_text(encoding="utf-8")
@@ -948,9 +1018,9 @@ def test_an_error_only_a_cold_check_reports_is_loud_only_if_the_original_lacks_i
 PACKAGING = '[project]\nname = "pkg"\nversion = "0"\nrequires-python = ">=3.11"\n'
 
 CLI_CALCULATIONS = "\n\n".join(
-    f"def {name}(value: int) -> int:\n"
+    f"def {name}() -> int:\n"
     + textwrap.indent(
-        "total = value + 1\n"
+        "total = 2\n"
         "doubled = total * 2\n"
         "answer = doubled - 3\n"
         "offset = answer + 7\n"
@@ -965,7 +1035,6 @@ CLI_CALCULATIONS = "\n\n".join(
 """The real CLI must exercise baseline typing with its normal usefulness policy."""
 
 
-@pytest.mark.strict_mode
 @requires_mypy
 def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     tmp_path: Path,
@@ -980,7 +1049,8 @@ def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     (package / "seen.py").write_text(CLI_CALCULATIONS, encoding="utf-8")
     run = subprocess.run(
         [sys.executable, "-c", "from towel.cli import main; main()", "dry", "pkg", "pkg"]
-        + ["--no-format", "--no-interactive", "--progress", "none", *child_mode_flags()],
+        # Relaxed mode's typed policy (the typed lane), whatever the suite's default.
+        + ["--no-format", "--no-interactive", "--progress", "none", "--no-strict"],
         cwd=tmp_path,
         env={**os.environ, "TOWEL_WORKERS": "1"},
         capture_output=True,
@@ -997,6 +1067,13 @@ def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     )
     seen = (package / "seen.py").read_text(encoding="utf-8")
     _typed_value_helper(seen, return_type="int")
-    assert "The type checker could not verify 1 proposed refactoring(s)" in run.stdout
+    # Since 2.0 each reason is a line, its code in brackets (audit finding 7),
+    # with the typed lane's sentence, first problem and remedy.
+    assert re.search(
+        r"^ +1  The type checker could not verify the proposed refactoring\(s\).*"
+        r"\[not verifiable: its file holds a name the type checker cannot type\]$",
+        run.stdout,
+        re.MULTILINE,
+    )
     assert 'module named "towel_absent_module"' in run.stdout
     assert "--no-types" in run.stdout

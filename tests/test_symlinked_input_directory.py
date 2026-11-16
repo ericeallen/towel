@@ -55,7 +55,12 @@ BODY = """    total = 0
     total = total // 61
     return total
 """
-MODULE = "def a1(items):\n" + BODY.format(factor=2) + "\n\ndef a2(items):\n" + BODY.format(factor=3)
+MODULE = (
+    "items = [1, 2, 3]\n\ndef a1():\n"
+    + BODY.format(factor=2)
+    + "\n\ndef a2():\n"
+    + BODY.format(factor=3)
+)
 LINKED = "def b1(items):\n" + BODY.format(factor=2)
 
 
@@ -126,7 +131,8 @@ def test_cli_dry_follows_a_symlinked_input_directory_but_not_links_inside_it(
     )
     assert status == 0, stdout
     assert "Applied 1 refactoring(s) across 1 file(s)" in stdout
-    assert f"{out / 'pkg' / 'a.py'}: 1 refactoring(s)" in stdout
+    # Since 2.0 the summary names files relative to the target (audit finding 7).
+    assert f"\n  {Path('pkg') / 'a.py'}: 1 refactoring(s)\n" in stdout
     assert "b.py" not in stdout
     _assert_output_tree(out, layout)
 

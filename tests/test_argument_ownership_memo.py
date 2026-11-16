@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import dataclasses
 import gc
 import hashlib
@@ -25,10 +26,11 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from types import CodeType, FunctionType
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 import pytest
 
+from tests.test_helpers import child_mode_flags, lifetime_order_certified
 from towel.unification import argument_ownership
 from towel.unification.argument_ownership import (
     ArgumentHandoffMemo,
@@ -90,11 +92,37 @@ def _plan(inputs: _Inputs, memo: ArgumentHandoffMemo) -> Optional[ArgumentHandof
     )
 
 
+def _raw_helper_compilation(
+    helper: ast.FunctionDef, category: type[Warning], policy: Literal["always", "error"] = "always"
+) -> tuple[CodeType | None, int]:
+    """Measure this interpreter's compiler independently of Towel's caches."""
+    module = ast.fix_missing_locations(ast.Module(body=[copy.deepcopy(helper)], type_ignores=[]))
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter(policy, category)
+        try:
+            compiled = compile(module, "<raw-ownership-test>", "exec", dont_inherit=True)
+        except (SyntaxError, TypeError, ValueError):
+            code = None
+        else:
+            code = next(value for value in compiled.co_consts if isinstance(value, CodeType))
+    return code, sum(issubclass(item.category, category) for item in emitted)
+
+
+def _refuses_uncertified_handoff(inputs: _Inputs, memo: ArgumentHandoffMemo) -> bool:
+    if argument_ownership._supported_runtime():
+        return False
+    assert _plan(inputs, memo) is None
+    assert _plan(inputs, ArgumentHandoffMemo(limit=0)) is None
+    return True
+
+
 def test_exact_certificate_hits_and_disabled_cache_preserve_the_immutable_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inputs = _inputs()
     memo = ArgumentHandoffMemo()
+    if _refuses_uncertified_handoff(inputs, memo):
+        return
     compute = argument_ownership._certify_argument_handoff
     calls = 0
 
@@ -122,6 +150,8 @@ def test_exact_generated_locations_and_observed_source_digest_are_not_merged(
 ) -> None:
     inputs = _inputs()
     memo = ArgumentHandoffMemo()
+    if _refuses_uncertified_handoff(inputs, memo):
+        return
     compute = argument_ownership._certify_argument_handoff
     calls = 0
 
@@ -146,6 +176,8 @@ def test_warmed_certificate_still_checks_runtime_scope_and_whole_body(
 ) -> None:
     inputs = _inputs()
     memo = ArgumentHandoffMemo()
+    if _refuses_uncertified_handoff(inputs, memo):
+        return
     assert _plan(inputs, memo) is not None
     supported = argument_ownership._supported_runtime
     monkeypatch.setattr(argument_ownership, "_supported_runtime", lambda: False)
@@ -172,6 +204,8 @@ def test_helper_compiler_facts_repeat_only_for_the_exact_generated_helper(
 ) -> None:
     inputs = _inputs()
     memo = ArgumentHandoffMemo()
+    if _refuses_uncertified_handoff(inputs, memo):
+        return
     compile_codes = argument_ownership._compiled_codes
     helpers_compiled = 0
 
@@ -196,6 +230,39 @@ def test_helper_compiler_facts_repeat_only_for_the_exact_generated_helper(
     assert helpers_compiled == 3
 
 
+def test_helper_cache_only_reuses_reviewed_warning_free_compiler_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = _inputs()
+    memo = ArgumentHandoffMemo()
+    key = argument_ownership._HandoffKey(
+        inputs.digest,
+        exact_dump(inputs.function),
+        exact_dump(inputs.call),
+        exact_dump(inputs.helper),
+        parser_configuration(),
+    )
+    compile_codes = argument_ownership._compiled_codes
+    calls = 0
+
+    def counted(module: ast.AST) -> tuple[CodeType, ...]:
+        nonlocal calls
+        calls += 1
+        return compile_codes(module)
+
+    monkeypatch.setattr(argument_ownership, "_compiled_codes", counted)
+    first = memo._helper_code(inputs.helper, key)
+    second = memo._helper_code(inputs.helper, key)
+    assert first is not None and second is not None
+    assert first.co_code == second.co_code and first.co_consts == second.co_consts
+    if argument_ownership._compilation_cannot_warn(inputs.helper):
+        assert calls == 1
+        assert first is second
+    else:
+        assert calls == 2
+        assert first is not second
+
+
 def test_changed_helper_cell_binding_does_not_inherit_a_fresh_thunk_permission() -> None:
     original = _inputs()
     helper = ast.parse("def helper(thunk): return thunk()").body[0]
@@ -204,6 +271,8 @@ def test_changed_helper_cell_binding_does_not_inherit_a_fresh_thunk_permission()
         original, call=ast.parse("return helper(lambda: value)").body[0], helper=helper
     )
     memo = ArgumentHandoffMemo()
+    if _refuses_uncertified_handoff(inputs, memo):
+        return
     assert _plan(inputs, memo) is not None
     capturing = ast.parse(
         "def helper(thunk):\n    def inner(): return thunk()\n    return inner()\n"
@@ -217,6 +286,8 @@ def test_parser_limit_change_and_oversized_keys_compute_fresh_certificates(
 ) -> None:
     inputs = _inputs()
     memo = ArgumentHandoffMemo()
+    if _refuses_uncertified_handoff(inputs, memo):
+        return
     first = _plan(inputs, memo)
     assert first is not None
     previous = sys.getrecursionlimit()
@@ -267,23 +338,41 @@ def test_warning_capable_helper_compilation_preserves_every_warning_and_error_po
         exact_dump(helper),
         parser_configuration(),
     )
+    raw_code, warning_count = _raw_helper_compilation(helper, SyntaxWarning)
+    assert raw_code is not None
+    if argument_ownership._supported_runtime():
+        assert warning_count == 1
     for mode in ("uncached-plan", "memo-plan", "memo-helper"):
         counts = []
         for _ in range(2):
             with warnings.catch_warnings(record=True) as emitted:
                 warnings.simplefilter("always", SyntaxWarning)
                 if mode == "uncached-plan":
-                    assert _plan(inputs, ArgumentHandoffMemo(limit=0)) is not None
+                    plan = _plan(inputs, ArgumentHandoffMemo(limit=0))
+                    assert (plan is not None) is argument_ownership._supported_runtime()
                 elif mode == "memo-plan":
-                    assert _plan(inputs, memo) is not None
+                    plan = _plan(inputs, memo)
+                    assert (plan is not None) is argument_ownership._supported_runtime()
                 else:
                     assert memo._helper_code(helper, key) is not None
                 counts.append(sum(issubclass(item.category, SyntaxWarning) for item in emitted))
-        assert counts == [1, 1], (body, mode, counts)
+        expected = (
+            [warning_count, warning_count]
+            if mode == "memo-helper" or argument_ownership._supported_runtime()
+            else [0, 0]
+        )
+        assert counts == expected, (body, mode, counts)
     with warnings.catch_warnings():
         warnings.simplefilter("error", SyntaxWarning)
         assert _plan(inputs, memo) is None
-        assert memo._helper_code(helper, key) is None
+        cached = memo._helper_code(helper, key)
+        if argument_ownership._supported_runtime():
+            assert cached is None
+        else:
+            raw, _ = _raw_helper_compilation(helper, SyntaxWarning, "error")
+            assert (cached is None) is (raw is None)
+            if cached is not None and raw is not None:
+                assert cached.co_code == raw.co_code and cached.co_consts == raw.co_consts
 
 
 def test_missing_helper_expression_context_is_not_normalized_into_a_warmed_key() -> None:
@@ -292,6 +381,8 @@ def test_missing_helper_expression_context_is_not_normalized_into_a_warmed_key()
     assert isinstance(helper, ast.FunctionDef)
     inputs = dataclasses.replace(original, helper=helper)
     memo = ArgumentHandoffMemo()
+    if _refuses_uncertified_handoff(inputs, memo):
+        return
     first = _plan(inputs, memo)
     assert first is not None
     value = helper.body[0]
@@ -326,17 +417,25 @@ def test_boolean_inversion_preserves_compiler_deprecations_and_error_policy(oper
             with warnings.catch_warnings(record=True) as emitted:
                 warnings.simplefilter("always", DeprecationWarning)
                 if mode == "uncached-plan":
-                    assert _plan(inputs, ArgumentHandoffMemo(limit=0)) is not None
+                    plan = _plan(inputs, ArgumentHandoffMemo(limit=0))
+                    assert (plan is not None) is argument_ownership._supported_runtime()
                 elif mode == "memo-plan":
-                    assert _plan(inputs, memo) is not None
+                    plan = _plan(inputs, memo)
+                    assert (plan is not None) is argument_ownership._supported_runtime()
                 else:
                     assert memo._helper_code(helper, key) is not None
                 repeated.append(
                     sum(issubclass(item.category, DeprecationWarning) for item in emitted)
                 )
         counts.append(repeated)
-    expected = [1, 1] if sys.version_info >= (3, 12) else [0, 0]
-    assert counts == [expected, expected, expected]
+    if argument_ownership._supported_runtime():
+        expected = [1, 1] if sys.version_info >= (3, 12) else [0, 0]
+    else:
+        raw, warning_count = _raw_helper_compilation(helper, DeprecationWarning)
+        assert raw is not None
+        expected = [warning_count, warning_count]
+    plan_expected = expected if argument_ownership._supported_runtime() else [0, 0]
+    assert counts == [plan_expected, plan_expected, expected]
     if sys.version_info >= (3, 12):
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
@@ -359,7 +458,10 @@ def test_wide_hexadecimal_body_is_certified_without_changing_integer_limits() ->
     inputs = dataclasses.replace(original, helper=helper)
     previous = sys.get_int_max_str_digits()
     first = _plan(inputs, ArgumentHandoffMemo(limit=0))
-    assert first is not None and _plan(inputs, ArgumentHandoffMemo()) == first
+    if argument_ownership._supported_runtime():
+        assert first is not None and _plan(inputs, ArgumentHandoffMemo()) == first
+    else:
+        assert first is None and _plan(inputs, ArgumentHandoffMemo()) is None
     assert sys.get_int_max_str_digits() == previous
 
 
@@ -402,6 +504,7 @@ def test_complete_cli_preserves_wide_defaults_and_explicit_call_results(tmp_path
             "--no-format",
             "--progress",
             "none",
+            *child_mode_flags(),
         ],
         capture_output=True,
         text=True,
@@ -409,7 +512,11 @@ def test_complete_cli_preserves_wide_defaults_and_explicit_call_results(tmp_path
         env={**os.environ, "TOWEL_WORKERS": "1"},
     )
     assert result.returncode == 0, result.stderr
-    assert "Applied 1 refactoring" in result.stdout
+    if lifetime_order_certified():
+        assert "Applied 1 refactoring" in result.stdout
+    else:
+        assert "lifetime_order_uncertified" in result.stdout
+        assert output.read_text() == source
     before: dict[str, object] = {}
     after: dict[str, object] = {}
     exec(source, before)
@@ -440,8 +547,12 @@ def test_same_spelled_functions_in_other_binding_contexts_keep_their_own_proof(
     source: str, accepted: bool
 ) -> None:
     memo = ArgumentHandoffMemo()
-    assert _plan(_inputs(), memo) is not None
     current = _inputs(source)
+    if not argument_ownership._supported_runtime():
+        assert _refuses_uncertified_handoff(_inputs(), memo)
+        assert _refuses_uncertified_handoff(current, memo)
+        return
+    assert _plan(_inputs(), memo) is not None
     cached = _plan(current, memo)
     assert (cached is not None) is accepted
     assert cached == _plan(current, ArgumentHandoffMemo(limit=0))
@@ -452,6 +563,8 @@ def test_same_spelled_functions_in_other_binding_contexts_keep_their_own_proof(
 def test_eviction_and_source_graph_lifetime_do_not_pin_or_change_certificates() -> None:
     inputs = _inputs()
     memo = ArgumentHandoffMemo(limit=1)
+    if _refuses_uncertified_handoff(inputs, memo):
+        return
     first = _plan(inputs, memo)
     assert first is not None
     changed = dataclasses.replace(inputs, call=ast.parse("return helper(value + 1)").body[0])
@@ -483,8 +596,13 @@ def test_repetitive_candidates_and_materialized_source_match_without_ownership_s
         engine = UnificationRefactorEngine(settings=settings)
         engine._argument_handoff_memo = ArgumentHandoffMemo(limit=limit)
         proposals = engine.analyze_files([str(path)], progress="none")
-        assert len(proposals) == 1
-        output = engine.apply_refactoring(str(path), proposals[0])
+        if lifetime_order_certified():
+            assert len(proposals) == 1
+            output = engine.apply_refactoring(str(path), proposals[0])
+        else:
+            assert proposals == []
+            assert "lifetime_order_uncertified" in engine.declined_pairs
+            output = path.read_text()
         results.append(
             (
                 tuple(proposal_identity(proposal) for proposal in proposals),

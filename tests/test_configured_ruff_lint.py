@@ -25,25 +25,8 @@ from tests.test_cli_integration import invoke
 from towel.formatting import LintRejected, file_finisher_for_project
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-# Reuse of an existing function adds no helper warning. Decorators keep these
-# fixtures on the fresh-helper path whose Ruff baseline is being tested.
-DUPLICATED_LABELS = """def identity(function):
-    return function
-
-@identity
-def first(label, pos):
-    if len(label) > 100:
-        raise ValueError("too long")
-    cp = ord(label[pos])
-    return cp
-
-@identity
-def second(label, pos):
-    if len(label) > 100:
-        raise ValueError("too long")
-    cp = ord(label[pos])
-    return cp
-"""
+# Known literal inputs reach Ruff independently of caller-lifetime transfer.
+DUPLICATED_LABELS = 'def first():\n    label = "first"\n    pos = 0\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n\ndef second():\n    label = "second"\n    pos = 0\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n'
 
 
 def _module(root: Path, source: str, rules: str) -> Path:

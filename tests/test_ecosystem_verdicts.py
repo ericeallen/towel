@@ -34,7 +34,7 @@ from typing import Callable, Optional, Sequence
 import pytest
 
 from scripts import ecosystem_check as ecosystem
-from towel.cli import _print_declined
+from towel.cli_reporting import reason_lines
 from towel.type_baseline import names_any_warning, pre_existing_summary, unlooked_warning
 from towel.type_inference import CheckFailure, TypeDiagnostic
 from towel.unification.exceptions import RefactoringError
@@ -995,7 +995,7 @@ def _current_pre_existing_report(root: Path, *, strict: bool) -> str:
             )
         )
         print("Applied 1 refactoring(s) across 1 file(s)")
-        _print_declined(
+        for line in reason_lines(
             RunReport(
                 declined_proposals={
                     "not verifiable: its file holds a name the type checker cannot type": 2,
@@ -1003,8 +1003,9 @@ def _current_pre_existing_report(root: Path, *, strict: bool) -> str:
                     "refused by the type checker": 1,
                 }
             ),
-            applied=1,
-        )
+            pairs=False,
+        ):
+            print(line)
     return output.getvalue()
 
 
@@ -1016,6 +1017,24 @@ def _current_checker_failure(root: Path) -> str:
     with pytest.raises(RefactoringError) as error:
         engine.begin_refactoring_run([str(path)])
     return f"Error: {error.value}\n"
+
+
+PRE_EXISTING_REPORT_2_0 = LEGACY_PRE_EXISTING_REPORT[
+    : LEGACY_PRE_EXISTING_REPORT.index("Declined (DEBUG_PROPOSAL_REJECTIONS")
+] + (
+    "\nWhy code was left alone (most frequent first; --explain locates each place):\n"
+    "  2  Its file uses a name the type checker cannot type, such as an import it cannot"
+    " resolve, so a change there could not be checked. [not verifiable: its file holds a name"
+    " the type checker cannot type]\n"
+    "     What you can do: Install the package or its stubs where the type checker can find"
+    " them.\n"
+    "  1  The project's type checker reported a new error with the helper in place."
+    " [refused by the type checker]\n"
+    "  1  The type checker takes this code to be unreachable on the platform and Python"
+    " version it checks for, so a change to it could not be checked. [not verifiable: the type"
+    " checker does not look at the code it changes]\n"
+)
+"""The same report as Towel 2.0 prints its reasons: one line each, its code in brackets."""
 
 
 @pytest.mark.parametrize(
@@ -1099,15 +1118,23 @@ def test_a_project_whose_checker_cannot_run_is_rerun_without_types(
     assert result.after is not None and result.pre_existing is None
 
 
-@pytest.mark.parametrize("wording", ["relaxed", "strict", "historical"])
+@pytest.mark.parametrize("wording", ["relaxed", "strict", "historical", "2.0-literal"])
 def test_a_project_whose_check_has_errors_is_refactored_with_types_and_recorded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wording: str
 ) -> None:
-    """Round 2 finding 1: current relaxed/strict messages retain every recorded count."""
+    """Round 2 finding 1: current relaxed/strict messages retain every recorded count.
+
+    Towel 2.0 prints each reason as a sentence with its code in brackets; the
+    harness reads the counts from both forms.
+    """
     report = (
         LEGACY_PRE_EXISTING_REPORT
         if wording == "historical"
-        else _current_pre_existing_report(tmp_path, strict=wording == "strict")
+        else (
+            PRE_EXISTING_REPORT_2_0
+            if wording == "2.0-literal"
+            else _current_pre_existing_report(tmp_path, strict=wording == "strict")
+        )
     )
     result = _check(
         tmp_path,

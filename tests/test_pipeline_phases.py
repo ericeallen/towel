@@ -21,7 +21,7 @@ import contextlib
 import io
 import pytest
 
-from tests.test_helpers import PROJECT_ROOT, example_paths
+from tests.test_helpers import PROJECT_ROOT, example_paths, strict_lifetime_refusal
 from towel.unification.pipeline import (
     parse_modules,
     analyze_scopes,
@@ -292,6 +292,35 @@ class TestPairBlocks:
         assert len(pairs) == 48
 
 
+_ALL_WINDOW_RANGES = [
+    ((11, 22), (28, 39), (45, 56)),
+    ((14, 22), (31, 39), (48, 56)),
+    ((14, 21), (31, 38), (48, 55)),
+    ((16, 22), (33, 39), (50, 56)),
+    ((14, 19), (31, 36), (48, 53)),
+    ((16, 21), (33, 38), (50, 55)),
+    ((18, 22), (35, 39), (52, 56)),
+    ((14, 17), (31, 34), (48, 51)),
+    ((14, 17), (33, 36), (50, 53)),
+    ((16, 19), (31, 34), (48, 51)),
+    ((16, 19), (33, 36), (50, 53)),
+    ((18, 21), (35, 38), (52, 55)),
+    ((28, 39), (45, 56), (11, 22)),
+    ((31, 34), (50, 53), (16, 19)),
+    ((33, 36), (48, 51), (14, 17)),
+]
+"""Every proposal's replacement ranges for example1_simple.py, in proposal order."""
+
+_WHOLE_BODY_RANGES = [((11, 22), (28, 39), (45, 56)), ((28, 39), (45, 56), (11, 22))]
+"""The three complete bodies, as the user/admin and the admin/guest pairs propose them."""
+
+
+def _expected_descriptions() -> list[str]:
+    """Twelve user/admin windows and three admin/guest ones, less the declined whole bodies."""
+    declined = 1 if strict_lifetime_refusal() else 0
+    return [USER_ADMIN] * (12 - declined) + [ADMIN_GUEST] * (3 - declined)
+
+
 class TestUnifyBlocks:
     """Test unify_blocks phase in isolation."""
 
@@ -308,26 +337,16 @@ class TestUnifyBlocks:
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
         # Audit D1: text parameters also admit windows containing the final
         # f-string, including the complete bodies. Mixed guard windows remain.
-        assert descriptions(proposals) == [USER_ADMIN] * 12 + [ADMIN_GUEST] * 3
+        # The complete bodies hand ``user_id`` to the helper, which strict mode
+        # declines where release order is uncertified (3.14 and later).
+        assert descriptions(proposals) == _expected_descriptions()
         assert [
             tuple(replacement.line_range for replacement in proposal.replacements)
             for proposal in proposals
         ] == [
-            ((11, 22), (28, 39), (45, 56)),
-            ((14, 22), (31, 39), (48, 56)),
-            ((14, 21), (31, 38), (48, 55)),
-            ((16, 22), (33, 39), (50, 56)),
-            ((14, 19), (31, 36), (48, 53)),
-            ((16, 21), (33, 38), (50, 55)),
-            ((18, 22), (35, 39), (52, 56)),
-            ((14, 17), (31, 34), (48, 51)),
-            ((14, 17), (33, 36), (50, 53)),
-            ((16, 19), (31, 34), (48, 51)),
-            ((16, 19), (33, 36), (50, 53)),
-            ((18, 21), (35, 38), (52, 55)),
-            ((28, 39), (45, 56), (11, 22)),
-            ((31, 34), (50, 53), (16, 19)),
-            ((33, 36), (48, 51), (14, 17)),
+            ranges
+            for ranges in _ALL_WINDOW_RANGES
+            if not (strict_lifetime_refusal() and ranges in _WHOLE_BODY_RANGES)
         ]
         baseline = observed_process_output(mods[0].source)
         for proposal in proposals:
@@ -351,8 +370,9 @@ class TestFilterOverlaps:
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
 
         filtered = filter_overlaps(proposals)
-        # Audit D1: the fifteen valid overlapping windows still collapse to one.
-        assert descriptions(proposals) == [USER_ADMIN] * 12 + [ADMIN_GUEST] * 3
+        # Audit D1: the fifteen valid overlapping windows (thirteen where strict
+        # mode declines the complete bodies) still collapse to one.
+        assert descriptions(proposals) == _expected_descriptions()
         assert isinstance(filtered, list)
         assert descriptions(filtered) == [USER_ADMIN]
 
