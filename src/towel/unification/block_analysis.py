@@ -100,6 +100,7 @@ from .structural_memo import load_substitution, store_substitution
 from .ast_paths import has_shared_expressions
 from .expression_sites import (
     expression_signature,
+    is_expression_block,
     expression_sites,
     in_exact_truth_form,
     standing_block,
@@ -997,9 +998,16 @@ class BlockAnalysis(EngineState):
     ) -> BlockBindingSnapshot:
         """Aggregate binding stats for a block."""
 
-        bound_in_block, reassigned_in_block = _collect_block_binding_stats(
-            block_nodes, reassignments
-        )
+        if is_expression_block(block_nodes):
+            # An expression candidate binds nothing in its function: it holds
+            # no assignment expression, and a comprehension's targets and a
+            # lambda's parameters are their own.
+            bound_in_block: Set[str] = set()
+            reassigned_in_block: Set[str] = set()
+        else:
+            bound_in_block, reassigned_in_block = _collect_block_binding_stats(
+                block_nodes, reassignments
+            )
 
         first, last = block_nodes[0], block_nodes[-1]
         start = (first.lineno, first.col_offset)

@@ -302,6 +302,12 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         " value yet; the error raised then would change from UnboundLocalError to NameError.",
         "Assign the variable on every path before the block.",
     ),
+    RejectReason.TRUTH_TEST_REPEATED: _says(
+        "With --strict: the expression decides an if or while at one place and gives a value"
+        " at another, and one helper cannot serve both: returning the value would test a"
+        " value's truth twice at the first place.",
+        "Without --strict the expression is extracted.",
+    ),
     RejectReason.UNDEFINED_NAMES_IN_CALL: _says(
         "The call replacing the block would use a name that does not exist where the call"
         " stands."

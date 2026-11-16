@@ -56,7 +56,9 @@ from .class_private import (
     mangled,
     rewritten_identifiers,
 )
+from .expression_sites import comprehension_locals, expression_site, is_expression_block
 from .definite_assignment import (
+    definitely_bound_in_header,
     definitely_bound_after,
     definitely_bound_before,
     locally_bound_names,
@@ -141,6 +143,10 @@ def nested_bindings_escape(function: FunctionNode, nodes: Iterable[ast.AST]) -> 
     """
     block = tuple(nodes)
     if all(node in function.body for node in block):
+        return False
+    if is_expression_block(block):
+        # An expression candidate holds no assignment expression, and the
+        # targets of its comprehensions and lambdas are theirs alone.
         return False
     extracted = {child for statement in block for child in ast.walk(statement)}
     detector = BindingDetector()
@@ -1135,6 +1141,24 @@ def is_eagerly_evaluable(expression: ast.AST, available: AbstractSet[str]) -> bo
     return False
 
 
+def bound_where_block_stands(function: FunctionNode, block: Sequence[ast.stmt]) -> Set[str]:
+    """The function's own names bound on every path to where ``block`` stands.
+
+    For statements, the names bound before the first. For an expression
+    candidate, the names bound where its statement's header is evaluated
+    (``definitely_bound_in_header``), less the targets of an enclosing
+    comprehension that are still unassigned there, which hide the function's
+    variables of the same names, plus the targets already bound.
+    """
+    if not block:
+        return set()
+    site = expression_site(block)
+    if site is None:
+        return definitely_bound_before(function, block[0])
+    bound = definitely_bound_in_header(function, site.anchor) - site.unbound_names
+    return bound | site.comprehension_names
+
+
 def available_argument_names(
     function: FunctionNode, block: Sequence[ast.stmt], analyzer: "ScopeAnalyzer"
 ) -> FrozenSet[str]:
@@ -1163,7 +1187,7 @@ def available_argument_names(
     names: Set[str] = set()
     module = analyzer.analyzed_tree
     if not isinstance(module, ast.Module):
-        return frozenset(definitely_bound_before(function, block[0]) if block else ())
+        return frozenset(bound_where_block_stands(function, block))
     parents = _module_parents(module)
     shadowed: Set[str] = set()
     module_only: Set[str] = set()
@@ -1172,7 +1196,7 @@ def available_argument_names(
         local_names = scope.local_names - module_only
         if isinstance(scope.node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if scope.node is function:
-                bound = definitely_bound_before(function, block[0]) if block else set()
+                bound = bound_where_block_stands(function, block)
             else:
                 statement = _statement_within(parents, scope.node, function)
                 bound = definitely_bound_before(scope.node, statement) - _deleted_names(
@@ -1625,7 +1649,10 @@ def function_scope_names(
             else node.names if isinstance(node, ast.Nonlocal) else []
         )
     }
-    module = module_resolved_names(function, analyzer, names, exact=True)
+    # Around an expression candidate a comprehension's targets are its own.
+    module = module_resolved_names(function, analyzer, names, exact=True) - comprehension_locals(
+        block
+    )
     return frozenset(names - module - {"__class__"})
 
 

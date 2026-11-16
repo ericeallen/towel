@@ -534,3 +534,17 @@ def census(function: FunctionNode, min_lines: int) -> Dict[str, int]:
                 counts[reason] = counts.get(reason, 0) + 1
         pending.extend(ast.iter_child_nodes(node))
     return counts
+
+
+# -- What the guards ask of a candidate -----------------------------------------
+
+
+def comprehension_locals(block: Sequence[ast.AST]) -> FrozenSet[str]:
+    """The names a comprehension around an expression candidate binds, assigned yet or not.
+
+    Where the candidate stands these are the comprehension's variables,
+    whatever its function or module binds under the same names. Empty for a
+    block of statements, and for an expression outside any comprehension.
+    """
+    site = expression_site(block)
+    return frozenset() if site is None else site.comprehension_names | site.unbound_names
