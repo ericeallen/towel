@@ -128,7 +128,10 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                 )
 
             proposals = self.engine.analyze_file(file1)
-            self.assertEqual(len(proposals), 0)
+            # Since 2.0 ``x = 1`` and ``y = 2`` inside ``foo`` pair with each
+            # other at this engine's settings (one line, trivial helpers
+            # allowed), as they would in two functions; foo and bar never do.
+            self.assertFalse([p for p in proposals if "bar" in p.description])
 
     def test_empty_file_analysis(self):
         """Empty files do not produce proposals."""
