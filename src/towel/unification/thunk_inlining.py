@@ -43,10 +43,7 @@ mapping's keys; a target list unpacking its value. A global or builtin name
 is an effect: reading it raises ``NameError`` when nothing binds it. Nothing
 after a ``return`` or ``raise`` is reached, so no thunk there is inlined.
 
-That is the whole of strict mode's rule but for one case, sound in both
-modes: a list or dict display of constants (``[0.0, 0.0]``) makes a new
-object, cannot fail and runs nothing, so it is passed by value wherever the
-helper evaluates it at most once per call (``_evaluated_at_most_once``).
+That is the whole of strict mode's rule.
 
 Relaxed mode passes arguments by value and keeps a thunk only where one is
 clearly necessary (docs/DECISIONS.md, "Relaxed mode passes arguments by
@@ -204,8 +201,8 @@ def inline_leading_thunks(
     In strict mode those are the thunks the helper evaluates first, once
     and unconditionally, whose every caller proves an immutable result (an
     eager parameter holds its value until the helper returns, where the
-    thunk's result was a temporary), and a display of constants evaluated at
-    most once. Relaxed mode adds the module docstring's rules.
+    thunk's result was a temporary). Relaxed mode adds the module
+    docstring's rules.
 
     A call's arguments are evaluated left to right, so a thunk that calls
     something is inlined only while it follows, in the signature, every
@@ -455,10 +452,12 @@ def _movable_anywhere(
       every site passes such a value was deferred for a reason of its own
       (a module name a callee may rebind, an operator on a pooled literal)
       and stays one;
-    - a display of constants, where the helper evaluates the thunk at most
-      once per call: the display makes a new object each time it runs, and
-      a call makes one too. A set can be weakly referenced, so strict mode,
-      which preserves when an object is released, leaves sets deferred;
+    - in relaxed mode, a display of constants, where the helper evaluates
+      the thunk at most once per call: the display makes a new object each
+      time it runs, and a call makes one too. Strict mode keeps it deferred:
+      what the block adds to the object (``consume([0])`` appending one with
+      a finalizer) would live until the helper returns, not until the
+      statement that used it ends;
     - under ``plain_values``, a simple computation (``_simple``) on names
       the block mentions nowhere else.
     """
@@ -478,7 +477,7 @@ def _movable_anywhere(
             if is_eagerly_evaluable(expression, available):
                 continue
             varies = True
-            if _constant_display(expression, sets=policy.any_result):
+            if policy.any_result and _constant_display(expression):
                 if once is None:
                     once = _single_use(helper, name) and _evaluated_at_most_once(helper, name)
                 if once:
@@ -497,24 +496,24 @@ def _movable_anywhere(
     return movable
 
 
-def _constant_display(expression: ast.expr, *, sets: bool) -> bool:
-    """Whether ``expression`` is a list or dict (or, with ``sets``, set) display of constants.
+def _constant_display(expression: ast.expr) -> bool:
+    """Whether ``expression`` is a list, dict or set display of constants.
 
     Elements may be such displays or tuples of constants themselves. Nothing
     in one runs code or can fail: a constant key hashes on its builtin type
     (``_hashes_quietly``).
     """
     if isinstance(expression, ast.List):
-        return all(_constant_element(element, sets=sets) for element in expression.elts)
+        return all(_constant_element(element) for element in expression.elts)
     if isinstance(expression, ast.Dict):
         return all(
             key is not None
             and isinstance(key, ast.Constant)
             and _hashes_quietly(key, expression)
-            and _constant_element(value, sets=sets)
+            and _constant_element(value)
             for key, value in zip(expression.keys, expression.values)
         )
-    if isinstance(expression, ast.Set) and sets:
+    if isinstance(expression, ast.Set):
         return all(
             isinstance(element, ast.Constant) and _hashes_quietly(element, expression)
             for element in expression.elts
@@ -522,12 +521,12 @@ def _constant_display(expression: ast.expr, *, sets: bool) -> bool:
     return False
 
 
-def _constant_element(expression: ast.expr, *, sets: bool) -> bool:
+def _constant_element(expression: ast.expr) -> bool:
     if isinstance(expression, ast.Tuple):
-        return all(_constant_element(element, sets=sets) for element in expression.elts)
+        return all(_constant_element(element) for element in expression.elts)
     if isinstance(expression, ast.UnaryOp):
         return is_eagerly_evaluable(expression, frozenset())
-    return isinstance(expression, ast.Constant) or _constant_display(expression, sets=sets)
+    return isinstance(expression, ast.Constant) or _constant_display(expression)
 
 
 def _simple(expression: ast.expr, available: AbstractSet[str]) -> bool:

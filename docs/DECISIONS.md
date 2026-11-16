@@ -2154,8 +2154,9 @@ itself when one of these holds for it at every call site.
    a `try`.
 3. *It is a list or dict display of constants and the helper evaluates it at
    most once per call.* `[0.0, 0.0]` makes a new object each time it runs, and
-   so does a call. This one assumes nothing and applies in strict mode too; a
-   set display, which can be weakly referenced, only in relaxed mode.
+   so does a call. This rests on the first assumption, and strict mode keeps
+   the lambda: what the block adds to the list (`consume([0])` appending an
+   object with a finalizer) would otherwise live until the helper returns.
 4. *It is a concatenation with a string literal, or a sign applied to a name,
    and the block reads its operands nowhere else.* `'pybabel init -l ' + lang`
    gives a value only if `lang` is a string, strings do not change, and a

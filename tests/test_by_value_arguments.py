@@ -207,23 +207,86 @@ if __name__ == "__main__":
 """
 
 
-@pytest.mark.parametrize("strict", [False, True])
-def test_csvkits_literals_and_constant_lists_are_passed_by_value(
-    tmp_path: Path, strict: bool
-) -> None:
+def test_csvkits_literals_and_constant_lists_are_passed_by_value(tmp_path: Path) -> None:
     """Gemini's F3: ``lambda: "Point"`` beside ``lambda: [0.0, 0.0]`` in csvkit's tests.
 
     A display of constants makes a new object, cannot fail and runs
     nothing, so where the helper evaluates it at most once the call may
-    make it instead. That holds in strict mode too.
+    make it instead.
     """
-    generated, same = refactored(tmp_path, CSVKIT, strict=strict)
+    generated, same = refactored(tmp_path, CSVKIT)
     calls = helper_calls(generated)
     assert len(calls) == 2
     assert "'Point', 'LineString'" in calls[0]
     assert "[0.0, 0.0], [[0.0, 0.0], [1.0, 1.0]]" in calls[1]
     assert "lambda" not in generated
     assert same
+
+
+def test_strict_mode_keeps_csvkits_constant_lists_deferred(tmp_path: Path) -> None:
+    """Strict mode is 1.949 for a display: what the block adds to it lives as long as before."""
+    generated, same = refactored(tmp_path, CSVKIT, strict=True)
+    assert "lambda: [0.0, 0.0]" in generated
+    assert same
+
+
+DISPLAY_THAT_A_CALLEE_FILLS = """\
+class Token:
+    def __del__(self):
+        print("released")
+
+
+def consume(values):
+    if values is not None:
+        values.append(Token())
+    print("consumed")
+
+
+def alpha():
+    print("start")
+    consume([0])
+    print("after")
+    print("end")
+    return 1
+
+
+def beta():
+    print("start")
+    consume(None)
+    print("after")
+    print("end")
+    return 1
+
+
+alpha()
+beta()
+"""
+
+
+def test_strict_mode_keeps_a_display_a_callee_fills_deferred(tmp_path: Path) -> None:
+    """Review of lane ``byvalue``, defect 1: strict mode released ``Token`` late.
+
+    ``consume`` adds an object with a finalizer to the list. Built in the
+    block, the list dies when ``consume`` returns and ``released`` prints
+    before ``after``; held by a helper parameter, it would die when the
+    helper returns. Strict mode keeps 1.949's ``lambda: [0]``.
+    """
+    generated, same = refactored(tmp_path, DISPLAY_THAT_A_CALLEE_FILLS, strict=True)
+    assert "lambda: [0]" in generated
+    assert same
+
+
+def test_relaxed_mode_passes_a_display_a_callee_fills_by_value(tmp_path: Path) -> None:
+    """The first assumption of relaxed mode, by its counterexample: ``released`` prints late."""
+    generated, same = refactored(tmp_path, DISPLAY_THAT_A_CALLEE_FILLS)
+    assert helper_calls(generated) == ["__extracted_func_0([0])", "__extracted_func_0(None)"]
+    directory = tmp_path / "relaxed"
+    before = run_script(directory / "original.py")[1].splitlines()
+    after = run_script(directory / "changed.py")[1].splitlines()
+    assert before[:4] == ["start", "consumed", "released", "after"]
+    assert after[:4] == ["start", "consumed", "after", "end"]
+    assert sorted(before) == sorted(after)
+    assert not same
 
 
 DIRTY_EQUALS = """\
