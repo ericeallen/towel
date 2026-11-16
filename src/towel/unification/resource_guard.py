@@ -157,7 +157,7 @@ class _Resolution:
             return frozenset(found)
         if current.parent is not None:
             return self.origins(spelling, current.parent, (10**9, 0), depth + 1, deferred=True)
-        found.update(f"{module}.{spelling}" for module in current.stars)
+        found.update(f"{prefix}{spelling}" for prefix in current.stars)
         if head == "open":
             found.add(f"builtins.{spelling}")
         return frozenset(found)
@@ -226,10 +226,10 @@ def _resolution(module: ast.AST) -> _Resolution:
                                 conditional,
                             )
                         )
-                    elif (
-                        isinstance(current, ast.ImportFrom) and not current.level and current.module
-                    ):
-                        stars.add(current.module)
+                    elif isinstance(current, ast.ImportFrom):
+                        stars.add(
+                            "." * current.level + (current.module + "." if current.module else "")
+                        )
             elif isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 recorded.add(id(current))
                 for expression in evaluated_before_definition(current):

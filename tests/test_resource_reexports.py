@@ -16,6 +16,8 @@
 
 import ast
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -35,6 +37,7 @@ SOURCE = 'import os\n\nfrom pkg.compat import TemporaryDirectory\n\n\ndef first(
         "from tempfile import TemporaryDirectory",
         "from tempfile import TemporaryDirectory as TD\nTemporaryDirectory = TD",
         "from .base import TemporaryDirectory",
+        "from .base import *",
         "from . import base\nTemporaryDirectory = base.TemporaryDirectory",
     ],
 )
@@ -103,3 +106,59 @@ def test_reexport_cycles_terminate_and_reread_changed_sources(tmp_path: Path) ->
     assert resource_guard(function.body, module, imports).names == set()
     base.write_text("from tempfile import TemporaryDirectory as TD\n")
     assert resource_guard(function.body, module, imports).names == {"held"}
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_directory_reexport_preserves_resource_lifetime(tmp_path: Path, strict: bool) -> None:
+    """Review f_reexport: resolve constructors in the directory CLI's staged import model."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname="probe"\nversion="0"\n')
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "compat.py").write_text("from tempfile import TemporaryDirectory\n")
+    (package / "work.py").write_text(SOURCE.split("\nfor v in")[0])
+    driver = tmp_path / "drive.py"
+    driver.write_text(
+        "import sys\nsys.path.insert(0, sys.argv[1])\nfrom pkg.work import first, second\n"
+        "for v in (0, 1, 22):\n    print(first(v), second(v))\n"
+    )
+    output = tmp_path / "out" / "pkg"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "towel",
+            "dry",
+            str(package),
+            str(output),
+            "--no-types",
+            "--no-format",
+            "--no-interactive",
+            "--progress",
+            "none",
+            "--strict" if strict else "--no-strict",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    runs = [
+        subprocess.run(
+            [sys.executable, str(driver), str(root)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        for root in (tmp_path, output.parent)
+    ]
+    assert runs[0].returncode == 0, runs[0].stderr
+    assert (runs[0].returncode, runs[0].stdout, runs[0].stderr) == (
+        runs[1].returncode,
+        runs[1].stdout,
+        runs[1].stderr,
+    )
+    if strict:
+        assert (output / "work.py").read_bytes() == (package / "work.py").read_bytes()
