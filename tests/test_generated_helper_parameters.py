@@ -153,7 +153,7 @@ print(first(Config(), 2), second(Config(), 4))
         # cleanup; it has an ownership effect even without a body read.
         assert parameters[-1].arg == "_towel_owner"
         assert parameters[-1].arg not in referenced
-        assert [parameter.arg for parameter in parameters[:-1]] == ["value", "__param_0"]
+        assert [parameter.arg for parameter in parameters[:-1]] == ["value", "_param_0"]
         assert all(parameter.arg in referenced for parameter in parameters[:-1]), ast.unparse(
             helper
         )

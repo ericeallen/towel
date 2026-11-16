@@ -298,7 +298,7 @@ def compute_b(): return "two"
     assert helpers or strict  # strict can decline the ownership transfer
     for helper in helpers:
         names = [arg.arg for arg in (*helper.args.posonlyargs, *helper.args.args)]
-        assert names.index("__param_0") < names.index("__param_1")
+        assert names.index("_param_0") < names.index("_param_1")
     assert observe(output.parent, "import mod; print(mod.first(True), mod.second(False))") == before
 
 

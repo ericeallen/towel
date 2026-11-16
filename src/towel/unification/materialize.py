@@ -234,9 +234,7 @@ class Materialization(
         if proposal.reused_function is None:
             host = self._parsed_host(proposal.file_path)
             if self._oldest_python_for(proposal.file_path, host) < (3, 8):
-                arguments = proposal.extracted_function.args
-                arguments.args = arguments.posonlyargs + arguments.args
-                arguments.posonlyargs = []
+                proposal.extracted_function = _legacy_parameters(proposal.extracted_function)
         self._infer_helper_annotations(proposal)
         check_types = self._active_type_oracle() is not None
         counters = dict(self._helper_name_counters)
@@ -1151,6 +1149,46 @@ class Materialization(
                         f"Generated call to {helper_name} passes {len(node.args)} arguments "
                         f"but the helper binds {expected}: {path}"
                     )
+
+
+def _legacy_parameters(helper: ast.FunctionDef) -> ast.FunctionDef:
+    """Keep source order without a slash or an invalid legacy positional-only name."""
+    rewritten = copy.deepcopy(helper)
+    arguments = rewritten.args
+    arguments.args = arguments.posonlyargs + arguments.args
+    arguments.posonlyargs = []
+    # Include identifiers in nested scopes: a new spelling must not capture a
+    # nested binding, import, or attribute used by the generated body.
+    taken = {
+        value
+        for node in ast.walk(rewritten)
+        for _, value in ast.iter_fields(node)
+        if isinstance(value, str) and value.isidentifier()
+    }
+    for node in ast.walk(rewritten):
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            taken.update(node.names)
+    renames: Dict[str, str] = {}
+    ordinary_seen = False
+    for parameter in arguments.args:
+        if not parameter.arg.startswith("__param_"):
+            ordinary_seen = True
+        elif ordinary_seen:
+            base = parameter.arg[1:]
+            name = base
+            suffix = 0
+            while name in taken:
+                suffix += 1
+                name = f"{base}_{suffix}"
+            taken.add(name)
+            renames[parameter.arg] = name
+            parameter.arg = name
+    for node in ast.walk(rewritten):
+        if isinstance(node, ast.Name):
+            node.id = renames.get(node.id, node.id)
+        elif isinstance(node, ast.Nonlocal):
+            node.names = [renames.get(name, name) for name in node.names]
+    return rewritten
 
 
 def _runtime_star_imports(tree: ast.Module) -> Tuple[ast.ImportFrom, ...]:
