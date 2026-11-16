@@ -201,3 +201,24 @@ def test_strict_preserves_undecodable_skip(tmp_path: Path, command: str, data: b
     assert (project / "bad.py").read_bytes() == data
     if command == "dry":
         assert (tmp_path / "out" / "bad.py").read_bytes() == data
+
+
+@pytest.mark.parametrize("failure", ["timeout", "ownership"])
+def test_unavailable_git_ignore_rules_warn_and_retain_sources(
+    tmp_path: Path, failure: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Round 2 suspicion: Git discovery failures do not abort an otherwise readable project."""
+    from towel.source_files import ignored_by_git
+
+    path = tmp_path / "m.py"
+    path.write_text("x = 1\n")
+
+    def unavailable(*args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired("git", 10)
+        return subprocess.CompletedProcess("git", 128, b"", b"fatal: detected dubious ownership")
+
+    monkeypatch.setattr(subprocess, "run", unavailable)
+    assert ignored_by_git(tmp_path, [path]) == frozenset()
+    assert "Cannot read Git ignore rules" in caplog.text
+    assert "including files Git may ignore" in caplog.text

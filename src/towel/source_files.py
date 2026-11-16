@@ -148,10 +148,17 @@ def ignored_by_git(directory: Path, paths: Iterable[Path]) -> frozenset[Path]:
         )
     except FileNotFoundError:
         return frozenset()
+    except (subprocess.TimeoutExpired, OSError) as error:
+        LOG.warning("Cannot read Git ignore rules: %s; including files Git may ignore", error)
+        return frozenset()
     if result.returncode not in (0, 1):
         if b"not a git repository" in result.stderr:
             return frozenset()
-        raise OSError(f"Cannot read Git ignore rules: {os.fsdecode(result.stderr).strip()}")
+        LOG.warning(
+            "Cannot read Git ignore rules: %s; including files Git may ignore",
+            os.fsdecode(result.stderr).strip(),
+        )
+        return frozenset()
     ignored = {os.fsdecode(part) for part in result.stdout.split(b"\0") if part}
     return frozenset(path for path in candidates if str(path.absolute()) in ignored)
 
