@@ -2420,8 +2420,10 @@ as they do within one module, and the refusal of a helper that would hold
 them in another module (`literal_pool_boundary`) applies in strict mode only. Whether two equal immutable values are one
 object is the implementation's choice: the language reference says that for
 immutable types "operations that compute new values may actually return a
-reference to any existing object with the same type and value". A program
-that compares such literals with `is` across modules needs `--strict`, which
-keeps the tuple.
+reference to any existing object with the same type and value". The moved
+literal is the host's object, so its identity changes against every other
+equal constant of the borrowing module too, not only against the host's: a
+program that compares such literals with `is`, in one module or across two,
+needs `--strict`, which keeps the tuple.
 
 *Status: implemented for 2.0, with `tests/test_cross_module_plain_case.py`.*
