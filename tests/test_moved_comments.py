@@ -80,9 +80,9 @@ def _engine(**options: object) -> UnificationRefactorEngine:
     )
     # This harness tests newly inserted helpers and their comments. Redirects
     # deliberately insert no helper, and have their own preservation tests.
-    from unittest.mock import patch
+    from unittest.mock import Mock
 
-    patch.object(engine, "_redirect_to_existing_function", return_value=None).start()
+    setattr(engine, "_redirect_to_existing_function", Mock(return_value=None))
     return engine
 
 

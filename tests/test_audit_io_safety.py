@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import os
 from pathlib import Path
@@ -24,6 +25,8 @@ import sys
 from typing import Literal
 
 import pytest
+
+from tests.test_helpers import child_mode_flags
 
 from towel.changes import ChangeConflict
 from towel import formatting
@@ -65,9 +68,31 @@ def two():
 """
 
 
+def _assert_safe_duplicates_refactored(source: str) -> None:
+    functions = {
+        node.name: node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+    }
+    (returned,) = functions["two"].body
+    assert isinstance(returned, ast.Return) and isinstance(returned.value, ast.Call)
+    assert isinstance(returned.value.func, ast.Name)
+    target = returned.value.func.id
+    assert target.startswith("__extracted_func_") if child_mode_flags() else target == "one"
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+    for name in ("one", "two"):
+        function = namespace[name]
+        assert callable(function) and function() == 5
+
+
 def _cli(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-c", "from towel.cli import main; main()", *arguments],
+        [
+            sys.executable,
+            "-c",
+            "from towel.cli import main; main()",
+            *arguments,
+            *child_mode_flags(),
+        ],
         capture_output=True,
         text=True,
         env={**os.environ, "TOWEL_WORKERS": "1"},
@@ -351,8 +376,7 @@ def test_r9p2_a_hard_linked_file_is_left_alone_and_the_rest_refactored_in_place(
     )
     assert source.read_text() == outside.read_text() == SAFE_DUPLICATES
     assert source.stat().st_ino == outside.stat().st_ino
-    assert other.read_text() != SAFE_DUPLICATES
-    assert "two" in other.read_text()
+    _assert_safe_duplicates_refactored(other.read_text())
 
 
 def test_r9p2_a_hard_linked_file_refactored_in_place_is_refused_before_the_run(
@@ -369,8 +393,7 @@ def test_r9p2_a_hard_linked_file_refactored_in_place_is_refused_before_the_run(
     written = tmp_path / "OUTPUT.py"
     remedy = _cli(["dry", str(source), str(written), "--no-types", "--no-interactive"])
     assert remedy.returncode == 0, remedy.stderr
-    assert written.read_text() != SAFE_DUPLICATES
-    assert "two" in written.read_text()
+    _assert_safe_duplicates_refactored(written.read_text())
 
 
 def test_directory_does_not_retry_a_permanent_change_conflict(
