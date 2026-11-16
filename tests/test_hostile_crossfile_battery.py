@@ -600,17 +600,6 @@ def _assert_only_the_recompiled_function_changed(before: Path, after: Path) -> N
     assert "i * 2" not in ast.unparse(first)
 
 
-RELAXED_OBSERVES_FINALIZATION: Dict[str, str] = {}
-"""Packages whose output differs in relaxed mode because they print when an object is finalized.
-
-As in ``test_hostile_battery``: relaxed mode assumes a program does not
-depend on when objects are finalized once it has stopped using them
-(docs/design/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
-lifetimes"). No cross-file fixture watches a finalizer, so the list is
-empty, and any difference in relaxed mode is a defect to fix.
-"""
-
-
 @pytest.mark.parametrize(
     "case",
     sorted(
@@ -650,9 +639,7 @@ def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> No
             assert not OWNERSHIP_BOOKKEEPING.search(text) or (
                 OWNERSHIP_BOOKKEEPING.search(original[name])
             ), name
-        if case in RELAXED_OBSERVES_FINALIZATION:
-            assert _run(after) != _run(before), "no longer differs: remove it from the list"
-        elif case in RELAXED_REFLECTION_WHERE_PARSED:
+        if case in RELAXED_REFLECTION_WHERE_PARSED:
             # Outside the preservation contract, as REFLECTION_CASES are: the
             # extraction has to be valid Python, and only the function the
             # program recompiles from its source may print something else.

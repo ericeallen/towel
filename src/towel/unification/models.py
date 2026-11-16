@@ -344,6 +344,7 @@ class RejectReason(StrEnum):
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
     CONDITIONALLY_IMPORTED_HOST = "conditionally_imported_host"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"
+    RESOURCE_LIFETIME_UNPROVEN = "resource_lifetime_unproven"
     OWNED_BINDING_EXCEPTION_BOUNDARY = "owned_binding_exception_boundary"
     OWNERSHIP_PARAMETER_BUDGET = "ownership_parameter_budget"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"

@@ -39,6 +39,8 @@ import os
 
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple, cast
+from .resource_guard import ResourceImports, resource_guard
+
 from ..canonical_ast import canonical_dump
 from ..diagnostics import REJECTIONS, debugging
 from .assignment_analyzer import has_reassignments_without_bindings
@@ -681,6 +683,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             return None
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
         module = analyzer.analyzed_tree
+        resources = (
+            None
+            if self.strict
+            else resource_guard(cand_nodes, module, ResourceImports(fpath, self.import_graph))
+        )
+        if resources is not None and resources.refusal is not None:
+            return None
         if unstable_literal_pool(cand_nodes) or unsafe_byte_literal_moves(
             cand_nodes, module if isinstance(module, ast.Module) else None
         ):
@@ -693,8 +702,8 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             if self._block_rejected(frame_guard, cand_nodes, fn, analyzer, site=site):
                 return None
-        if not self.strict and self._block_rejected(
-            guarded_resource_crosses_exception_boundary, cand_nodes, fn, analyzer, site=site
+        if resources is not None and guarded_resource_crosses_exception_boundary(
+            analyzer, fn, cand_nodes, resources.names
         ):
             return None
         if self.strict and self._block_rejected(
@@ -749,7 +758,12 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             snapshot=snapshot,
             return_variables=frozenset(
                 self._find_return_variables(
-                    fn, cand_range, snapshot.initially_bound, cand_nodes, module=module
+                    fn,
+                    cand_range,
+                    snapshot.initially_bound,
+                    cand_nodes,
+                    module=module,
+                    resource_imports=ResourceImports(fpath, self.import_graph),
                 )
             ),
         )
