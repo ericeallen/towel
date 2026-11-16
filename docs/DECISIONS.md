@@ -2130,8 +2130,11 @@ itself when one of these holds for it at every call site.
    deletes it, and no function declares it `global`. Module data (`LIMIT = 3`,
    or `json = None` in an `except ImportError`) does not qualify. A name
    defined below the function that reads it qualifies only if nothing stands
-   between them but definitions, imports and assignments without a call, so
-   that no module-level code can run the function before the name exists.
+   between them that can run the function before the name exists: no call,
+   and no definition whose decorators, defaults or annotations call
+   something, and no class with decorators, keywords, a base that may define
+   `__init_subclass__`, or an attribute whose value may define
+   `__set_name__`. Imports are taken to run nothing of the importing module.
 2. *The helper evaluates it exactly once on every path, and nothing it does
    before could change its value or fail.* Passing by value moves the
    expression to the call, ahead of every step the helper takes before it,
@@ -2213,10 +2216,6 @@ called as `__param_0(value)` would read it, unbound, when `flag` is false.
   `setattr`, or a patch applied from another module) and then calls `plain`,
   the original calls the replacement and the helper calls the function it was
   passed. `tests/test_by_value_arguments.py` pins this by its counterexample.
-- *A function run by a decorator before its module has defined a name it
-  reads*, on a path that would not have read it: the name is read at the call
-  and raises `NameError` there. Module-level statements that call something
-  are accounted for; what a decorator calls is not.
 
 A program that depends on any of these needs `--strict`.
 

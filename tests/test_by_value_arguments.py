@@ -939,6 +939,66 @@ def test_relaxed_mode_assumes_module_functions_are_not_rebound(tmp_path: Path) -
     assert before[:5] == after[:5] and before[7:] == after[7:]
 
 
+MODULE_CODE_RUN_EARLY = """\
+def first(enabled):
+    print("start")
+    if enabled:
+        print(alpha(1))
+    print("end")
+    return 0
+
+
+def second(enabled):
+    print("start")
+    if enabled:
+        print(beta(1))
+    print("end")
+    return 0
+
+
+EARLY
+
+
+def alpha(value):
+    return value + 1
+
+
+def beta(value):
+    return value + 2
+
+
+print(first(True), second(True))
+"""
+
+
+@pytest.mark.parametrize(
+    "early",
+    [
+        "def trigger(value=first(False)):\n    pass",
+        "def trigger(*, value=first(False)):\n    pass",
+        "def run(function):\n    function(False)\n    return function\n\n\n"
+        "@run\ndef trigger(enabled):\n    pass",
+        "class Trigger:\n    value = first(False)",
+        "class Base:\n    def __init_subclass__(cls):\n        first(False)\n\n\n"
+        "class Trigger(Base):\n    pass",
+    ],
+)
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_module_name_is_not_read_early_where_module_code_runs_the_block_first(
+    tmp_path: Path, strict: bool, early: str
+) -> None:
+    """Review of lane ``byvalue``, defect 7: a default ran ``first`` before ``alpha`` existed.
+
+    The block skips ``alpha(1)`` when ``enabled`` is false; passed by value,
+    ``alpha`` was read at the call and raised ``NameError``. Defaults,
+    decorators, class bodies and base classes all run code at definition.
+    """
+    source = MODULE_CODE_RUN_EARLY.replace("EARLY", early)
+    generated, same = refactored(tmp_path, source, strict=strict)
+    assert "(alpha)" not in generated and "(alpha," not in generated
+    assert same
+
+
 LOOKUP_IN_A_TRY = """\
 class Client:
     def __init__(self, broken=False):

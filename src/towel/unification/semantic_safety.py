@@ -1254,24 +1254,164 @@ def _stable_bindings_of(node: ast.AST) -> Mapping[str, int]:
     return {name: index for name, index in certain.items() if name not in other}
 
 
-def _runs_nothing(statement: ast.stmt) -> bool:
-    """Whether executing a top-level ``statement`` calls nothing, so cannot run a function.
+def _runs_nothing(statement: ast.stmt, quiet_bases: AbstractSet[str]) -> bool:
+    """Whether executing a top-level ``statement`` cannot run a function of this module.
 
-    A ``def`` (its body does not run), an import, a ``class`` whose body is
-    more of the same, and an assignment or expression without a call.
-    Decorators, defaults and base classes are evaluated, and may call; what
-    they call is taken not to be a function of this module defined above.
+    A ``def`` runs nothing of its own, but its decorators, defaults and
+    annotations are evaluated and applied as it is executed: it qualifies
+    without decorators and with defaults and annotations that run nothing
+    (``_expression_runs_nothing``). A ``class`` runs its body, and creating
+    it runs its bases' ``__init_subclass__`` and its attributes'
+    ``__set_name__``: it qualifies without decorators or keywords, with
+    bases among ``quiet_bases`` (``_quiet_bases``), and with a body of such definitions and of assignments of
+    values built from constants. An assignment to names, an expression and
+    ``pass`` qualify when their expressions run nothing. An import is taken
+    to run nothing of this module: the imported module would have to call
+    back into this one while it is still being executed.
     """
-    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Import, ast.ImportFrom)):
+    if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)):
         return True
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        arguments = statement.args
+        evaluated = [
+            *arguments.defaults,
+            *(default for default in arguments.kw_defaults if default is not None),
+            *(
+                argument.annotation
+                for argument in (
+                    *arguments.posonlyargs,
+                    *arguments.args,
+                    *arguments.kwonlyargs,
+                    *(a for a in (arguments.vararg, arguments.kwarg) if a is not None),
+                )
+                if argument.annotation is not None
+            ),
+            *([statement.returns] if statement.returns is not None else []),
+        ]
+        return not statement.decorator_list and all(map(_expression_runs_nothing, evaluated))
     if isinstance(statement, ast.ClassDef):
-        return all(_runs_nothing(inner) for inner in statement.body)
-    if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.Expr, ast.Pass)):
-        return not any(
-            isinstance(node, (ast.Call, ast.Await, ast.Yield, ast.YieldFrom))
-            for node in walk_own_scope(statement)
+        return (
+            not statement.decorator_list
+            and not statement.keywords
+            and all(
+                isinstance(base, ast.Name) and base.id in quiet_bases for base in statement.bases
+            )
+            and all(_class_statement_runs_nothing(inner, quiet_bases) for inner in statement.body)
         )
+    if isinstance(statement, ast.Assign):
+        return all(isinstance(target, ast.Name) for target in statement.targets) and (
+            _expression_runs_nothing(statement.value)
+        )
+    if isinstance(statement, ast.AnnAssign):
+        return (
+            isinstance(statement.target, ast.Name)
+            and _expression_runs_nothing(statement.annotation)
+            and (statement.value is None or _expression_runs_nothing(statement.value))
+        )
+    if isinstance(statement, ast.Expr):
+        return _expression_runs_nothing(statement.value)
     return False
+
+
+def _class_statement_runs_nothing(statement: ast.stmt, quiet_bases: AbstractSet[str]) -> bool:
+    """``_runs_nothing`` for a class body, whose assigned values may define ``__set_name__``."""
+    if isinstance(statement, (ast.Assign, ast.AnnAssign)) and statement.value is not None:
+        if any(isinstance(node, (ast.Name, ast.Attribute)) for node in ast.walk(statement.value)):
+            return False
+    if isinstance(statement, ast.Expr) and not isinstance(statement.value, ast.Constant):
+        return False
+    return _runs_nothing(statement, quiet_bases)
+
+
+def _expression_runs_nothing(expression: ast.expr) -> bool:
+    """Whether evaluating ``expression`` can run no code but what relaxed mode takes as plain.
+
+    Reading names, attributes and subscripts, operators, comparisons and
+    displays of constants' keys (the second assumption). Not a call, an
+    ``await`` or ``yield``, iterating (``*x``, a comprehension), formatting
+    (``__format__``) or hashing a key that is not a constant (``__hash__``).
+    A lambda's body is made, not run; its defaults are evaluated.
+    """
+    pending: List[ast.AST] = [expression]
+    while pending:
+        node = pending.pop()
+        if isinstance(
+            node,
+            (
+                ast.Call,
+                ast.Await,
+                ast.Yield,
+                ast.YieldFrom,
+                ast.Starred,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+                ast.FormattedValue,
+            ),
+        ):
+            return False
+        if isinstance(node, ast.Dict) and not all(
+            isinstance(key, ast.Constant) for key in node.keys
+        ):
+            return False
+        if isinstance(node, ast.Set) and not all(
+            isinstance(element, ast.Constant) for element in node.elts
+        ):
+            return False
+        if isinstance(node, ast.Lambda):
+            pending.extend(node.args.defaults)
+            pending.extend(default for default in node.args.kw_defaults if default is not None)
+            continue
+        pending.extend(ast.iter_child_nodes(node))
+    return True
+
+
+def _quiet_bases(module: ast.Module) -> FrozenSet[str]:
+    """The classes a class of ``module`` may derive from without running code as it is made.
+
+    Builtin classes no code of the module rebinds, and the module's own
+    stable classes made without decorators or keywords, from such bases,
+    that never mention ``__init_subclass__``.
+    """
+    rebound = {
+        node.id
+        for node in ast.walk(module)
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load)
+    }
+    for node in ast.walk(module):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            rebound.add(node.name)
+        elif isinstance(node, ast.alias):
+            rebound.add(node.asname or node.name.split(".")[0])
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            rebound.update(node.names)
+    if "*" in rebound:
+        return frozenset()
+    quiet = {
+        name
+        for name, value in vars(builtins).items()
+        if isinstance(value, type) and name not in rebound
+    }
+    stable = _stable_bindings(module)
+    for statement in module.body:
+        if (
+            isinstance(statement, ast.ClassDef)
+            and statement.name in stable
+            and not statement.decorator_list
+            and not statement.keywords
+            and all(isinstance(base, ast.Name) and base.id in quiet for base in statement.bases)
+            and not any(
+                (isinstance(node, ast.Name) and node.id == "__init_subclass__")
+                or (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "__init_subclass__"
+                )
+                for node in ast.walk(statement)
+            )
+        ):
+            quiet.add(statement.name)
+    return frozenset(quiet)
 
 
 def _stable_names_bound_for(module: ast.Module, statement: ast.stmt) -> FrozenSet[str]:
@@ -1291,11 +1431,12 @@ def _stable_names_bound_for(module: ast.Module, statement: ast.stmt) -> FrozenSe
     index = next(i for i, item in enumerate(module.body) if item is statement)
     known = by_index.get(index)
     if known is None:
+        quiet_bases = _quiet_bases(module)
         limit = next(
             (
                 later
                 for later in range(index + 1, len(module.body))
-                if not _runs_nothing(module.body[later])
+                if not _runs_nothing(module.body[later], quiet_bases)
             ),
             len(module.body),
         )
