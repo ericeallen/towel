@@ -258,7 +258,9 @@ def test_rebinding_warnings_are_deduplicated_in_parent_across_workers_and_passes
     logger = logging.getLogger("towel")
     logger.addHandler(handler)
     try:
-        engine = UnificationRefactorEngine(min_lines=3, strict=False, settings=_settings(2))
+        engine = UnificationRefactorEngine(
+            min_lines=3, strict=False, complete_scope=True, settings=_settings(2)
+        )
         for _ in range(2):
             assert engine.analyze_file(str(path))
         handler.flush()

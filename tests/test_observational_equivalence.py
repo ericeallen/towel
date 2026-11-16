@@ -702,9 +702,13 @@ def calculate_b(y):
             # lets the default relaxed mode reuse calculate_a directly.
             self.assertEqual(len(proposals), 1)
             reused = proposals[0].reused_function
-            self.assertIsNotNone(reused)
-            assert reused is not None
-            self.assertEqual(reused.name, "calculate_a")
+            if self.engine.strict:
+                self.assertIsNone(reused)
+                self.assertEqual(len(proposals[0].replacements), 2)
+            else:
+                self.assertIsNotNone(reused)
+                assert reused is not None
+                self.assertEqual(reused.name, "calculate_a")
 
             refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
 
