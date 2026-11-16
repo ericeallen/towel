@@ -34,7 +34,10 @@ Strict mode keeps 1.949's refusals and ``--parameterize-builtins``.
 from __future__ import annotations
 
 import ast
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -216,3 +219,101 @@ def test_a_module_name_bound_otherwise_in_one_module_is_still_passed(
     for helper in _helpers(generated):
         assert "re.split(" not in ast.unparse(helper) or "re" in _parameters(helper)
     assert _same(tmp_path, source)
+
+
+# -- Builtins across modules -----------------------------------------------------
+
+COUNTS = """
+
+def {name}(rows, text):
+    words = re.split(r"\\s+", text.strip())
+    count = len(words)
+    total = sum(len(row) for row in rows)
+    return [count, total, sorted(words)]
+"""
+
+
+def test_relaxed_mode_reads_a_builtin_bare_across_modules(tmp_path: Path) -> None:
+    source = _two_modules(tmp_path, "import re\n", "import re\n", COUNTS)
+    printed, generated = _dry(source, tmp_path / "out")
+    (helper,) = _helpers(generated)
+    text = ast.unparse(helper)
+    assert "len(words)" in text and "sum(" in text and "sorted(words)" in text
+    assert not {"len", "sum", "sorted"} & set(_parameters(helper))
+    assert "builtin_may_differ_by_module" not in printed
+    assert _same(tmp_path, source)
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "\n\ndef len(value):\n    return 99\n",
+        "\n\nlen = lambda value: 99\n",
+        "\n\ndef rebind():\n    global len\n    len = lambda value: 99\n",
+        "\n\nfrom os.path import *\n",
+    ],
+    ids=["def", "assignment", "global", "star_import"],
+)
+def test_a_builtin_a_participating_module_binds_is_not_read_bare(
+    tmp_path: Path, binding: str
+) -> None:
+    """``second`` binds its own ``len`` (or may): the helper may not read the host's."""
+    source = _two_modules(tmp_path, "import re\n", "import re\n", COUNTS, second_extra=binding)
+    printed, generated = _dry(source, tmp_path / "out")
+    for helper in _helpers(generated):
+        assert "len(" not in ast.unparse(helper)
+    assert _same(tmp_path, source)
+
+
+def test_strict_mode_still_refuses_a_builtin_across_modules(tmp_path: Path) -> None:
+    source = _two_modules(tmp_path, "import re\n", "import re\n", COUNTS)
+    printed, generated = _dry(source, tmp_path / "out", "--strict")
+    assert "builtin_may_differ_by_module" in printed
+    for helper in _helpers(generated):
+        assert "len(" not in ast.unparse(helper)
+
+
+def test_relaxed_mode_gives_up_a_builtin_rebound_by_code_outside_the_project(
+    tmp_path: Path,
+) -> None:
+    """The counterexample of the builtin rule: a dependency rebinds ``b.len`` mid-block.
+
+    The original reads the new ``len`` after the callback; the helper, in
+    ``a``, reads ``a``'s. Strict mode keeps the lookup at the caller and the
+    output; relaxed mode changes exactly this line of it.
+    """
+    body = (
+        "def {name}(values, callback):\n"
+        "    assert values is not None\n"
+        "    assert callback is not None\n"
+        "    return (len(values) * 1000 + (callback(), len(values))[1]) * {factor}\n"
+    )
+    files = {
+        "pyproject.toml": '[project]\nname="probe"\nversion="0"\n',
+        "pkg/__init__.py": "",
+        "pkg/a.py": body.format(name="first", factor=5),
+        "pkg/b.py": "import pkg.a\n" + body.format(name="second", factor=7),
+        "check.py": "from pkg import a, b\nfrom outside import install\n"
+        "print(a.first([1, 3], lambda: None), b.second([2, 4], install))\n",
+    }
+    vendor = _write(
+        tmp_path / "vendor",
+        {"outside.py": ("def install():\n    from pkg import b\n    b.len = lambda values: 101\n")},
+    )
+    outputs = {}
+    for mode in ("before", "relaxed", "strict"):
+        root = _write(tmp_path / mode, files)
+        if mode != "before":
+            _dry(root / "pkg", root / "pkg", *(["--strict"] if mode == "strict" else []))
+        completed = subprocess.run(
+            [sys.executable, "check.py"],
+            cwd=root,
+            env={**os.environ, "PYTHONPATH": str(vendor)},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        outputs[mode] = completed.stdout
+    assert outputs["before"] == "10010 14707\n"
+    assert outputs["strict"] == outputs["before"]
+    assert outputs["relaxed"] == "10010 14014\n"

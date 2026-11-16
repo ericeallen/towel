@@ -29,6 +29,24 @@ from tests.test_builtins_across_modules import _project, _python_files, _run, _w
 from tests.test_parameterize_builtins import _refactor
 
 
+def _no_helper_reads_len(package: Path) -> bool:
+    """Whether every generated helper leaves ``len`` to its callers, where the block read it.
+
+    Since 2.0 relaxed mode shares a builtin across modules unless something
+    could give a module its own (docs/design/DECISIONS.md, "Relaxed mode
+    reads a builtin bare across modules"), so the ``print`` and ``assert``
+    lines these blocks begin with are shared; ``len``, which the project
+    writes into ``exports``, never is.
+    """
+    return not any(
+        isinstance(node, ast.Name) and node.id == "len"
+        for path in package.glob("*.py")
+        for definition in ast.parse(path.read_text()).body
+        if isinstance(definition, ast.FunctionDef) and "extracted_func" in definition.name
+        for node in ast.walk(definition)
+    )
+
+
 def _lookup_project(*, extra: dict[str, str] | None = None) -> dict[str, str]:
     """Keep lookup tests independent of cleanup ordering for retained locals."""
     files = _project(extra=extra or {})
@@ -82,7 +100,7 @@ def test_builtin_writes_through_ordinary_receivers_preserve_execution(
     expected = _run(before, "check.py")
     assert "10001 5" in expected
     applied, _ = _refactor(after / "pkg", parameterize)
-    assert bool(applied) is parameterize
+    assert bool(applied) if parameterize else _no_helper_reads_len(after / "pkg")
     assert _run(after, "check.py") == expected
 
 
@@ -98,8 +116,8 @@ def test_setup_module_does_not_hide_a_driver_that_rebinds_a_builtin(tmp_path: Pa
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
         _write(root, files)
-    applied, _ = _refactor(after / "pkg", False)
-    assert applied == 0
+    _refactor(after / "pkg", False)
+    assert _no_helper_reads_len(after / "pkg")
     assert _run(after, "check.py") == _run(before, "check.py")
 
 
@@ -116,8 +134,8 @@ def test_normalized_identifiers_use_the_declared_source_encoding(tmp_path: Path)
                 "print(exports.export_size([1, 2], 'ab'))\n"
             ).encode("shift_jis")
         )
-    applied, _ = _refactor(after / "pkg", False)
-    assert applied == 0
+    _refactor(after / "pkg", False)
+    assert _no_helper_reads_len(after / "pkg")
     assert _run(after, "check.py") == _run(before, "check.py")
 
 
@@ -189,6 +207,7 @@ def test_external_callee_can_change_lookup_between_reads(
     assert _run(after, "check.py", pythonpath=str(vendor)) == expected
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("parameterize", [False, True])
 @pytest.mark.parametrize("operation", ["rebind", "unbound"])
 def test_the_default_mode_still_reads_a_builtin_where_the_block_did(
@@ -196,7 +215,12 @@ def test_the_default_mode_still_reads_a_builtin_where_the_block_did(
 ) -> None:
     """A builtin is not a module's function: a callee that shadows or removes it is still seen.
 
-    Not marked: this runs in relaxed mode by default, which is its point.
+    Strict mode since 2.0. Relaxed mode reads a builtin bare across modules
+    unless the project's own code could rebind it (docs/design/DECISIONS.md,
+    "Relaxed mode reads a builtin bare across modules"); a callee outside the
+    project that rebinds it, as here, is what that gives up, and
+    ``tests/test_cross_module_plain_case.py`` pins the counterexample. If
+    that decision is dropped, this test runs unmarked again.
     """
     test_external_callee_can_change_lookup_between_reads(
         tmp_path, parameterize, ("len", "len"), operation

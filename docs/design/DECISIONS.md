@@ -2327,3 +2327,47 @@ while the other keeps the real one needs `--strict`, which passes the lookup
 to the helper as before.
 
 *Status: implemented for 2.0, with `tests/test_cross_module_plain_case.py`.*
+
+## 2026-11-16: Relaxed mode reads a builtin bare across modules
+
+*This extends the owner's decisions of 2026-11-14 in one place he has not
+approved in so many words; it is a single commit so that it can be dropped.*
+
+[Cross-module callables retain caller-side lookups](#2026-10-02-cross-module-callables-retain-caller-side-lookups)
+(2026-10-02) refused a cross-module helper that reads a builtin such as `len`,
+because a module's `len` could be rebound by code Towel cannot see, and
+`--parameterize-builtins` turned the refusal into `lambda: len` arguments. That
+refusal was the commonest reason `--cross-module` shared nothing: nearly every
+block of real code calls a builtin.
+
+In relaxed mode a builtin means the same in every module unless something in
+the project could give one participating module its own binding of the name:
+
+- the module binds it: a definition, an assignment, an import, a `global`
+  declaration, a `del`, a star import, or a store into `globals()` or
+  `vars()` by a constant key;
+- the project's files write it into one of the modules, as the scan of
+  [A helper never takes a builtin as a parameter](#2026-09-23-a-helper-never-takes-a-builtin-as-a-parameter)
+  finds (`pkg.b.len = fake`);
+- or any file of the project stores an attribute of that name on anything
+  (`module.len = fake` in a function handed the module, `for x.len in …`,
+  `setattr(x, "len", …)`, `monkeypatch.setattr(x, "len", …)`,
+  `mock.patch("pkg.b.len")`), since the receiver may be the module. This is
+  coarse on purpose: a class whose instances have a `len` attribute keeps
+  `len` a refusal across modules in that project.
+
+The project is the host's (its `pyproject.toml` or `setup.cfg`, or the
+directory its packages are imported from); a project too large to read whole
+counts as writing every name. Otherwise the helper reads `len` bare in its
+host, as any function there does. Strict mode keeps the 2026-10-02 refusal,
+and `--parameterize-builtins` passes every builtin in both modes.
+
+**What relaxed mode gives up.** Code the project does not contain that
+rebinds a builtin in one module: a dependency or plugin that sets
+`pkg.b.len`, including one the block itself calls while it runs
+(`tests/test_cross_module_plain_case.py` pins that counterexample: the original
+sees the new `len`, the helper in the other module does not). This is not
+reflection; it is the case the 2026-10-02 entry was written for, and the
+reason this rule needs the owner's approval. Such a program needs `--strict`.
+
+*Status: implemented for 2.0, with `tests/test_cross_module_plain_case.py`.*

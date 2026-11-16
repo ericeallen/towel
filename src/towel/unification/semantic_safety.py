@@ -1276,6 +1276,55 @@ def modules_imported_alike(modules: Sequence[ast.Module]) -> FrozenSet[str]:
     return frozenset(common or ())
 
 
+def module_binds(module: ast.Module, names: AbstractSet[str]) -> FrozenSet[str]:
+    """Which of ``names`` the module binds in its own namespace, as its code is written.
+
+    A definition, a class, an import, an assignment, a ``del`` or any other
+    binding at module scope, and a ``global`` declaration in any function.
+    A star import at module scope could bind any of them, so all count.
+    """
+    bound: Set[str] = set()
+    for item in walk_own_scope(module):
+        if isinstance(item, ast.ImportFrom) and any(alias.name == "*" for alias in item.names):
+            return frozenset(names)
+        if isinstance(item, (ast.Import, ast.ImportFrom)):
+            bound.update(import_binding_names(item))
+        elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(item.name)
+        elif isinstance(item, ast.Name) and not isinstance(item.ctx, ast.Load):
+            bound.add(item.id)
+        elif isinstance(item, ast.ExceptHandler) and item.name:
+            bound.add(item.name)
+        elif isinstance(item, (ast.MatchAs, ast.MatchStar)) and item.name:
+            bound.add(item.name)
+        elif isinstance(item, ast.MatchMapping) and item.rest:
+            bound.add(item.rest)
+        elif _namespace_subscript_store(item) is not None:
+            # ``globals()["len"] = …`` or ``vars()["len"] = …`` at module scope.
+            bound.add(cast(str, _namespace_subscript_store(item)))
+    for item in ast.walk(module):
+        if isinstance(item, ast.Global):
+            bound.update(item.names)
+    return frozenset(bound & names)
+
+
+def _namespace_subscript_store(node: ast.AST) -> Optional[str]:
+    """The key of a store or deletion into ``globals()`` or ``vars()`` by a constant string."""
+    if not (isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load)):
+        return None
+    namespace, key = node.value, node.slice
+    if (
+        isinstance(namespace, ast.Call)
+        and isinstance(namespace.func, ast.Name)
+        and namespace.func.id in {"globals", "vars"}
+        and not namespace.args
+        and isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+    ):
+        return key.value
+    return None
+
+
 def _stable_bindings(module: ast.Module) -> Mapping[str, int]:
     """Each stable module name with the index of the top-level statement that first binds it."""
     bindings: Mapping[str, int] = memoized_per_node(

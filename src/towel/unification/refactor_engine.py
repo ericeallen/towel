@@ -81,6 +81,7 @@ from .extraction_policy import protected_definitions
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
 from .import_graph import ImportGraphCache
+from .namespace_writes import ProjectWrites
 from .builtin_mapping_writes import project_may_replace_builtin_mapping
 from .block_signature import (
     BlockBucketKey,
@@ -644,6 +645,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # Every file of the current analysis: helper names must be unique
         # across all of them, because any module may import from any other.
         self._analysis_paths: Tuple[str, ...] = ()
+        self._project_writes: Dict[Path, ProjectWrites] = {}
+        self._attribute_stores: Dict[Path, Optional[FrozenSet[str]]] = {}
         self._output_origin: Optional[Tuple[Path, Path]] = None
         self._signed_block_cache: WeakKeyDictionary[
             FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]

@@ -138,11 +138,15 @@ from .semantic_safety import (
     nested_scopes_cross_block_boundary,
     block_requires_original_frame,
     holds_yield,
+    module_binds,
     modules_imported_alike,
     frame_read_outside_block,
     needs_class_body,
     unbinds_external_name,
 )
+from .attribute_writes import attribute_stores
+from .namespace_writes import ANY_NAME, scan_project_writes
+from ..project_layout import find_project_root
 from .import_graph import (
     ImportChange,
     host_has_stub,
@@ -715,6 +719,12 @@ class PairEvaluation(
             # Relaxed mode: a module every participating module imports alike
             # is the same object in each, and the host holds the import.
             differing = differing - self._modules_imported_alike(placement, functions)
+        if builtin_reads and not self.strict and not self.parameterize_builtins:
+            # Relaxed mode: a builtin means the same in every module unless a
+            # participating module binds the name (docs/design/DECISIONS.md,
+            # "Relaxed mode reads a builtin bare across modules"). Asked to
+            # pass builtins, it passes every one, as strict mode does.
+            builtin_reads = self._bound_by_a_participant(placement, functions, builtin_reads)
         if builtin_reads and not self.parameterize_builtins:
             self._debug_reject(
                 RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE,
@@ -728,8 +738,10 @@ class PairEvaluation(
         return _Placed(unified, rendered, placement, differing | builtin_reads)
 
     @staticmethod
-    def _modules_imported_alike(placement: _Placement, functions: FunctionIndex) -> FrozenSet[str]:
-        """The names every participating module binds by one and the same ``import``."""
+    def _participating_modules(
+        placement: _Placement, functions: FunctionIndex
+    ) -> Optional[List[ast.Module]]:
+        """The module of the helper's host and of every site, or None when one is not at hand."""
         host = placement.home.file_path
         paths = sorted(
             {host} | {replacement.file_path or host for replacement in placement.replacements}
@@ -739,9 +751,75 @@ class PairEvaluation(
             artifacts = functions.in_file(path)
             tree = artifacts[0].scope_analyzer.analyzed_tree if artifacts else None
             if not isinstance(tree, ast.Module):
-                return frozenset()
+                return None
             modules.append(tree)
-        return modules_imported_alike(modules)
+        return modules
+
+    def _bound_by_a_participant(
+        self, placement: _Placement, functions: FunctionIndex, names: FrozenSet[str]
+    ) -> FrozenSet[str]:
+        """Those of ``names`` some participating module binds; all of them when one is unknown."""
+        modules = self._participating_modules(placement, functions)
+        if modules is None:
+            return names
+        bound = frozenset().union(*(module_binds(module, names) for module in modules))
+        return bound | self._written_into_a_participant(placement, names)
+
+    def _written_into_a_participant(
+        self, placement: _Placement, names: FrozenSet[str]
+    ) -> FrozenSet[str]:
+        """Those of ``names`` the project's own files visibly write into a participating module.
+
+        ``pkg.exports.len = fake`` in a test, or ``mock.patch("pkg.exports.len")``
+        (``scan_project_writes``), and a store to an attribute of that name on
+        any receiver (``attribute_stores``), over the files of the host's
+        project (``find_project_root``). When the participating modules do not all
+        stand in that project, or it is a whole filesystem or home directory,
+        what writes them is not known, and every name counts as written.
+        """
+        host = placement.home.file_path
+        paths = {
+            os.path.abspath(path)
+            for path in {host} | {r.file_path or host for r in placement.replacements}
+        }
+        root = find_project_root(Path(host))
+        # Without a packaging marker that is the host's directory: climb out
+        # of its packages to the directory they are imported from, where
+        # the project's tests stand beside them.
+        while (root / "__init__.py").is_file() and root.parent != root:
+            root = root.parent
+        if (
+            root == Path(root.anchor)
+            or root == Path.home()
+            or not all(Path(path).resolve().is_relative_to(root) for path in paths)
+        ):
+            return names
+        writes = self._project_writes.get(root)
+        if writes is None:
+            writes = self._project_writes.setdefault(root, scan_project_writes(root))
+        # Any receiver may be the module: ``install(exports)`` setting
+        # ``module.len`` is a write into it no module resolution can see.
+        if root not in self._attribute_stores:
+            self._attribute_stores[root] = attribute_stores(root, BUILTIN_NAMES)
+        stored = self._attribute_stores[root]
+        if stored is None:
+            return names
+        found: Set[str] = set(stored & names)
+        for path in paths:
+            for write in writes.into(Path(path).resolve()):
+                if write.name == ANY_NAME:
+                    return names
+                if write.name in names:
+                    found.add(write.name)
+        return frozenset(found)
+
+    @classmethod
+    def _modules_imported_alike(
+        cls, placement: _Placement, functions: FunctionIndex
+    ) -> FrozenSet[str]:
+        """The names every participating module binds by one and the same ``import``."""
+        modules = cls._participating_modules(placement, functions)
+        return frozenset() if modules is None else modules_imported_alike(modules)
 
     @staticmethod
     def _host_namespace_reads(

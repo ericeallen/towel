@@ -79,6 +79,7 @@ from .structural_memo import StoredSubstitution
 from .unifier import Unifier
 from .progress import DEFAULT_PROGRESS, ProgressMode
 from .import_graph import ImportGraphCache
+from .namespace_writes import ProjectWrites
 
 
 class BlockSite(NamedTuple):
@@ -324,6 +325,10 @@ class EngineState:
     _type_unreadable: FrozenSet[str]
     """The files of the run that could not be read when it began, as ``_where_checked`` names them."""
     _analysis_paths: Tuple[str, ...]
+    _project_writes: Dict[Path, ProjectWrites]
+    _attribute_stores: Dict[Path, Optional[FrozenSet[str]]]
+    """Per project root, the builtin names its files store as an attribute of anything."""
+    """Per project root, the writes into module namespaces its files make (relaxed builtins)."""
     """Paths from the latest analysis, used to seed a direct application's initial check."""
     _output_origin: Optional[Tuple[Path, Path]]
     """(input, output) when the driver copied its input. A checker answers in
