@@ -826,6 +826,48 @@ def test_a_call_is_not_moved_ahead_of_an_earlier_statement_that_can_fail(
     assert same
 
 
+POSSIBLY_UNBOUND_READ = """\
+def first(flag, items):
+    if flag:
+        bonus = 10
+    try:
+        total = items[0] + bonus + items[1]
+        print("total", total)
+        print("done", total * 2)
+        return total
+    except IndexError:
+        return "empty"
+
+
+def second(flag, items, bonus):
+    try:
+        total = items[0] + bonus + items[1]
+        print("total", total)
+        print("done", total * 2)
+        return total
+    except IndexError:
+        return "empty"
+
+
+print(first(False, []), second(False, [], 3))
+print(first(True, [1, 2]), second(True, [1, 2], 3))
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_read_of_a_possibly_unbound_local_stays_where_it_was(
+    tmp_path: Path, strict: bool
+) -> None:
+    """Review of lane ``expressions``, defect 2: ``bonus`` was unwrapped and read at the call.
+
+    ``items[0]`` raises ``IndexError``, which the block catches, before it
+    reads ``bonus``; read at the call, the unbound ``bonus`` raised
+    ``UnboundLocalError`` first.
+    """
+    generated, same = refactored(tmp_path, POSSIBLY_UNBOUND_READ, strict=strict)
+    assert same
+
+
 REBOUND_MODULE_FUNCTION = """\
 import sys
 
