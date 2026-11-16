@@ -409,9 +409,8 @@ def test_complete_preview_and_dry_both_fail_closed_when_checking_fails(
     assert "Would apply" not in preview.stdout
     assert "towel-preview-" not in preview.stderr
     assert str(root) in preview.stderr if failure == "final" else True
+    assert len(private_stages) == (0 if failure == "baseline" else 2)
     assert all(not path.parent.exists() for path in private_stages)
-    if failure == "final":
-        assert len(private_stages) == 2
     assert not output.exists()
     assert _snapshot(root) == before
     for oracle in closed:

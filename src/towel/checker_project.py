@@ -51,7 +51,7 @@ from typing import (
     Tuple,
 )
 
-from .source_files import TOOL_DIRECTORIES, is_environment, is_probe_file
+from .source_files import TOOL_DIRECTORIES, is_environment, is_probe_file, source_is_skipped
 from .source_text import encode_like
 
 ChangeKind = Literal["created", "changed", "deleted"]
@@ -250,7 +250,11 @@ class CheckerSnapshot:
         still reported as created.
         """
         changes: Dict[Path, ChangeKind] = {change.path: change.kind for change in after}
-        wanted = {self.path_of(name): source for name, source in replacements.items()}
+        wanted = {
+            self.path_of(name): source
+            for name, source in replacements.items()
+            if not source_is_skipped(Path(name))
+        }
         for stale in sorted(self._dirty - set(wanted)):
             # The previous candidate's text; the project's own comes back, or
             # nothing does when that candidate invented the file.
@@ -750,7 +754,7 @@ def _inputs(
         raise ValueError(f"Cannot snapshot cyclic or external source directory: {root}")
     ancestry = ancestors | {resolved}
     for entry in sorted(root.iterdir()):
-        if is_probe_file(entry) or entry.resolve() in layout.excluded:
+        if is_probe_file(entry) or entry.resolve() in layout.excluded or source_is_skipped(entry):
             continue
         destination = target / entry.name
         if entry.is_dir():

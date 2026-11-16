@@ -74,6 +74,21 @@ def source_policy(*, strict: bool, include_ignored: bool = False) -> Iterator[So
         _SOURCE_POLICY.reset(token)
 
 
+def skipped_source_paths() -> tuple[Path, ...]:
+    """Unavailable original inputs, absent from every checker view in a relaxed run."""
+    policy = current_source_policy()
+    return tuple(policy.skipped) if policy is not None and not policy.strict else ()
+
+
+def source_is_skipped(path: Path) -> bool:
+    """Whether an input or its staged copy is beneath an unavailable input."""
+    policy = current_source_policy()
+    if policy is None or policy.strict:
+        return False
+    original = policy.original(path)
+    return any(original.is_relative_to(skipped) for skipped in policy.skipped)
+
+
 def warn_skipped(path: Path, reason: str) -> None:
     """Name an unavailable input once during a relaxed run."""
     policy = _SOURCE_POLICY.get()
