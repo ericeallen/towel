@@ -221,6 +221,77 @@ def test_a_module_name_bound_otherwise_in_one_module_is_still_passed(
     assert _same(tmp_path, source)
 
 
+LIBRARY_CALLS = """
+
+def {name}(value):
+    first = library.transform(value)
+    second = library.transform(first)
+    third = library.transform(second)
+    fourth = library.transform(third)
+    return fourth
+"""
+
+LIBRARY = {
+    "library/__init__.py": "def transform(value):\n    return value + 10\n",
+    "library/sub.py": "def transform(value):\n    return value + 100\n",
+}
+
+
+def _library_project(tmp_path: Path, first_prelude: str, second_prelude: str, tail: str) -> Path:
+    """``pkg.first`` and ``pkg.second`` each call ``library.transform`` four times."""
+    root = _write(
+        tmp_path / "src",
+        {
+            **LIBRARY,
+            "pkg/__init__.py": "",
+            "pkg/first.py": first_prelude + LIBRARY_CALLS.format(name="first"),
+            "pkg/second.py": "import pkg.first\n"
+            + second_prelude
+            + LIBRARY_CALLS.format(name="second")
+            + tail,
+        },
+    )
+    _write(
+        tmp_path,
+        {
+            "driver.py": "import sys\nsys.path.insert(0, sys.argv[1])\n"
+            "from pkg import first, second\n"
+            "print(first.first(1), second.second(1))\n"
+        },
+    )
+    return root
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_a_dotted_import_binds_its_package_not_the_submodule_an_alias_names(
+    tmp_path: Path, strict: bool
+) -> None:
+    """Review of lane reach, finding 2: ``import library.sub`` binds the package ``library``.
+
+    ``import library.sub as library`` binds the submodule. The two statements
+    name the same module but bind different objects to ``library``, so the
+    borrower's ``library.transform`` (adds 100) must not become the host's
+    (adds 10): before the fix relaxed mode printed ``41 41``.
+    """
+    source = _library_project(
+        tmp_path, "import library.sub\n", "import library.sub as library\n", ""
+    )
+    _dry(source, tmp_path / "out", *(["--strict"] if strict else []))
+    driver = tmp_path / "driver.py"
+    assert run_script(driver, str(source)) == (0, "41 401\n", "")
+    assert run_script(driver, str(tmp_path / "out")) == (0, "41 401\n", "")
+
+
+def test_dotted_imports_that_bind_the_same_package_are_alike(tmp_path: Path) -> None:
+    """``import library`` and ``import library.sub`` both bind the package ``library``."""
+    source = _library_project(tmp_path, "import library\n", "import library.sub\n", "")
+    _, generated = _dry(source, tmp_path / "out")
+    (helper,) = _helpers(generated)
+    assert "library" not in _parameters(helper)
+    driver = tmp_path / "driver.py"
+    assert run_script(driver, str(tmp_path / "out")) == run_script(driver, str(source))
+
+
 # -- Builtins across modules -----------------------------------------------------
 
 COUNTS = """

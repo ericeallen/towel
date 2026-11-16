@@ -1240,11 +1240,14 @@ def stable_module_names(module: ast.Module) -> FrozenSet[str]:
 
 
 def modules_imported_alike(modules: Sequence[ast.Module]) -> FrozenSet[str]:
-    """The names every module binds only by one and the same ``import``, and never otherwise.
+    """The names every module binds only to one and the same module by ``import``, and never otherwise.
 
-    ``import re`` in each module, or ``import os.path as osp`` in each: the
-    name is then the object ``sys.modules`` holds under one module name in
-    all of them. Each module must also agree with relaxed mode's assumption
+    What an ``import`` binds is compared, not how it is spelled: ``import
+    os.path`` binds ``os`` to the package ``os``, as ``import os`` does, while
+    ``import os.path as osp`` binds ``osp`` to the submodule ``os.path``. So
+    ``import a.b`` in one module and ``import a.b as a`` in another bind the
+    same name to different modules, and do not count. A name that qualifies
+    is the object ``sys.modules`` holds under one module name in all of them. Each module must also agree with relaxed mode's assumption
     of stable module names (``stable_module_names``): nothing in it rebinds,
     deletes or declares ``global`` the name. ``from`` imports do not count;
     what they bind is an attribute read once, not a module.
@@ -1256,8 +1259,13 @@ def modules_imported_alike(modules: Sequence[ast.Module]) -> FrozenSet[str]:
         for item in walk_own_scope(module):
             if isinstance(item, ast.Import):
                 for alias in item.names:
-                    bound = alias.asname or alias.name.split(".", 1)[0]
-                    targets.setdefault(bound, set()).add(alias.name)
+                    # ``import a.b`` binds ``a`` to the package ``a``;
+                    # ``import a.b as c`` binds ``c`` to the submodule ``a.b``.
+                    package = alias.name.split(".", 1)[0]
+                    bound, module_name = (
+                        (alias.asname, alias.name) if alias.asname else (package, package)
+                    )
+                    targets.setdefault(bound, set()).add(module_name)
             elif isinstance(item, ast.ImportFrom):
                 others.update(import_binding_names(item))
             elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):

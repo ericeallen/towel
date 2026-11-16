@@ -2316,9 +2316,12 @@ A function copied character for character into two modules that each begin
 
 In relaxed mode a name that every participating module binds only by one and
 the same absolute import (`import re` in each, or `import os.path as osp` in
-each) is read bare in the helper; the host already holds the import. Each
-module's `re` is then the object `sys.modules` holds under that name, so the
-two lookups give the same module. This rests on the third assumption of
+each) is read bare in the helper; the host already holds the import. What
+each import binds is compared, not its spelling: `import os.path` binds `os`
+to the package, as `import os` does, while `import os.path as os` binds it to
+the submodule, so those two do not count as alike. Each module's `re` is then
+the object `sys.modules` holds under that name, so the two lookups give the
+same module. This rests on the third assumption of
 [Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes),
 taken for module names bound by an import: the module's own code never rebinds
 the name (checked as `stable_module_names` checks it), and nothing outside it
