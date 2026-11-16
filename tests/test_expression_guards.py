@@ -964,3 +964,115 @@ def _statements_only(tmp_path: Path, source: str) -> str:
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_to_fixed_point(str(path))
     return path.read_text()
+
+
+# -- Review of 2026-11-16 -------------------------------------------------------
+
+UNASSIGNED_AFTER_A_SUBSCRIPT: Dict[str, str] = {
+    "a_later_clauses_variable": """
+        def first(rows, y):
+            try:
+                return [
+                    1
+                    for x in rows
+                    if (
+                        x[0]
+                        + y
+                        + x[1]
+                        + x[2]
+                        + x[3]
+                    ) > 0
+                    for y in x
+                ]
+            except IndexError:
+                return "empty"
+
+        def second(x, y):
+            try:
+                if (
+                    x[0]
+                    + y
+                    + x[1]
+                    + x[2]
+                    + x[3]
+                ) > 0:
+                    return 1
+            except IndexError:
+                return "empty"
+            return 0
+
+        print(first([[]], 7), second([], 7), second([1, 2, 3, 4], 7))
+        """,
+    "a_local_bound_on_one_path": """
+        def first(has_bonus, items):
+            if has_bonus:
+                bonus = 10
+            try:
+                return [
+                    items[0]
+                    + bonus
+                    + items[1]
+                    + items[2]
+                ]
+            except IndexError:
+                return "empty"
+
+        def second(items, bonus):
+            try:
+                value = (
+                    items[0]
+                    + bonus
+                    + items[1]
+                    + items[2]
+                )
+                return value
+            except IndexError:
+                return "empty"
+
+        print(first(False, []), first(True, [1, 2, 3]), second([], 3), second([1, 2, 3], 3))
+        """,
+    "a_block_of_statements": """
+        def first(flag, items):
+            if flag:
+                bonus = 10
+            try:
+                total = items[0] + bonus + items[1]
+                print("total", total)
+                print("done", total * 2)
+                return total
+            except IndexError:
+                return "empty"
+
+        def second(flag, items, bonus):
+            try:
+                total = items[0] + bonus + items[1]
+                print("total", total)
+                print("done", total * 2)
+                return total
+            except IndexError:
+                return "empty"
+
+        print(first(False, []), first(True, [1, 2]), second(False, [], 3))
+        """,
+}
+"""A name that may be unassigned, read after a subscript that fails first."""
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+@pytest.mark.parametrize("name", sorted(UNASSIGNED_AFTER_A_SUBSCRIPT))
+def test_a_name_that_may_be_unassigned_is_not_read_ahead_of_a_subscript(
+    tmp_path: Path, name: str, strict: bool
+) -> None:
+    """Review of the ``expressions`` lane, defect 2 (audit case 44; fixed by ``ux/byvalue``).
+
+    Relaxed mode passed ``y`` (or ``bonus``) by value because every step
+    before its read is quiet. But ``x[0]`` fails first when the list is
+    empty, and the handler caught that; read at the call, the unassigned
+    name raised ``UnboundLocalError`` instead. The name stays a lambda,
+    which is declined, or the code is extracted another way that reads it
+    where it was read.
+    """
+    generated, same = refactored(
+        tmp_path, textwrap.dedent(UNASSIGNED_AFTER_A_SUBSCRIPT[name]), strict=strict
+    )
+    assert same, generated
