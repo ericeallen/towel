@@ -486,8 +486,12 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         Mutates ``replacements`` and ``cluster_contexts`` in place.
         """
         pair = template.pair
+        # A call replaces an expression with the parentheses that only grouped
+        # it, so its lines can reach past the expression's own (``), (``).
         covered: Set[int] = set(_lines_of(pair.block1_range))
         covered.update(_lines_of(pair.block2_range))
+        for replacement in replacements:
+            covered.update(_lines_of(replacement.line_range))
         statements = template.func_def.body[template.preamble_length :]
         for site in self._clustered_sites(template, dce_node, functions):
             lines = _lines_of(site.replacement.line_range)

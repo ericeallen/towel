@@ -40,7 +40,12 @@ from towel.unification.expression_sites import (
 )
 from towel.unification.models import ExpressionPlace
 from towel.unification.splicing import BlockColumns, splice_block
-from tests.test_callback_parameters import helper_calls, refactored, refactored_scenario
+from tests.test_callback_parameters import (
+    helper_calls,
+    refactored,
+    refactored_scenario,
+    run_script,
+)
 from tests.test_class_object_annotations import requires_mypy
 from tests.test_cli_integration import invoke
 
@@ -439,6 +444,59 @@ def test_two_modules_share_the_helper_only_across_modules(tmp_path: Path, mode: 
     assert "for member in members if __extracted_func_0(member, now)]" in listing
     assert "def __extracted_func_0(member, now):" in posting
     assert "    if __extracted_func_0(member, now):\n        return True" in posting
+
+
+SHARED_PARENTHESIS_LINE = """
+def f1(x, y):
+    return (
+        x > 0
+        and x < 100
+        and x % 2 == 0
+        and x != 42
+    ), (
+        y > 0
+        and y < 100
+        and y % 2 == 0
+        and y != 42
+    )
+
+
+def f2(z):
+    if (
+        z > 0
+        and z < 100
+        and z % 2 == 0
+        and z != 42
+    ):
+        return 1
+    return 0
+
+
+print(f1(4, 5), f1(42, 2), f2(4), f2(42))
+"""
+
+
+@pytest.mark.parametrize("mode", ["--no-strict", "--strict"])
+def test_two_sites_that_share_a_parenthesis_line_are_not_both_taken(
+    tmp_path: Path, mode: str
+) -> None:
+    """Review of the ``expressions`` lane, defect 4: ``towel dry`` stopped with "Overlapping replacements".
+
+    The call replaces an expression with its grouping parentheses, so the
+    pair's call in ``f1`` reaches the line ``), (``; the other site of
+    ``f1`` begins on that line. Clustering judged overlap by the
+    expressions' own lines and took both.
+    """
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "mod.py").write_text(SHARED_PARENTHESIS_LINE)
+    options = ["--no-interactive", "--no-types", "--no-format", "--progress", "none", mode]
+    result = invoke(["dry", str(source), str(tmp_path / "out"), *options])
+    assert result.status == 0, result.stdout + result.stderr
+    changed = (tmp_path / "out" / "mod.py").read_text()
+    # Strict mode declines: ``f1`` uses the value and ``f2`` only tests it.
+    assert ("__extracted_func_0(" in changed) == (mode == "--no-strict")
+    assert run_script(source / "mod.py") == run_script(tmp_path / "out" / "mod.py")
 
 
 # -- A later pass finds the helper it made ------------------------------------
