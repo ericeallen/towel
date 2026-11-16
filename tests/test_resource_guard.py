@@ -614,3 +614,41 @@ def test_a_local_helper_cannot_supply_an_imported_helpers_ownership() -> None:
     """Summary identities retain qualification: a same-spelled local body proves nothing abroad."""
     source = "from provider import __extracted_func_0 as make\ndef __extracted_func_0():\n    return 1\ndef work():\n    held, path = make()\n"
     assert _guard(source).refusal is not None
+
+
+@pytest.mark.parametrize("constructor", ["weakref.ref(target)", "tempfile.TemporaryDirectory()"])
+@pytest.mark.parametrize("loop", ["for i in values:", "while flag:", "async for i in values:"])
+@pytest.mark.parametrize("whole_loop", [False, True])
+def test_loop_back_edges_prevent_stable_ownership(
+    constructor: str, loop: str, whole_loop: bool
+) -> None:
+    """Round 2 defect 1: a binding before the call can overwrite it next iteration."""
+    module = ast.parse(
+        "import tempfile, weakref\nasync def work(values, flag):\n    "
+        + loop
+        + "\n        target = make()\n        held = "
+        + constructor
+        + "\n"
+    )
+    function = module.body[1]
+    assert isinstance(function, ast.AsyncFunctionDef)
+    outer = function.body[0]
+    assert isinstance(outer, (ast.For, ast.AsyncFor, ast.While))
+    block = function.body if whole_loop else outer.body[1:]
+    assert resource_guard(block, module).refusal is not None
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "[(held := tempfile.TemporaryDirectory()) for i in values]",
+        "{i: (held := tempfile.TemporaryDirectory()) for i in values}",
+        "{(held := tempfile.TemporaryDirectory()) for i in values}",
+        "((held := tempfile.TemporaryDirectory()) for i in values)",
+        "[weakref.ref(target := make()) for i in values]",
+        "[weakref.ref(target) for target in values]",
+    ],
+)
+def test_comprehensions_are_loops_for_resource_ownership(expression: str) -> None:
+    """Round 2 suspicion: a comprehension's elt is repeated, including walrus stores."""
+    assert _guard("import tempfile, weakref\ndef work(values):\n    held = " + expression).refusal

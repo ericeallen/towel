@@ -425,6 +425,9 @@ def resource_guard(block: Sequence[ast.stmt], module: Optional[ast.AST]) -> Reso
         if owner is not None
         else nodes
     )
+    lifetime_parents = {
+        id(child): node for node in lifetime_nodes for child in ast.iter_child_nodes(node)
+    }
     positions.update({id(node): _position(node) for node in lifetime_nodes})
     bindings = own_scope_bindings(owner.body if owner is not None else block)
     names: set[str] = set()
@@ -486,9 +489,28 @@ def resource_guard(block: Sequence[ast.stmt], module: Optional[ast.AST]) -> Reso
             "Use a `with` statement, or `--strict`."
         )
         parent = parents.get(id(node))
+        if resource and isinstance(parent, ast.withitem) and parent.context_expr is node:
+            continue
+        # Textual positions cannot prove stability across a loop back edge.
+        # Include loops outside a candidate prefix and comprehension bodies:
+        # their generators are siblings of elt/key/value, not ancestors.
+        ancestor = lifetime_parents.get(id(node))
+        while ancestor is not None:
+            if isinstance(
+                ancestor,
+                (
+                    ast.For,
+                    ast.AsyncFor,
+                    ast.While,
+                    ast.ListComp,
+                    ast.SetComp,
+                    ast.DictComp,
+                    ast.GeneratorExp,
+                ),
+            ):
+                return ResourceGuard(refusal=refusal)
+            ancestor = lifetime_parents.get(id(ancestor))
         if resource:
-            if isinstance(parent, ast.withitem) and parent.context_expr is node:
-                continue
             targets: Sequence[ast.expr] = ()
             if isinstance(parent, ast.Assign) and parent.value is node:
                 targets = parent.targets
@@ -501,13 +523,6 @@ def resource_guard(block: Sequence[ast.stmt], module: Optional[ast.AST]) -> Reso
                 if not stable(target.id, node, target):
                     return ResourceGuard(refusal=refusal)
                 names.add(target.id)
-            # A loop may overwrite a direct target on its next iteration,
-            # including when its textual assignment precedes the constructor.
-            ancestor = parent
-            while ancestor is not None:
-                if isinstance(ancestor, (ast.For, ast.AsyncFor, ast.While, ast.comprehension)):
-                    return ResourceGuard(refusal=refusal)
-                ancestor = parents.get(id(ancestor))
         if weak:
             referent = (
                 node.args[0]
