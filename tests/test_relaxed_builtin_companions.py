@@ -35,7 +35,8 @@ def _preserved(root: Path, target: str, driver: str, *, flag: bool) -> None:
         parameterize_builtins=flag,
         skip_trivial_helpers=False,
     )
-    final, _, _ = engine.refactor_to_fixed_point(str(root / target), progress="none")
+    final, applied, _ = engine.refactor_to_fixed_point(str(root / target), progress="none")
+    assert applied > 0, engine.declined_pairs
     (root / target).write_text(final)
     assert _run(root, driver) == before
 
@@ -202,7 +203,10 @@ def test_cross_module_mapping_is_preserved(tmp_path: Path, flag: bool) -> None:
         cross_module_helpers=True,
         parameterize_builtins=flag,
     )
-    engine.refactor_directory_to_fixed_point(str(tmp_path), str(tmp_path), progress="none")
+    results, _ = engine.refactor_directory_to_fixed_point(
+        str(tmp_path), str(tmp_path), progress="none"
+    )
+    assert sum(count for count, _ in results.values()) > 0, engine.declined_pairs
     assert _run(tmp_path, "drive.py") == before
 
 

@@ -46,6 +46,7 @@ def _preserved(tmp_path: Path, source: str, driver: str = "") -> int:
         strict=False, min_lines=2, max_parameters=8, skip_trivial_helpers=False
     )
     final, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+    assert applied > 0, engine.declined_pairs
     path.write_text(final + "\n" + driver)
     assert _observe(path) == before
     return applied
@@ -232,7 +233,8 @@ def test_function_specialization_keeps_effects(tmp_path: Path, generated: bool) 
     path = tmp_path / "subject.py"
     path.write_text(source)
     engine = UnificationRefactorEngine(strict=False, skip_trivial_helpers=False)
-    output, _, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+    output, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+    assert applied > 0, engine.declined_pairs
     assert _collection_trace(output) == _collection_trace(source)
 
 
@@ -248,7 +250,8 @@ def _project_preserved(root: Path, files: dict[str, str], driver: str) -> None:
         skip_trivial_helpers=False,
         cross_module_helpers=True,
     )
-    engine.refactor_directory_to_fixed_point(str(root), str(root), progress="none")
+    results, _ = engine.refactor_directory_to_fixed_point(str(root), str(root), progress="none")
+    assert sum(count for count, _ in results.values()) > 0, engine.declined_pairs
     assert _run(root, "driver.py") == before
 
 
@@ -331,7 +334,8 @@ def test_helper_imports_close_no_cycle(tmp_path: Path, safe: bool) -> None:
     engine = UnificationRefactorEngine(
         strict=False, skip_trivial_helpers=False, cross_module_helpers=True
     )
-    engine.refactor_directory_to_fixed_point(str(root), str(root), progress="none")
+    results, _ = engine.refactor_directory_to_fixed_point(str(root), str(root), progress="none")
+    assert sum(count for count, _ in results.values()) > 0, engine.declined_pairs
     for name, expected in before.items():
         assert expected[0] == 0
         assert _imports(root, name) == expected
@@ -361,7 +365,8 @@ def test_cross_module_helper_reuse_preserves_values(tmp_path: Path) -> None:
     _package(root, 3)
     before = _runtime(root, 3)
     engine = UnificationRefactorEngine(strict=False, min_lines=3, cross_module_helpers=True)
-    engine.refactor_directory_to_fixed_point(str(root), str(root), progress="none")
+    results, _ = engine.refactor_directory_to_fixed_point(str(root), str(root), progress="none")
+    assert sum(count for count, _ in results.values()) > 0, engine.declined_pairs
     assert _runtime(root, 3) == before
 
 
@@ -381,7 +386,7 @@ for customer in ({}, {'years_member': 9}, {'total_purchases': 2000}, {'years_mem
         strict=False, skip_trivial_helpers=False, cross_module_helpers=True
     )
     result, _ = engine.refactor_directory_to_fixed_point(str(root), str(root), progress="none")
-    assert result
+    assert sum(count for count, _ in result.values()) > 0, engine.declined_pairs
     assert _run(root, "drive.py") == before
 
 
@@ -413,7 +418,8 @@ def test_original_sql_generator_preserves_rendering(tmp_path: Path) -> None:
     path = tmp_path / "generator.py"
     path.write_text(SQL_GENERATOR)
     engine = UnificationRefactorEngine(strict=False, min_lines=3, skip_trivial_helpers=False)
-    final, _, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+    final, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+    assert applied > 0, engine.declined_pairs
     assert _rendered_sql(final) == _rendered_sql(SQL_GENERATOR)
 
 

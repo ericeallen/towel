@@ -11,6 +11,7 @@ Every engine explicitly selects relaxed mode, including with --towel-strict.
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
@@ -394,7 +395,18 @@ def test_relaxed_suppressing_context(tmp_path: Path, opaque: bool, typed: bool) 
         arguments.append("--no-types")
     result = invoke(arguments)
     assert result.status == 0, result.stderr
-    assert _observe(output.read_text(), "") == before
+    transformed = output.read_text()
+    if typed:
+        # The unsafe candidate reads a possibly unbound local; the safe
+        # arithmetic suffix does not repay its annotated helper's overhead.
+        assert "thunk_of_possibly_unbound_local" in result.stdout
+        assert "unprofitable_helper" in result.stdout
+        assert "No refactorings found!" in result.stdout
+        assert ast.dump(ast.parse(transformed)) == ast.dump(ast.parse(source))
+    else:
+        assert "Applied 1 refactoring(s)" in result.stdout
+        assert "def __extracted_func_" in transformed
+    assert _observe(transformed, "") == before
 
 
 def _run_project(root: Path, driver: str) -> str:
