@@ -1223,14 +1223,12 @@ def test_original_owned_super_partials_remain_refused(
         else DRIVER
     )
     outcome = _refactored(tmp_path, source, caplog, driver=driver)
-    if strict_lifetime_refusal():
-        # Past 3.13 no transfer is certified, whole body or partial.
-        assert outcome.applied == 0
-        assert outcome.source == textwrap.dedent(source).lstrip("\n")
-        assert "lifetime_order_uncertified" in outcome.reasons
-        return
-    assert "owned_binding_frame_boundary" in outcome.reasons
-    if not whole_bodies:
+    assert (
+        "lifetime_order_uncertified"
+        if strict_lifetime_refusal()
+        else "owned_binding_frame_boundary"
+    ) in outcome.reasons
+    if not whole_bodies or strict_lifetime_refusal():
         assert outcome.applied == 0
         assert outcome.source == textwrap.dedent(source).lstrip("\n")
         return

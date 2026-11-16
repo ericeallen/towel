@@ -43,44 +43,24 @@ mapping's keys; a target list unpacking its value. A global or builtin name
 is an effect: reading it raises ``NameError`` when nothing binds it. Nothing
 after a ``return`` or ``raise`` is reached, so no thunk there is inlined.
 
-That is the whole of strict mode's rule but for one case, sound in both
-modes: a list or dict display of constants (``[0.0, 0.0]``) makes a new
-object, cannot fail and runs nothing, so it is passed by value wherever the
-helper evaluates it at most once per call (``_evaluated_at_most_once``).
+That is the whole of strict mode's rule.
 
 Relaxed mode passes arguments by value and keeps a thunk only where one is
 clearly necessary (docs/DECISIONS.md, "Relaxed mode passes arguments by
-value"). ``ValuePolicy`` carries what it assumes, and three more rules follow
-from it:
-
-- an expression with no call in it (``_plain``: attribute chains,
-  subscripts, operators, comparisons, f-strings, displays) is passed by
-  value when the helper evaluates it exactly once on every path and every
-  step before it is quiet (``_quiet``): none calls anything, stores to an
-  attribute or a subscript, deletes, or rebinds a name the expression reads,
-  so none can change what the expression gives. A ``try`` whose handlers
-  cannot catch what such an expression raises does not end the prefix, and
-  neither does an ``if`` that only assigns names;
-- an expression that calls something is passed by value, whatever its
-  result, where no earlier statement of the helper can run code or fail
-  and its own statement has done nothing before it but read attributes
-  and names that are sure to be bound
-  (``db.paginate(current_user.posts(), …)``): the call is evaluated ahead
-  of those reads, such as the lookup of the method it is an argument of,
-  and of nothing else.
-  It is not moved past a subscript, an operator or a comparison, whose
-  failures programs catch, or past a name that may be unbound, and it
-  never leaves a ``try``;
-- a concatenation with a string literal, or a sign applied to a name
-  (``_simple``), is passed by value anywhere, provided the block reads the
-  names it reads nowhere else (``_Translation``): nothing in the block
-  then tests, validates or changes its operands before it.
+value"). ``ValuePolicy`` carries what it assumes. The prefix rule is the
+same, with three differences: a thunk's result need not be immutable
+(``any_result``); a module-level or builtin name every site resolves is read
+without failing (``certain_names``); and an ``if`` whose tests and values
+can neither fail nor run code, and which only assigns names, does not end
+the prefix (``_quiet_branch``). Every site's expression must read only names
+its call site is sure to resolve. An expression, with or without a call, is
+never moved past a step that can fail: plain values have no side effects,
+but they can raise, and the exception the program raises must not change.
 """
 
 from __future__ import annotations
 
 import ast
-import builtins
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
@@ -132,40 +112,6 @@ Step = Union[ast.AST, _Operation]
 """One step of evaluation: a node, once its operands are evaluated, or an operation on a value."""
 
 
-_UNRELATED_FAILURES = (
-    OSError,
-    EOFError,
-    ImportError,
-    AssertionError,
-    BufferError,
-    StopIteration,
-    StopAsyncIteration,
-    SyntaxError,
-    SystemExit,
-    KeyboardInterrupt,
-    GeneratorExit,
-)
-
-UNRELATED_HANDLERS: FrozenSet[str] = frozenset(
-    name
-    for name, value in vars(builtins).items()
-    if isinstance(value, type) and issubclass(value, _UNRELATED_FAILURES)
-)
-"""Builtin exception classes that a plain expression does not raise.
-
-Reading an attribute, subscripting, comparing and arithmetic fail with
-``AttributeError``, a ``LookupError``, ``TypeError``, an ``ArithmeticError``,
-``ValueError`` or ``NameError``; an abstract property raises
-``NotImplementedError``, a dead weak proxy ``ReferenceError``, a deprecated
-attribute a warning that ``-W error`` turns into an exception, and a large
-string ``MemoryError``. The classes listed here, and their subclasses, are
-none of those and no base of them: ``except TimeoutError`` cannot catch what
-``client.get_profile`` raises, so that lookup may leave the ``try``.
-``except Exception``, ``except KeyError`` or ``except RuntimeError`` might,
-and such a ``try`` keeps its thunks.
-"""
-
-
 @dataclass(frozen=True)
 class ValuePolicy:
     """What a mode lets this pass assume when it turns a thunk back into a value.
@@ -183,8 +129,6 @@ class ValuePolicy:
     those it is sure to resolve, less module names a callee may rebind between reads."""
     renames: Sequence[Mapping[str, str]] = ()
     """Per block, the hygienic renames of its names to the helper's spelling."""
-    unrelated_handlers: FrozenSet[str] = frozenset()
-    """The names of ``UNRELATED_HANDLERS`` that mean the builtin where the helper stands."""
     certain_names: FrozenSet[str] = frozenset()
     """Relaxed: module-level and builtin names every site is sure to resolve, which the
     helper, standing in the sites' module, therefore reads without failing."""
@@ -204,45 +148,24 @@ def inline_leading_thunks(
     In strict mode those are the thunks the helper evaluates first, once
     and unconditionally, whose every caller proves an immutable result (an
     eager parameter holds its value until the helper returns, where the
-    thunk's result was a temporary), and a display of constants evaluated at
-    most once. Relaxed mode adds the module docstring's rules.
+    thunk's result was a temporary). Relaxed mode adds the module
+    docstring's rules.
 
-    A call's arguments are evaluated left to right, so a thunk that calls
-    something is inlined only while it follows, in the signature, every
-    thunk inlined before it, and an expression without a call only while it
-    follows every such thunk. Returns the inlined parameter names;
-    ``helper`` and ``substitution`` are updated in place.
+    A call's arguments are evaluated left to right, so a thunk is inlined
+    only while it follows, in the signature, every thunk inlined before it:
+    each may fail or run code, and must do so in the block's order.
+    Returns the inlined parameter names; ``helper`` and ``substitution``
+    are updated in place.
     """
     inlined: List[str] = []
-    last_call = -1
-    calls_allowed = True
-    for candidate in _leading_candidates(helper, substitution, policy):
-        position = param_order[candidate.name]
-        if candidate.calls:
-            if not calls_allowed or any(position <= param_order[name] for name in inlined):
-                break
-            last_call = position
-        elif position <= last_call:
-            # It stays a thunk, a step that can raise, ahead of what follows.
-            calls_allowed = False
-            continue
-        inlined.append(candidate.name)
+    for name in _leading_candidates(helper, substitution, policy):
+        if any(param_order[name] <= param_order[earlier] for earlier in inlined):
+            break
+        inlined.append(name)
     inlined.extend(
         name for name in _movable_anywhere(helper, substitution, policy) if name not in inlined
     )
     return _apply(helper, substitution, inlined)
-
-
-@dataclass(frozen=True)
-class _Candidate:
-    """A thunk of the helper's certified prefix.
-
-    ``calls`` when some site's expression calls something, or the mode does
-    not assume plain values: its place among the arguments then matters.
-    """
-
-    name: str
-    calls: bool
 
 
 def _eligible_leading_thunks(
@@ -252,20 +175,17 @@ def _eligible_leading_thunks(
 
     This discovery does not change the helper or substitution.
     """
-    return tuple(candidate.name for candidate in _leading_candidates(helper, substitution, policy))
+    return _leading_candidates(helper, substitution, policy)
 
 
 def _leading_candidates(
     helper: ast.FunctionDef, substitution: Substitution, policy: ValuePolicy
-) -> Tuple[_Candidate, ...]:
+) -> Tuple[str, ...]:
     """The thunks the helper evaluates exactly once, ahead of anything that could tell.
 
-    A thunk is a function parameter with no bound variables. One whose
-    expression calls something at any site must come before every step that
-    can run code or raise (under ``plain_values``, attribute reads of its
-    own statement aside), and its callers must prove an immutable result
-    unless the policy says ``any_result``. One whose every site is a plain
-    expression may, under ``plain_values``, follow quiet steps.
+    A thunk is a function parameter with no bound variables. It must come
+    before every step that can run code or raise, and its callers must
+    prove an immutable result unless the policy says ``any_result``.
     """
     thunks = {name for name, bound in substitution.function_params.items() if not bound}
     if not thunks:
@@ -290,16 +210,10 @@ class _PrefixScan:
         self.policy = policy
         self.thunks = thunks
         self.translation = _Translation(substitution, policy)
-        self.found: List[_Candidate] = []
+        self.found: List[str] = []
         self.bound: FrozenSet[str] = _parameter_names(helper.args)
-        # Whether every step so far that is not an accepted thunk can neither
-        # run code nor raise (``pure``), or at most reads an attribute, in
-        # the statement being scanned (``lookups``). The scan ends at the
-        # first step that is not quiet.
-        self.pure = True
-        self.lookups = True
+        # Names the prefix binds, which a site's expression must not read.
         self.rebound: Set[str] = set()
-        self.in_try = False
         self._own_names = _parameter_names(helper.args) | {
             node.id
             for node in ast.walk(helper)
@@ -314,39 +228,15 @@ class _PrefixScan:
             if isinstance(statement, (ast.Global, ast.Nonlocal, ast.Pass)):
                 continue
             if self.policy.plain_values:
-                if isinstance(statement, ast.Try) and self._handlers_unrelated(statement):
-                    # Entering a ``try`` runs nothing. What a plain expression
-                    # raises passes these handlers by, so it may be raised at
-                    # the call instead; what follows the ``try`` is reached
-                    # from a handler too.
-                    outer, self.in_try = self.in_try, True
-                    self.block(statement.body)
-                    self.in_try = outer
-                    return False
-                bound = _quiet_branch(statement)
+                bound = _quiet_branch(statement, self.bound | self._certain)
                 if bound is not None:
-                    self.pure = self.lookups = False
                     self.rebound |= bound
                     continue
-            # A call is moved ahead of attribute reads of its own statement
-            # only: ``base = p.prop`` on the line above stays ahead of it.
-            self.lookups = self.pure
             steps, complete = _evaluation_prefix(statement)
             for step in steps:
                 if not self._step(step):
                     return False
             if not complete:
-                return False
-        return True
-
-    def _handlers_unrelated(self, statement: ast.Try) -> bool:
-        """Whether no handler of ``statement`` can catch what a plain expression raises."""
-        if statement.finalbody or not statement.handlers:
-            return False
-        usable = self.policy.unrelated_handlers - self._own_names
-        for handler in statement.handlers:
-            caught = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
-            if not all(isinstance(kind, ast.Name) and kind.id in usable for kind in caught):
                 return False
         return True
 
@@ -359,45 +249,39 @@ class _PrefixScan:
             self.bound = self.bound | _names_bound_by(step)
             self.rebound |= _names_bound_by(step)
             return True
-        if isinstance(step, ast.Name) and isinstance(step.ctx, ast.Load):
-            if step.id in self._certain:
-                return True
-        if self.policy.plain_values and _quiet(step):
-            self.pure = False
-            # A name not known to be bound raises ``NameError``, which the
-            # block would have raised before any call that follows it.
-            if not isinstance(step, ast.Attribute):
-                self.lookups = False
-            return True
-        return False
+        return (
+            isinstance(step, ast.Name)
+            and isinstance(step.ctx, ast.Load)
+            and step.id in self._certain
+        )
 
     def _thunk(self, name: str) -> bool:
-        expressions = [expr for _, expr in self.substitution.param_expressions.get(name, ())]
-        plain = bool(expressions) and all(
-            isinstance(expr, ast.expr) and _plain(expr) for expr in expressions
+        """Whether thunk ``name``, evaluated here, may be evaluated at the call; it ends the prefix if not."""
+        if name in self.found or not _single_use(self.helper, name):
+            return False
+        if self.policy.plain_values and (
+            self._reads_rebound(name) or not self._reads_only_available(name)
+        ):
+            # Relaxed mode also declines to move a read of a name past the
+            # prefix's own binding of it, or a read the call site might not
+            # resolve; strict mode's immutable results read no name.
+            return False
+        if not (self.policy.any_result or _immutable_thunk_results(self.substitution, name)):
+            return False
+        self.found.append(name)
+        return True
+
+    def _reads_only_available(self, name: str) -> bool:
+        """Whether every site's expression reads only names its call site is sure to resolve.
+
+        A free variable that may be unbound was made a thunk so that the
+        helper reads it where the block did (``thunk_of_possibly_unbound_local``).
+        """
+        available = self.policy.available
+        return all(
+            index < len(available) and loaded_names(expr) <= available[index]
+            for index, expr in self.substitution.param_expressions.get(name, ())
         )
-        repeated = any(candidate.name == name for candidate in self.found) or not _single_use(
-            self.helper, name
-        )
-        first = self.pure or (self.policy.plain_values and self.lookups)
-        # Relaxed mode also declines to move a read of a name past the
-        # prefix's own binding of it; strict mode's prefix was never asked.
-        movable = not repeated and not (self.policy.plain_values and self._reads_rebound(name))
-        if movable:
-            if first and not self.in_try:
-                if self.policy.any_result or _immutable_thunk_results(self.substitution, name):
-                    # Strict mode keeps every inlined thunk in signature order.
-                    unordered = plain and self.policy.plain_values
-                    self.found.append(_Candidate(name, calls=not unordered))
-                    return True
-            elif plain and self.policy.plain_values:
-                self.found.append(_Candidate(name, calls=False))
-                return True
-        # It stays a thunk. One that calls nothing is a quiet step.
-        if plain and self.policy.plain_values:
-            self.pure = self.lookups = False
-            return True
-        return False
 
     def _reads_rebound(self, name: str) -> bool:
         """Whether a site's expression reads a name the prefix has bound before it."""
@@ -455,16 +339,17 @@ def _movable_anywhere(
       every site passes such a value was deferred for a reason of its own
       (a module name a callee may rebind, an operator on a pooled literal)
       and stays one;
-    - a display of constants, where the helper evaluates the thunk at most
-      once per call: the display makes a new object each time it runs, and
-      a call makes one too. A set can be weakly referenced, so strict mode,
-      which preserves when an object is released, leaves sets deferred;
-    - under ``plain_values``, a simple computation (``_simple``) on names
-      the block mentions nowhere else.
+    - in relaxed mode, a display of constants, where the helper evaluates
+      the thunk at most once per call: the display makes a new object each
+      time it runs, and a call makes one too. Strict mode keeps it deferred:
+      what the block adds to the object (``consume([0])`` appending one with
+      a finalizer) would live until the helper returns, not until the
+      statement that used it ends.
+
+    Anything else that can fail is evaluated where the helper evaluates it,
+    unless the prefix scan finds it there exactly once on every path.
     """
     movable: List[str] = []
-    translation = _Translation(substitution, policy)
-    mentioned: Optional[Set[str]] = None
     for name, bound in substitution.function_params.items():
         expressions = substitution.param_expressions.get(name, ())
         if bound or not expressions:
@@ -478,17 +363,10 @@ def _movable_anywhere(
             if is_eagerly_evaluable(expression, available):
                 continue
             varies = True
-            if _constant_display(expression, sets=policy.any_result):
+            if policy.any_result and _constant_display(expression):
                 if once is None:
                     once = _single_use(helper, name) and _evaluated_at_most_once(helper, name)
                 if once:
-                    continue
-                break
-            if policy.plain_values and _simple(expression, available):
-                if mentioned is None:
-                    mentioned = _names_mentioned(helper)
-                elsewhere = translation.at_site(index, mentioned - {name})
-                if not (elsewhere & loaded_names(expression)):
                     continue
             break
         else:
@@ -497,24 +375,24 @@ def _movable_anywhere(
     return movable
 
 
-def _constant_display(expression: ast.expr, *, sets: bool) -> bool:
-    """Whether ``expression`` is a list or dict (or, with ``sets``, set) display of constants.
+def _constant_display(expression: ast.expr) -> bool:
+    """Whether ``expression`` is a list, dict or set display of constants.
 
     Elements may be such displays or tuples of constants themselves. Nothing
     in one runs code or can fail: a constant key hashes on its builtin type
     (``_hashes_quietly``).
     """
     if isinstance(expression, ast.List):
-        return all(_constant_element(element, sets=sets) for element in expression.elts)
+        return all(_constant_element(element) for element in expression.elts)
     if isinstance(expression, ast.Dict):
         return all(
             key is not None
             and isinstance(key, ast.Constant)
             and _hashes_quietly(key, expression)
-            and _constant_element(value, sets=sets)
+            and _constant_element(value)
             for key, value in zip(expression.keys, expression.values)
         )
-    if isinstance(expression, ast.Set) and sets:
+    if isinstance(expression, ast.Set):
         return all(
             isinstance(element, ast.Constant) and _hashes_quietly(element, expression)
             for element in expression.elts
@@ -522,154 +400,63 @@ def _constant_display(expression: ast.expr, *, sets: bool) -> bool:
     return False
 
 
-def _constant_element(expression: ast.expr, *, sets: bool) -> bool:
+def _constant_element(expression: ast.expr) -> bool:
     if isinstance(expression, ast.Tuple):
-        return all(_constant_element(element, sets=sets) for element in expression.elts)
+        return all(_constant_element(element) for element in expression.elts)
     if isinstance(expression, ast.UnaryOp):
         return is_eagerly_evaluable(expression, frozenset())
-    return isinstance(expression, ast.Constant) or _constant_display(expression, sets=sets)
+    return isinstance(expression, ast.Constant) or _constant_display(expression)
 
 
-def _simple(expression: ast.expr, available: AbstractSet[str]) -> bool:
-    """Whether ``expression`` computes an immutable value from values that must be immutable.
-
-    Two forms. ``"text " + name`` (any chain of ``+`` holding a string or
-    bytes literal, over constants and names the site resolves): it gives a
-    value only if every operand is a string, strings do not change, and the
-    result is a new string. ``-name`` (also ``+`` and ``~``): a number's.
-    Either raises ``TypeError`` when an operand is of another type, so the
-    caller also requires that nothing else in the block reads the operands,
-    and so that nothing in it guards the computation (``if lang is not
-    None``). ``not name`` is left out: the truth of a list or a dict changes
-    as it is filled.
-    """
-    if is_eagerly_evaluable(expression, available):
-        return True
-    if isinstance(expression, ast.Tuple):
-        return all(_simple(element, available) for element in expression.elts)
-    if isinstance(expression, ast.UnaryOp):
-        return isinstance(expression.op, (ast.USub, ast.UAdd, ast.Invert)) and is_eagerly_evaluable(
-            expression.operand, available
-        )
-    operands = _concatenated(expression)
-    return (
-        len(operands) > 1
-        and any(
-            isinstance(operand, ast.Constant) and isinstance(operand.value, (str, bytes))
-            for operand in operands
-        )
-        and all(
-            isinstance(operand, (ast.Constant, ast.Name))
-            and is_eagerly_evaluable(operand, available)
-            for operand in operands
-        )
-    )
-
-
-def _concatenated(expression: ast.expr) -> List[ast.expr]:
-    """The operands of a chain of ``+``, left to right; the expression itself when it is not one."""
-    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
-        return [*_concatenated(expression.left), *_concatenated(expression.right)]
-    return [expression]
-
-
-_NOT_PLAIN = (
-    ast.Call,
-    ast.Await,
-    ast.Yield,
-    ast.YieldFrom,
-    ast.NamedExpr,
-    ast.Starred,
-    ast.ListComp,
-    ast.SetComp,
-    ast.DictComp,
-    ast.GeneratorExp,
-)
-
-
-def _plain(expression: ast.expr) -> bool:
-    """Whether ``expression`` calls nothing, awaits nothing and iterates nothing.
-
-    What is left reads names, attributes and subscripts, applies operators
-    and comparisons, formats an f-string and builds displays, which relaxed
-    mode takes to have no side effects. A lambda without defaults is made,
-    not run; one with defaults, or a ``**`` in a dict display, is left out.
-    """
-    pending: List[ast.AST] = [expression]
-    while pending:
-        node = pending.pop()
-        if isinstance(node, _NOT_PLAIN):
-            return False
-        if isinstance(node, ast.Lambda):
-            if node.args.defaults or node.args.kw_defaults:
-                return False
-            continue
-        if isinstance(node, ast.Dict) and any(key is None for key in node.keys):
-            return False
-        pending.extend(ast.iter_child_nodes(node))
-    return True
-
-
-def _quiet(step: Step) -> bool:
-    """Whether a step that may raise still changes nothing a plain expression reads.
-
-    Reading a name, an attribute or a subscript, an operator, a comparison,
-    formatting, hashing a key. Not a call, a store to an attribute or a
-    subscript, an augmented assignment, a ``del``, unpacking, or ``**``.
-    """
-    if isinstance(step, _Operation):
-        return step.kind in (_Kind.HASH, _Kind.READ)
-    if isinstance(step, (ast.Name, ast.Attribute, ast.Subscript)):
-        return isinstance(step.ctx, ast.Load)
-    return isinstance(
-        step, (ast.BinOp, ast.UnaryOp, ast.Compare, ast.FormattedValue, ast.JoinedStr, ast.Slice)
-    )
-
-
-def _quiet_branch(statement: ast.stmt) -> Optional[FrozenSet[str]]:
+def _quiet_branch(statement: ast.stmt, bound: AbstractSet[str]) -> Optional[FrozenSet[str]]:
     """The names an ``if`` that only assigns names may bind; None for any other statement.
 
-    Every path through such a statement is quiet and falls through to the
-    next statement: its tests and values are plain, and it holds nothing but
-    assignments to names, ``pass`` and more of the same.
+    Every path through such a statement can neither fail nor run code, and
+    falls through to the next statement: its values are effect-free given
+    ``bound``, the names sure to be bound before it, its tests are identity
+    comparisons of such values (whose truth is a ``bool``), and it holds
+    nothing but assignments to names, ``pass`` and more of the same.
     """
     if not isinstance(statement, ast.If):
         return None
-    bound: Set[str] = set()
+    assigned: Set[str] = set()
     pending: List[ast.stmt] = [statement]
     while pending:
         current = pending.pop()
         if isinstance(current, ast.If):
-            if not _plain(current.test):
+            if not _identity_test(current.test, bound):
                 return None
             pending.extend([*current.body, *current.orelse])
         elif isinstance(current, ast.Assign):
-            if not _plain(current.value):
+            if not effect_free(current.value, bound):
                 return None
             for target in current.targets:
                 if not isinstance(target, ast.Name):
                     return None
-                bound.add(target.id)
+                assigned.add(target.id)
         elif isinstance(current, ast.AnnAssign):
             if not isinstance(current.target, ast.Name):
                 return None
             if current.value is not None:
-                if not _plain(current.value):
+                if not effect_free(current.value, bound):
                     return None
-                bound.add(current.target.id)
+                assigned.add(current.target.id)
         elif not isinstance(current, ast.Pass):
             return None
-    return frozenset(bound)
+    return frozenset(assigned)
 
 
-def _names_mentioned(helper: ast.FunctionDef) -> Set[str]:
-    """Every name the helper's body reads, binds or deletes."""
-    return {
-        node.id
-        for statement in helper.body
-        for node in ast.walk(statement)
-        if isinstance(node, ast.Name)
-    }
+def _identity_test(test: ast.expr, bound: AbstractSet[str]) -> bool:
+    """Whether ``test`` is ``a is b`` or ``a is not b`` over effect-free operands, or ``not`` of one."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return _identity_test(test.operand, bound)
+    return (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], (ast.Is, ast.IsNot))
+        and effect_free(test.left, bound)
+        and effect_free(test.comparators[0], bound)
+    )
 
 
 def _evaluated_at_most_once(helper: ast.FunctionDef, name: str) -> bool:
@@ -806,6 +593,44 @@ def effect_free(expression: ast.expr, bound: AbstractSet[str] = frozenset()) -> 
     except _Stop:
         return False
     return True
+
+
+def reads_first(expression: ast.expr, names: Sequence[str]) -> bool:
+    """Whether evaluating ``expression`` reads ``names``, in that order, before anything else.
+
+    Every path through ``expression`` must read each of them, and before any
+    other step: reading another name, an attribute or a subscript, or
+    calling. A function of ``names`` called as ``callback(*names)`` where the
+    expression stood then reads them exactly when the expression did, and
+    fails as it did when one is unbound. ``value if flag else 0`` and ``flag
+    and value`` read ``value`` only on some paths; ``a.x + b.y`` reads ``b``
+    after ``a.x``, which may fail first. An expression that binds one of
+    ``names`` (``(item := …)``) would bind the function's parameter instead.
+    """
+    if any(
+        isinstance(node, ast.NamedExpr)
+        and isinstance(node.target, ast.Name)
+        and node.target.id in names
+        for node in ast.walk(expression)
+    ):
+        return False
+    pending = list(names)
+    try:
+        for step in _walk(expression):
+            if not pending:
+                return True
+            if not (
+                isinstance(step, ast.Name)
+                and isinstance(step.ctx, ast.Load)
+                and step.id in names
+                and (step.id == pending[0] or step.id not in pending)
+            ):
+                return False
+            if step.id == pending[0]:
+                pending.pop(0)
+    except _Stop:
+        return False
+    return not pending
 
 
 def _parameter_names(arguments: ast.arguments) -> FrozenSet[str]:

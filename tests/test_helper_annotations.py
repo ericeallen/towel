@@ -591,15 +591,14 @@ def test_original_owned_annotated_local_partial_stays_refused(
         skip_trivial_helpers=False, min_lines=2, annotate_helpers=False
     )
     proposals = engine.analyze_file(str(path))
-    if not argument_ownership._supported_runtime():
-        # Past 3.13 no transfer is certified, whole body or partial.
-        assert proposals == []
-        assert "lifetime_order_uncertified" in engine.declined_pairs
-        assert path.read_text() == source
-        return
-    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    reason = (
+        "owned_binding_frame_boundary"
+        if argument_ownership._supported_runtime()
+        else "lifetime_order_uncertified"
+    )
+    assert reason in engine.declined_pairs
     assert path.read_text() == source
-    if not whole_bodies:
+    if not whole_bodies or not argument_ownership._supported_runtime():
         assert proposals == []
         return
     (proposal,) = proposals

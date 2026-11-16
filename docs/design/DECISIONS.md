@@ -2136,40 +2136,48 @@ itself when one of these holds for it at every call site.
    deletes it, and no function declares it `global`. Module data (`LIMIT = 3`,
    or `json = None` in an `except ImportError`) does not qualify. A name
    defined below the function that reads it qualifies only if nothing stands
-   between them but definitions, imports and assignments without a call, so
-   that no module-level code can run the function before the name exists.
-2. *The helper evaluates it exactly once on every path, and nothing before it
-   could change its value.* The expression calls nothing (attribute chains,
-   subscripts, operators, comparisons, f-strings and displays over the call
-   site's values; the second assumption), and every step the helper takes
-   before it is quiet: no call, no `await` or `yield`, no store to an
-   attribute or a subscript, no augmented assignment, no `del`, no unpacking,
-   and no rebinding of a name the expression reads. Formatting a value in an
-   f-string, testing its truth and hashing it as a key are taken to be plain
-   in the same way. An `if` that only assigns names does not end such a
-   prefix. Neither does entering a `try` whose every handler names a builtin
-   exception class that cannot catch what a plain expression raises
-   (`except TimeoutError`, not `except Exception`, `except KeyError` or
-   `except RuntimeError`), and that has no `finally`. An expression that calls
-   something is passed by value where no earlier statement of the helper can
-   run code or fail, and its own statement has done nothing before it but
-   read attributes and names that are sure to be bound
-   (`db.paginate(current_user.following_posts(), …)`, `print(render(row))`):
-   the call is evaluated ahead of those reads, such as the lookup of the
-   method it is an argument of, and of nothing else. It is never moved out of
-   a `try`.
+   between them that can run the function before the name exists: no call,
+   and no definition whose decorators, defaults or annotations call
+   something, and no class with decorators, keywords, a base that may define
+   `__init_subclass__`, or an attribute whose value may define
+   `__set_name__`. Imports are taken to run nothing of the importing module.
+2. *The helper evaluates it exactly once on every path, and nothing it does
+   before could change its value or fail.* Passing by value moves the
+   expression to the call, ahead of every step the helper takes before it,
+   so each of those steps must neither run code nor fail: binding a name,
+   reading one that is sure to be bound (a parameter, a name the prefix has
+   bound, or a module function, class, import or builtin every site
+   resolves), building a display of such values, and an `if` whose tests
+   are `is` or `is not` comparisons of such values and which only assigns
+   names. The expression may itself call something, read attributes and
+   subscripts, and fail; it is then evaluated at the call exactly where the
+   block would have evaluated it first, and two such expressions keep the
+   block's order. It must read only names its call site is sure to resolve,
+   and none that the prefix rebinds. Anything that can fail ends the
+   prefix, whatever the second assumption says: a plain value has no side
+   effects, but it can raise, and the exception a program raises, and when,
+   must not change. So an attribute read, a subscript, an operator, a
+   comparison, formatting a value (an f-string field runs `__format__`, and
+   through it `__str__` or `__repr__`), hashing a key that is not a constant
+   (`__hash__`), and iterating (`__iter__`) all end it. So does entering a
+   `try`: raised at the call, what the expression raises (a property raising
+   `OSError`) would escape a handler that caught it in the block. And so does
+   the lookup of the method a call is an argument of: in
+   `db.paginate(current_user.following_posts(), …)` the lookup of
+   `db.paginate` comes first and may fail, so the inner call keeps its
+   lambda.
 3. *It is a list or dict display of constants and the helper evaluates it at
    most once per call.* `[0.0, 0.0]` makes a new object each time it runs, and
-   so does a call. This one assumes nothing and applies in strict mode too; a
-   set display, which can be weakly referenced, only in relaxed mode.
-4. *It is a concatenation with a string literal, or a sign applied to a name,
-   and the block reads its operands nowhere else.* `'pybabel init -l ' + lang`
-   gives a value only if `lang` is a string, strings do not change, and a
-   block that never mentions `lang` otherwise neither tests it nor hands it to
-   anything. This case is not among the two assumptions; it is the least that
-   passes the audit's own example by value, and it is listed below with what
-   it gives up. `not name` is left out: the truth of a list changes as the
-   list is filled.
+   so does a call. This rests on the first assumption, and strict mode keeps
+   the lambda: what the block adds to the list (`consume([0])` appending an
+   object with a finalizer) would otherwise live until the helper returns.
+
+A concatenation such as `'pybabel init -l ' + lang` meets the same test as
+any other expression and has no rule of its own: it can fail (`TypeError`
+when `lang` is `None`), so it keeps its lambda where the block evaluates it
+after a call, under `and`, `or` or a condition, or in a loop. The audit's
+microblog example is such a case: the block runs the extract command and
+may raise before it builds the string.
 
 **A lambda is kept** where none of those holds, which is where it is
 necessary: the expression contains a call, `await` or `yield` that would
@@ -2202,7 +2210,10 @@ block read the attribute; an argument-less method call is taken whole
 (`lambda value: value.strip()`). The function is called where the expression
 was evaluated and as often, so this is not a matter of the mode; it rests on
 the instantiation check like every other parameter. It is declined when the
-function could not take every block-bound name the expression reads.
+function could not take every block-bound name the expression reads, and
+when the expression does not read those names first and on every path:
+`value if flag else 0` reads `value` only when `flag` is true, and a function
+called as `__param_0(value)` would read it, unbound, when `flag` is false.
 
 **What relaxed mode gives up here, exactly.**
 
@@ -2211,22 +2222,6 @@ function could not take every block-bound name the expression reads.
   `setattr`, or a patch applied from another module) and then calls `plain`,
   the original calls the replacement and the helper calls the function it was
   passed. `tests/test_by_value_arguments.py` pins this by its counterexample.
-- *A function run by a decorator before its module has defined a name it
-  reads*, on a path that would not have read it: the name is read at the call
-  and raises `NameError` there. Module-level statements that call something
-  are accounted for; what a decorator calls is not.
-- *A call passed by value runs before the attribute reads of its own
-  statement.* If `db.paginate` did not exist, the original would raise
-  `AttributeError` without calling `current_user.following_posts()`; the
-  caller now calls it first. A call is not moved past an earlier statement
-  that can fail, nor past a subscript, an operator or a comparison, whose
-  failures programs do catch.
-- *Two failures in one block.* If two plain expressions of one block would
-  both fail, the one passed by value fails first. Each failure alone is raised
-  as before, in the same place relative to every call.
-- *A concatenation whose operand is not a string* raises its `TypeError` at
-  the call, ahead of what the block did before it, in a block that never
-  tested the operand.
 
 A program that depends on any of these needs `--strict`.
 

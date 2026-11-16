@@ -30,18 +30,14 @@ says which arguments must stay deferred and why.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from typing import List
 
 import pytest
 
-from towel.unification.semantic_safety import stable_module_names, unshadowed_names
-from towel.unification.thunk_inlining import (
-    UNRELATED_HANDLERS,
-    _evaluated_at_most_once,
-    _plain,
-    _simple,
-)
+from towel.unification.semantic_safety import stable_module_names
+from towel.unification.thunk_inlining import _evaluated_at_most_once
 from tests.test_builtins_across_modules import (
     _passes_join,
     _patched_module_name_project,
@@ -98,17 +94,21 @@ def test_strict_mode_still_defers_a_module_level_function(tmp_path: Path) -> Non
     assert same
 
 
-def test_a_differing_method_of_an_argument_is_passed_as_a_bound_method(tmp_path: Path) -> None:
+def test_a_differing_method_of_an_argument_is_passed_as_a_function_of_nothing(
+    tmp_path: Path,
+) -> None:
     """Audit case 21 (engine map D4): 1.949 declined it as ``forwarded_callee``.
 
-    The lookup is the first thing the block does, inside a ``try`` whose
-    handlers (``TimeoutError``, ``ConnectionError``) cannot catch what a
-    lookup raises, so the bound method is passed by value.
+    The lookup is the first thing the block does, but inside a ``try``: a
+    property may raise what the handlers catch (review of lane ``byvalue``,
+    defect 5), so the helper looks the method up where the block did. Never
+    ``lambda *args, **kwargs``.
     """
     generated, same = refactored_scenario(tmp_path, "by_value/try_log_callee")
-    assert "client.get_profile," in generated and "client.get_preferences," in generated
-    assert "lambda" not in generated
-    assert "response = __param_0(user_id)" in generated
+    assert "lambda: client.get_profile" in generated
+    assert "lambda: client.get_preferences" in generated
+    assert "response = __param_0()(user_id)" in generated
+    assert "**kwargs" not in generated
     assert same
 
 
@@ -155,20 +155,91 @@ except RuntimeError as error:
 """
 
 
-def test_the_microblog_command_string_is_passed_by_value(tmp_path: Path) -> None:
+@pytest.mark.parametrize("strict", [False, True])
+def test_the_microblog_command_string_follows_a_call_and_stays_a_lambda(
+    tmp_path: Path, strict: bool
+) -> None:
     """The newcomer's real project (``microblog-no-extras.diff``): ``lambda: 'pybabel init …' + lang``.
 
-    A concatenation with a string literal gives a value only from strings,
-    and the block reads ``lang`` nowhere else.
+    Review of lane ``byvalue``, defect 3: the string was passed by value
+    because the block reads ``lang`` nowhere else. But the block runs the
+    extract command first and raises if it fails; with ``init(None)``, by
+    value raises ``TypeError`` at the call instead, before that command.
+    The concatenation follows a call and a ``raise``, so it stays a lambda.
     """
-    generated, same = refactored(tmp_path, MICROBLOG)
-    assert helper_calls(generated) == [
-        "__extracted_func_0('pybabel init -i messages.pot -d app/translations -l ' + lang,"
-        " 'init command failed')",
-        "__extracted_func_0('pybabel update -i messages.pot -d app/translations',"
-        " 'update command failed')",
-    ]
-    assert "lambda" not in generated
+    generated, same = refactored(
+        tmp_path, MICROBLOG.replace('init("fail")', "init(None)"), strict=strict
+    )
+    assert "lambda: 'pybabel init -i messages.pot -d app/translations -l ' + lang" in generated
+    assert same
+
+
+CONCATENATION_IN_A_LOOP = """\
+def first(lang):
+    results = []
+    for item in range(2):
+        results.append("prefix-" + lang)
+    print("collected", len(results))
+    return results
+
+
+def second(lang):
+    results = []
+    for item in range(2):
+        results.append(lang)
+    print("collected", len(results))
+    return results
+
+
+values = first("suffix")
+print(values, second("x"))
+print("same object", values[0] is values[1])
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_concatenation_in_a_loop_stays_a_lambda(tmp_path: Path, strict: bool) -> None:
+    """Review of lane ``byvalue``, defect 3: by value, both iterations appended one string object.
+
+    The loop makes a new string each time; ``values[0] is values[1]`` is
+    false before and must stay so.
+    """
+    generated, same = refactored(tmp_path, CONCATENATION_IN_A_LOOP, strict=strict)
+    assert "results.append(__param_0())" in generated
+    assert same
+
+
+SHORT_CIRCUITED_CONCATENATION = """\
+def check_tagged(enabled, label, x):
+    print("checking")
+    if enabled and x > 0 and ("tag:" + label) != "skip":
+        return 1
+    print("rejected")
+    return 0
+
+
+def check_titled(enabled, title, x):
+    print("checking")
+    if enabled and x > 0 and title != "skip":
+        return 1
+    print("rejected")
+    return 0
+
+
+print(check_tagged(False, None, 4), check_titled(False, None, 4))
+print(check_tagged(True, "ok", 4), check_titled(True, "ok", 4))
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_short_circuited_concatenation_stays_a_lambda(tmp_path: Path, strict: bool) -> None:
+    """Review of lane ``expressions``, defect 1: ``"tag:" + label`` under ``and`` was hoisted.
+
+    With ``enabled`` false the block never builds the string; at the call,
+    ``"tag:" + None`` raises ``TypeError``.
+    """
+    generated, same = refactored(tmp_path, SHORT_CIRCUITED_CONCATENATION, strict=strict)
+    assert "lambda: 'tag:' + label" in generated
     assert same
 
 
@@ -207,23 +278,86 @@ if __name__ == "__main__":
 """
 
 
-@pytest.mark.parametrize("strict", [False, True])
-def test_csvkits_literals_and_constant_lists_are_passed_by_value(
-    tmp_path: Path, strict: bool
-) -> None:
+def test_csvkits_literals_and_constant_lists_are_passed_by_value(tmp_path: Path) -> None:
     """Gemini's F3: ``lambda: "Point"`` beside ``lambda: [0.0, 0.0]`` in csvkit's tests.
 
     A display of constants makes a new object, cannot fail and runs
     nothing, so where the helper evaluates it at most once the call may
-    make it instead. That holds in strict mode too.
+    make it instead.
     """
-    generated, same = refactored(tmp_path, CSVKIT, strict=strict)
+    generated, same = refactored(tmp_path, CSVKIT)
     calls = helper_calls(generated)
     assert len(calls) == 2
     assert "'Point', 'LineString'" in calls[0]
     assert "[0.0, 0.0], [[0.0, 0.0], [1.0, 1.0]]" in calls[1]
     assert "lambda" not in generated
     assert same
+
+
+def test_strict_mode_keeps_csvkits_constant_lists_deferred(tmp_path: Path) -> None:
+    """Strict mode is 1.949 for a display: what the block adds to it lives as long as before."""
+    generated, same = refactored(tmp_path, CSVKIT, strict=True)
+    assert "lambda: [0.0, 0.0]" in generated
+    assert same
+
+
+DISPLAY_THAT_A_CALLEE_FILLS = """\
+class Token:
+    def __del__(self):
+        print("released")
+
+
+def consume(values):
+    if values is not None:
+        values.append(Token())
+    print("consumed")
+
+
+def alpha():
+    print("start")
+    consume([0])
+    print("after")
+    print("end")
+    return 1
+
+
+def beta():
+    print("start")
+    consume(None)
+    print("after")
+    print("end")
+    return 1
+
+
+alpha()
+beta()
+"""
+
+
+def test_strict_mode_keeps_a_display_a_callee_fills_deferred(tmp_path: Path) -> None:
+    """Review of lane ``byvalue``, defect 1: strict mode released ``Token`` late.
+
+    ``consume`` adds an object with a finalizer to the list. Built in the
+    block, the list dies when ``consume`` returns and ``released`` prints
+    before ``after``; held by a helper parameter, it would die when the
+    helper returns. Strict mode keeps 1.949's ``lambda: [0]``.
+    """
+    generated, same = refactored(tmp_path, DISPLAY_THAT_A_CALLEE_FILLS, strict=True)
+    assert "lambda: [0]" in generated
+    assert same
+
+
+def test_relaxed_mode_passes_a_display_a_callee_fills_by_value(tmp_path: Path) -> None:
+    """The first assumption of relaxed mode, by its counterexample: ``released`` prints late."""
+    generated, same = refactored(tmp_path, DISPLAY_THAT_A_CALLEE_FILLS)
+    assert helper_calls(generated) == ["__extracted_func_0([0])", "__extracted_func_0(None)"]
+    directory = tmp_path / "relaxed"
+    before = run_script(directory / "original.py")[1].splitlines()
+    after = run_script(directory / "changed.py")[1].splitlines()
+    assert before[:4] == ["start", "consumed", "released", "after"]
+    assert after[:4] == ["start", "consumed", "after", "end"]
+    assert sorted(before) == sorted(after)
+    assert not same
 
 
 DIRTY_EQUALS = """\
@@ -474,6 +608,69 @@ def test_strict_mode_defers_the_attribute_read_before_any_call(tmp_path: Path) -
     assert same
 
 
+PROTOCOL_BEFORE_A_READ = """\
+class Stats:
+    def __init__(self):
+        self.total = 7
+        self.count = 2
+
+
+def report(label, value):
+    print(label, value)
+    return value
+
+
+def show_total(stats, label):
+    title = TITLE
+    shown = report(title, stats.total + 1)
+    print("done", title)
+    return shown
+
+
+def show_count(stats, label):
+    title = TITLE
+    shown = report(title, stats.count + 2)
+    print("done", title)
+    return shown
+
+
+class Label:
+    def __init__(self, stats):
+        self.stats = stats
+
+    def __format__(self, spec):
+        self.stats.total = 100
+        return "label"
+
+    def __hash__(self):
+        self.stats.total = 100
+        return 1
+
+    def __repr__(self):
+        return "label"
+
+
+stats = Stats()
+print(show_total(stats, Label(stats)))
+"""
+
+
+@pytest.mark.parametrize("title", ['f"{label}"', "{label: 0}"])
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_read_is_not_moved_ahead_of_formatting_or_hashing(
+    tmp_path: Path, strict: bool, title: str
+) -> None:
+    """Review of lane ``byvalue``, defect 4: ``__format__`` and ``__hash__`` may change what is read.
+
+    Here they set ``stats.total`` to 100, so the block prints 101. Read at
+    the call, before the label is formatted or hashed, it would print 8.
+    """
+    source = PROTOCOL_BEFORE_A_READ.replace("TITLE", title)
+    generated, same = refactored(tmp_path, source, strict=strict)
+    assert re.search(r"report\(title, __param_\d+\(\)", generated), generated
+    assert same
+
+
 CALL_AS_AN_ARGUMENT = """\
 class Database:
     def paginate(self, query, page):
@@ -505,17 +702,73 @@ print(index(1), explore(2, "everything"))
 """
 
 
-def test_a_call_is_passed_by_value_ahead_of_the_lookup_of_its_own_callee(tmp_path: Path) -> None:
+@pytest.mark.parametrize("lookup", ["paginate", "missing"])
+def test_a_call_is_not_moved_ahead_of_the_lookup_of_its_own_callee(
+    tmp_path: Path, lookup: str
+) -> None:
     """microblog's ``db.paginate(current_user.following_posts(), …)`` against ``db.paginate(query, …)``.
 
-    Before the call the helper has only read ``db``, which the module
-    binds, and its attribute ``paginate``.
+    The lookup of ``db.paginate`` comes first and can fail. If it does, the
+    block raises ``AttributeError`` without calling ``following_posts``; at
+    the call, ``following_posts`` would run first (review of lane
+    ``byvalue``, ruling 5).
     """
-    generated, same = refactored(tmp_path, CALL_AS_AN_ARGUMENT)
-    assert helper_calls(generated) == [
-        "__extracted_func_0(following_posts(), 'index', page)",
-        "__extracted_func_0(query, 'explore', page)",
-    ]
+    source = CALL_AS_AN_ARGUMENT.replace("db.paginate(", f"db.{lookup}(").replace(
+        'print(index(1), explore(2, "everything"))',
+        'try:\n    print(index(1), explore(2, "everything"))\n'
+        'except AttributeError as error:\n    print("AttributeError")',
+    )
+    generated, same = refactored(tmp_path, source)
+    assert "lambda: following_posts()" in generated
+    assert same
+
+
+PLAIN_READ_AFTER_A_FAILING_STEP = """\
+class Stats:
+    def __init__(self):
+        self.total = 7
+        self.count = 2
+
+
+def report(label, value):
+    print(label, value)
+    return value
+
+
+def show_total(stats, label):
+    title = label[0]
+    shown = report(title, stats.total)
+    print("done", title)
+    return shown
+
+
+def show_count(stats, label):
+    title = label[0]
+    shown = report(title, stats.count)
+    print("done", title)
+    return shown
+
+
+print(show_total(Stats(), "t"), show_count(Stats(), "c"))
+for function in (show_total, show_count):
+    try:
+        function(None, [])
+    except Exception as error:
+        print(type(error).__name__)
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_plain_read_is_not_moved_ahead_of_a_step_that_can_fail(
+    tmp_path: Path, strict: bool
+) -> None:
+    """Review of lane ``byvalue``, defect 6: ``label[0]`` fails first, with ``IndexError``.
+
+    Read at the call, ``stats.total`` on ``None`` raised ``AttributeError``
+    instead. A plain value has no side effects; it can still fail.
+    """
+    generated, same = refactored(tmp_path, PLAIN_READ_AFTER_A_FAILING_STEP, strict=strict)
+    assert re.search(r"report\(title, __param_\d+\(\)\)", generated), generated
     assert same
 
 
@@ -570,6 +823,48 @@ def test_a_call_is_not_moved_ahead_of_an_earlier_statement_that_can_fail(
     source = CALL_AFTER_AN_EARLIER_STATEMENT.replace("FIRST", first)
     generated, same = refactored(tmp_path, source)
     assert "lambda: o.alpha()" in generated and "y = __param_0()" in generated
+    assert same
+
+
+POSSIBLY_UNBOUND_READ = """\
+def first(flag, items):
+    if flag:
+        bonus = 10
+    try:
+        total = items[0] + bonus + items[1]
+        print("total", total)
+        print("done", total * 2)
+        return total
+    except IndexError:
+        return "empty"
+
+
+def second(flag, items, bonus):
+    try:
+        total = items[0] + bonus + items[1]
+        print("total", total)
+        print("done", total * 2)
+        return total
+    except IndexError:
+        return "empty"
+
+
+print(first(False, []), second(False, [], 3))
+print(first(True, [1, 2]), second(True, [1, 2], 3))
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_read_of_a_possibly_unbound_local_stays_where_it_was(
+    tmp_path: Path, strict: bool
+) -> None:
+    """Review of lane ``expressions``, defect 2: ``bonus`` was unwrapped and read at the call.
+
+    ``items[0]`` raises ``IndexError``, which the block catches, before it
+    reads ``bonus``; read at the call, the unbound ``bonus`` raised
+    ``UnboundLocalError`` first.
+    """
+    generated, same = refactored(tmp_path, POSSIBLY_UNBOUND_READ, strict=strict)
     assert same
 
 
@@ -644,6 +939,66 @@ def test_relaxed_mode_assumes_module_functions_are_not_rebound(tmp_path: Path) -
     assert before[:5] == after[:5] and before[7:] == after[7:]
 
 
+MODULE_CODE_RUN_EARLY = """\
+def first(enabled):
+    print("start")
+    if enabled:
+        print(alpha(1))
+    print("end")
+    return 0
+
+
+def second(enabled):
+    print("start")
+    if enabled:
+        print(beta(1))
+    print("end")
+    return 0
+
+
+EARLY
+
+
+def alpha(value):
+    return value + 1
+
+
+def beta(value):
+    return value + 2
+
+
+print(first(True), second(True))
+"""
+
+
+@pytest.mark.parametrize(
+    "early",
+    [
+        "def trigger(value=first(False)):\n    pass",
+        "def trigger(*, value=first(False)):\n    pass",
+        "def run(function):\n    function(False)\n    return function\n\n\n"
+        "@run\ndef trigger(enabled):\n    pass",
+        "class Trigger:\n    value = first(False)",
+        "class Base:\n    def __init_subclass__(cls):\n        first(False)\n\n\n"
+        "class Trigger(Base):\n    pass",
+    ],
+)
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_module_name_is_not_read_early_where_module_code_runs_the_block_first(
+    tmp_path: Path, strict: bool, early: str
+) -> None:
+    """Review of lane ``byvalue``, defect 7: a default ran ``first`` before ``alpha`` existed.
+
+    The block skips ``alpha(1)`` when ``enabled`` is false; passed by value,
+    ``alpha`` was read at the call and raised ``NameError``. Defaults,
+    decorators, class bodies and base classes all run code at definition.
+    """
+    source = MODULE_CODE_RUN_EARLY.replace("EARLY", early)
+    generated, same = refactored(tmp_path, source, strict=strict)
+    assert "(alpha)" not in generated and "(alpha," not in generated
+    assert same
+
+
 LOOKUP_IN_A_TRY = """\
 class Client:
     def __init__(self, broken=False):
@@ -685,37 +1040,65 @@ except AttributeError as error:
 
 
 @pytest.mark.parametrize(
-    "handled, by_value",
-    [
-        ("TimeoutError", True),
-        ("(TimeoutError, OSError)", True),
-        ("AttributeError", False),
-        ("Exception", False),
-        ("RuntimeError", False),
-        ("NotImplementedError", False),
-    ],
+    "handled", ["TimeoutError", "(TimeoutError, OSError)", "AttributeError", "Exception"]
 )
-def test_a_lookup_leaves_a_try_only_past_handlers_that_cannot_catch_it(
-    tmp_path: Path, handled: str, by_value: bool
-) -> None:
-    """Raised at the call, an ``AttributeError`` would escape the handler that caught it before."""
+def test_a_lookup_never_leaves_its_try(tmp_path: Path, handled: str) -> None:
+    """Raised at the call, what the lookup raises would escape the handler that caught it before."""
     generated, same = refactored(tmp_path, LOOKUP_IN_A_TRY.replace("HANDLED", handled))
+    assert "lambda: client.get_profile" in generated
+    assert "response = __param_0()(user_id)" in generated
     assert same
-    if by_value:
-        assert "(client.get_profile, user_id)" in generated and "lambda" not in generated.replace(
-            "lambda user", ""
-        )
-    else:
-        assert "lambda: client.get_profile" in generated
-        assert "response = __param_0()(user_id)" in generated
 
 
-def test_a_handler_named_like_a_builtin_keeps_the_lambda(tmp_path: Path) -> None:
-    """A module that binds ``TimeoutError`` itself may mean any class by it."""
-    source = "class TimeoutError(AttributeError):\n    pass\n\n\n" + LOOKUP_IN_A_TRY.replace(
-        "HANDLED", "TimeoutError"
-    )
-    generated, same = refactored(tmp_path, source)
+PROPERTY_RAISING_OSERROR = """\
+class Client:
+    @property
+    def get_profile(self):
+        raise OSError("unavailable")
+
+    @property
+    def get_preferences(self):
+        raise OSError("unavailable")
+
+
+def fetch_profile(client, user_id):
+    try:
+        response = client.get_profile(user_id)
+    except OSError:
+        print("no such call", user_id)
+        return None
+    except ConnectionError as exc:
+        print("failed", user_id, exc)
+        return None
+    return response["data"]
+
+
+def fetch_preferences(client, user_id):
+    try:
+        response = client.get_preferences(user_id)
+    except OSError:
+        print("no such call", user_id)
+        return None
+    except ConnectionError as exc:
+        print("failed", user_id, exc)
+        return None
+    return response["data"]
+
+
+try:
+    print(fetch_profile(Client(), 7), fetch_preferences(Client(), 8))
+except OSError:
+    print("escaped OSError")
+"""
+
+
+def test_a_property_that_raises_what_a_handler_catches_stays_in_its_try(tmp_path: Path) -> None:
+    """Review of lane ``byvalue``, defect 5: a property without side effects may raise ``OSError``.
+
+    The block's ``except OSError`` handles it; read at the call, it escaped.
+    Plain values have no side effects; nothing says which exceptions they raise.
+    """
+    generated, same = refactored(tmp_path, PROPERTY_RAISING_OSERROR)
     assert "lambda: client.get_profile" in generated
     assert same
 
@@ -749,12 +1132,7 @@ print(init("de", []), update("de", []), init(None, []), update(None, []))
 
 
 def test_a_concatenation_the_block_guards_stays_a_lambda(tmp_path: Path) -> None:
-    """``if lang: run("init -l " + lang)``: at the call, ``"init -l " + None`` raises.
-
-    The block reads ``lang`` elsewhere, so something in it may be testing
-    the operand; the microblog block, which does not, passes its string by
-    value.
-    """
+    """``if lang: run("init -l " + lang)``: at the call, ``"init -l " + None`` raises."""
     generated, same = refactored(tmp_path, GUARDED_CONCATENATION)
     assert "lambda: 'init -l ' + lang" in generated
     assert same
@@ -913,77 +1291,6 @@ def later():
 del later
 """)
     assert stable_module_names(module) == {"json", "os", "D", "keep", "swapper", "Kept"}
-
-
-def test_a_builtin_name_means_the_builtin_only_where_no_code_binds_it() -> None:
-    names = frozenset({"TimeoutError", "OSError"})
-    assert unshadowed_names(ast.parse("def f(OSError):\n    pass\n"), names) == {"TimeoutError"}
-    assert unshadowed_names(ast.parse("from compat import *\n"), names) == frozenset()
-    assert unshadowed_names(ast.parse("x = 1\n"), names) == names
-
-
-def test_unrelated_handlers_catch_nothing_a_plain_expression_raises() -> None:
-    assert {"TimeoutError", "ConnectionError", "OSError", "FileNotFoundError"} <= UNRELATED_HANDLERS
-    assert not UNRELATED_HANDLERS & {
-        "Exception",
-        "BaseException",
-        "AttributeError",
-        "KeyError",
-        "LookupError",
-        "TypeError",
-        "ValueError",
-        "ZeroDivisionError",
-        "RuntimeError",
-        "NotImplementedError",
-        "ReferenceError",
-        "MemoryError",
-        "DeprecationWarning",
-    }
-
-
-def _expression(text: str) -> ast.expr:
-    return ast.parse(text, mode="eval").body
-
-
-@pytest.mark.parametrize(
-    "text, simple",
-    [
-        ("'init -l ' + lang", True),
-        ("prefix + 'x' + lang", True),
-        ("b'x' + lang", True),
-        ("-lang", True),
-        ("('a' + lang, 1)", True),
-        ("lang + other", False),  # lists concatenate too, and lists change
-        ("'x' * lang", False),
-        ("'%s' % lang", False),  # formats any object
-        ("not lang", False),  # the truth of a container changes as it is filled
-        ("'x' + lang.name", False),
-        ("'x' + unknown", False),
-        ("'x' + f(lang)", False),
-    ],
-)
-def test_simple_computations_are_literal_concatenations_and_signs(text: str, simple: bool) -> None:
-    assert _simple(_expression(text), frozenset({"lang", "prefix", "other"})) is simple
-
-
-@pytest.mark.parametrize(
-    "text, plain",
-    [
-        ("a.b.c[0] + d", True),
-        ("f'{a.b}: {c}'", True),
-        ("a if b else c", True),
-        ("[a, {'k': b}]", True),
-        ("lambda x: g(x)", True),  # made, not run
-        ("a.b()", False),
-        ("[*a]", False),
-        ("[x for x in a]", False),
-        ("{**a}", False),
-        ("lambda x=g(): x", False),
-        ("(y := a)", False),
-    ],
-)
-def test_plain_expressions_call_nothing_and_iterate_nothing(text: str, plain: bool) -> None:
-    assert _plain(_expression(text)) is plain
 
 
 @pytest.mark.parametrize(
