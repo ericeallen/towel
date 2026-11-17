@@ -44,6 +44,7 @@ from typing import Dict, List, Tuple
 import pytest
 
 import towel.cli
+from towel.unification.argument_ownership import _supported_runtime
 
 from tests.test_cli_integration import invoke
 from tests.test_callback_parameters import FIXTURES, helper_calls, run_script
@@ -388,7 +389,12 @@ def test_a_builtin_a_participating_module_binds_is_not_read_bare(
 def test_strict_mode_still_refuses_a_builtin_across_modules(tmp_path: Path) -> None:
     source = _two_modules(tmp_path, "import re\n", "import re\n", COUNTS)
     printed, generated = _dry(source, tmp_path / "out", "--strict")
-    assert "builtin_may_differ_by_module" in printed
+    # Where frame release order is uncertified (CPython 3.14+), strict mode
+    # declines the blocks for that before it asks about the builtin.
+    reason = (
+        "builtin_may_differ_by_module" if _supported_runtime() else "lifetime_order_uncertified"
+    )
+    assert reason in printed
     for helper in _helpers(generated):
         assert "len(" not in ast.unparse(helper)
 
@@ -471,9 +477,13 @@ def test_strict_mode_keeps_its_cross_module_refusals_on_scenario_37(tmp_path: Pa
     source, output = _scenario(tmp_path, "reach/37_cross_identical")
     printed, generated = _dry(source, output, "--strict")
     # Strict mode declines it before the builtin is asked about: the order
-    # the function releases its objects in.
+    # the function releases its objects in, which on CPython 3.14+ it cannot
+    # certify at all.
     assert _helpers(generated) == []
-    assert "owned_binding_frame_boundary" in printed
+    reason = (
+        "owned_binding_frame_boundary" if _supported_runtime() else "lifetime_order_uncertified"
+    )
+    assert reason in printed
     driver = source.parent / "driver.py"
     assert run_script(driver, str(output)) == run_script(driver, str(source))
 
