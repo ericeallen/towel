@@ -39,6 +39,7 @@ from towel.unification.import_graph import (
     leading_imports,
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.resource_guard import resource_guard
 from towel.unification.models import CodeBlockPair
 from towel.unification.pipeline import analyze_scopes, collect_functions, parse_modules
 from towel.unification.unsupported_syntax import unsupported_syntax
@@ -330,3 +331,17 @@ def test_deferred_annotations_keep_evaluation_when_requested(tmp_path: Path) -> 
         str(project), str(tmp_path / "out"), max_iterations=1, progress="none"
     )
     assert _run(tmp_path / "out" / "m.py") == before
+
+
+@pytest.mark.parametrize("format_spec", ["", ":>10"])
+def test_template_optional_format_spec_keeps_resource_checks(format_spec: str) -> None:
+    """Integration 3: Interpolation's optional format spec must not hide its value.
+
+    On older Python the equivalent f-string exercises the shared child walk;
+    the template spelling exercises Interpolation as soon as it is available.
+    """
+    prefix = "t" if sys.version_info >= (3, 14) else "f"
+    module = ast.parse(f'def work():\n    return {prefix}"{{open(path){format_spec}}}"\n')
+    function = module.body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert resource_guard(function.body, module).refusal is not None
