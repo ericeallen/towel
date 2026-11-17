@@ -856,13 +856,15 @@ def test_sqlglots_generator_ends_without_forwarding_helpers(
     final, applied = _refactor_generator(
         tmp_path, monkeypatch, escape_guard=True, min_lines=3, formatted=formatted
     )
-    # Preserving caller binding order can split the shared prefix from the
-    # remaining self.func call. That second helper computes the SQL result;
-    # neither helper merely forwards to a generated helper.
-    assert 0 < applied < 25
-    helpers = _generated_helpers(final)
-    assert len(helpers) == applied
-    assert not any(_only_forwards_to_generated_helpers(helper) for helper in helpers)
+    # Every block of three lines here holds adjacent `expression.args.get(...)`
+    # reads of different keys, a run of same-shaped independent statements
+    # that polish (round 2) refuses to bundle into a helper. So the chain
+    # cannot start: nothing is applied and the source is unchanged. The
+    # forwarding property itself is checked where extraction still happens
+    # (test_a_forwarded_thunk_is_passed_through and the one-line runs above).
+    assert applied == 0
+    assert _generated_helpers(final) == []
+    assert ast.dump(ast.parse(final)) == ast.dump(ast.parse(_binding_free_sql()))
     assert _rendered_sql(final) == _rendered_sql(SQL_GENERATOR)
 
 

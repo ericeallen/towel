@@ -483,6 +483,8 @@ OWNED_BESIDE_AN_UNANNOTATED_FUNCTION = """
 # ``summary`` reverses with an assignment, not ``values.reverse()``: against
 # ``values.sort()`` that would be a callback (``lambda values: ...``), the whole
 # bodies would unify, and no helper parameter would carry the type of ``values``.
+# Its ``len(values)`` follows ``values.count(0)`` rather than a second count:
+# polish refuses a helper holding a run of same-shaped independent statements.
 BESIDE_AN_UNANNOTATED_FUNCTION = """
     def load() -> list[int]:
         return [1, 2, 3]
@@ -493,7 +495,7 @@ BESIDE_AN_UNANNOTATED_FUNCTION = """
         values.sort()
         delta = 1
         values.count(0)
-        values.count(5)
+        len(values)
         return sum(values) * 2 + delta
 
 
@@ -502,7 +504,7 @@ BESIDE_AN_UNANNOTATED_FUNCTION = """
         values[:] = values[::-1]
         delta = 2
         values.count(0)
-        values.count(5)
+        len(values)
         return sum(values) * 2 + delta
 """
 

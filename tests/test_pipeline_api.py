@@ -18,17 +18,25 @@ from tests.test_helpers import PROJECT_ROOT, example_paths
 from towel.unification.pipeline import run_pipeline
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+USER_ADMIN = "Extract common code from process_user_data and process_admin_data"
+
+
+def _example1_parts(engine: UnificationRefactorEngine) -> int:
+    return 1 if engine.strict else 2
+
 
 def test_run_pipeline_smoke_single_file():
     # Basic smoke test: ensure pipeline runs and produces at least one proposal
     files = example_paths(["example1_simple.py"])
-    proposals = run_pipeline(files, engine=UnificationRefactorEngine())
+    engine = UnificationRefactorEngine()
+    proposals = run_pipeline(files, engine=engine)
 
-    # example1_simple holds one duplicated validation block shared by two of
-    # its three functions.
-    assert [p.description for p in proposals] == [
-        "Extract common code from process_user_data and process_admin_data"
-    ]
+    # example1_simple's validation block is shared by its functions. Polish
+    # keeps its two independent `if not user.get(...)` checks out of one
+    # helper, so relaxed mode proposes the block as two parts that do not
+    # overlap; strict mode, which keeps `user`'s construction at the caller,
+    # proposes one.
+    assert [p.description for p in proposals] == [USER_ADMIN] * _example1_parts(engine)
 
 
 def test_run_pipeline_matches_engine_counts_multi_file():
@@ -39,11 +47,12 @@ def test_run_pipeline_matches_engine_counts_multi_file():
     pipeline_props = run_pipeline(files, engine=eng)
     engine_props = eng.analyze_files(files)
 
-    # example1_simple contributes its validation block, example2_classes the
-    # duplicated body of its two `process` methods.
+    # example1_simple contributes its validation block, as two proposals
+    # (see above), and example2_classes the duplicated body of its two
+    # `process` methods.
     assert [p.description for p in pipeline_props] == [
-        "Extract common code from process_user_data and process_admin_data",
         "Extract common code from process and process",
+        *[USER_ADMIN] * _example1_parts(eng),
     ]
 
     # We don't compare object identity (AST nodes differ), but the stable

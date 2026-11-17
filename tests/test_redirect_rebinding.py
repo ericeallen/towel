@@ -23,15 +23,17 @@ from tests.test_callback_parameters import run_script
 from tests.test_shape_review import dry
 from towel.unification.rebinding import rebinding_reason
 
+# The middle line differs in shape from its neighbors: polish refuses a helper
+# holding a run of same-shaped independent statements. It still prints 4.
 STATEMENT_PAIR = """def total(value):
     print(value + 1)
-    print(value + 2)
+    print(value * 2)
     print(value + 3)
 
 def report(value):
     print("before")
     print(value + 1)
-    print(value + 2)
+    print(value * 2)
     print(value + 3)
     print("after", value)
 

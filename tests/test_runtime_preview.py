@@ -96,7 +96,14 @@ def test_timeout_during_pairs_retains_census_without_claiming_no_duplicates(
     assert preview.status == 124, preview
     if as_json:
         result = json.loads(preview.stdout)
-        assert result["analysed"] == {"files": 1, "functions": functions, "skipped": []}
+        # Polish's coverage counts: the fixture holds no module-level
+        # statements or early-return guards.
+        assert result["analysed"] == {
+            "files": 1,
+            "functions": functions,
+            "skipped": [],
+            "not_examined": [],
+        }
         assert result["outcome"] is None
         assert result["status"] == "incomplete"
         assert result["diff"] == result["partial_diff"] == ""

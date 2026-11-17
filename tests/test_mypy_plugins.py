@@ -273,17 +273,25 @@ def test_a_refactoring_of_a_plugin_project_passes_the_projects_own_mypy(tmp_path
     for path in (root / "src" / "alpha" / "a.py", borrower):
         source = path.read_text().replace(
             "    for item in items:\n        print(value, item)\n        print(item, value)\n    print(value)",
+            # Calls alternate positional and keyword arguments: polish refuses
+            # a helper holding a run of same-shaped independent statements.
             "".join(
-                f"    consume(value, {label!r})\n"
-                for label in (
-                    "received",
-                    "queued",
-                    "started",
-                    "validated",
-                    "processed",
-                    "stored",
-                    "published",
-                    "finished",
+                (
+                    f"    consume(value, {label!r})\n"
+                    if index % 2 == 0
+                    else f"    consume(value=value, label={label!r})\n"
+                )
+                for index, label in enumerate(
+                    (
+                        "received",
+                        "queued",
+                        "started",
+                        "validated",
+                        "processed",
+                        "stored",
+                        "published",
+                        "finished",
+                    )
                 )
             ).rstrip(),
         )
