@@ -35,13 +35,12 @@ import dataclasses
 import hashlib
 import os
 from pathlib import Path
-
-from ..source_files import source_is_skipped
 import re
 import tomllib
 
 from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 from ..canonical_ast import canonical_dump
+from ..source_files import source_is_skipped
 from .annotation_ladder import (
     Hearing,
     Judge,
