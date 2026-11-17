@@ -35,6 +35,7 @@ from tests import test_unparsed_program as unparsed
 from towel.type_inference import CheckFailure, MypyInferrer, PyrightOracle
 from towel.cli import LACKING_MODULE_REMEDY
 from towel.unification import pipeline
+from towel.unification.argument_ownership import _supported_runtime
 from tests.test_helpers import example_paths
 from tests.test_declined_run_reports import _similar_functions
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -992,10 +993,13 @@ def test_relaxed_copied_directory_type_policy(tmp_path: Path, dirty: bool) -> No
     consumer = (
         'broken: int = "wrong"\n'
         if dirty
-        else "from src.program import first\nvalue: int=first(1)\n"
+        else f"from src.program import first\nvalue: int=first({'1' if _supported_runtime() else ''})\n"
     )
     (root / "consumer.py").write_text(consumer)
-    driver = "from program import first,second; print(first(3),second(5))"
+    arguments = ("3", "5") if _supported_runtime() else ("", "")
+    driver = (
+        f"from program import first,second; print(first({arguments[0]}),second({arguments[1]}))"
+    )
     before = _run_project(source_root, driver)
     oracle = MypyInferrer()
     try:
@@ -1266,7 +1270,8 @@ def test_relaxed_cli_typing_and_builtin_flag(tmp_path: Path, typed: bool) -> Non
     root = tmp_path / "source"
     root.mkdir()
     (root / "m.py").write_text(source)
-    driver = "from m import first,second; print(first(1),second(5))"
+    arguments = ("1", "5") if _supported_runtime() else ("", "")
+    driver = f"from m import first,second; print(first({arguments[0]}),second({arguments[1]}))"
     before = _run_project(root, driver)
     output = tmp_path / "output"
     args = [
