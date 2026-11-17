@@ -24,6 +24,7 @@ exactly as the site did.
 
 from __future__ import annotations
 
+import ast
 import textwrap
 from pathlib import Path
 from typing import List, Sequence, Tuple
@@ -174,18 +175,24 @@ def test_expressions_that_differ_whole_are_no_pair(tmp_path: Path) -> None:
     ] == []
 
 
+TWO_SITES_OF_ONE_FUNCTION = f"""
+def only(member, now, other):
+    first = {CONDITION}
+    member = other
+    second = {CONDITION}
+    return first, second
+"""
+
+
 def test_two_sites_of_one_function_are_no_pair(tmp_path: Path) -> None:
-    """As for statements: a pair is two different functions (a helper's other sites join it later)."""
-    _, pairs = pairs_of(
-        tmp_path,
-        f"""
-        def only(member, now, other):
-            first = {CONDITION}
-            member = other
-            second = {CONDITION}
-            return first, second
-        """,
-    )
+    """As for statements: a pair is two different functions (a helper's other sites join it later).
+
+    The source starts at column 0: indented and dedented, its condition's
+    closing line set the common indentation, and the file did not parse.
+    """
+    assert textwrap.dedent(TWO_SITES_OF_ONE_FUNCTION) == TWO_SITES_OF_ONE_FUNCTION
+    ast.parse(TWO_SITES_OF_ONE_FUNCTION)
+    _, pairs = pairs_of(tmp_path, TWO_SITES_OF_ONE_FUNCTION)
     assert expression_pairs(pairs) == []
 
 

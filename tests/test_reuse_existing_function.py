@@ -43,6 +43,7 @@ from tests.test_helpers import (
     unparsed_body,
     write_module,
 )
+from towel.unification.models import RefactoringProposal, is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # These fixtures pin 1.949 binding independence and ownership guarantees.
@@ -77,22 +78,36 @@ def _fixed_point_directory(package: Path, **engine_options: Unpack[EngineOptions
     return sorted({desc for _count, descs in results.values() for desc in descs})
 
 
+def _expressions_only(proposals: list[RefactoringProposal]) -> bool:
+    """Whether every call the proposals make replaces an expression, never a block.
+
+    On a runtime without lifetime proofs strict mode declines each block,
+    and an assignment it declines whole gives up its value as an expression
+    candidate (docs/design/DECISIONS.md, "Expressions are candidates").
+    """
+    return all(r.expression is not None for p in proposals for r in p.replacements)
+
+
 def _assert_lifetime_refused(path: Path, final: str) -> None:
     original = path.read_text()
     engine = UnificationRefactorEngine(min_lines=1)
-    assert engine.analyze_file(str(path)) == []
+    proposals = engine.analyze_file(str(path))
+    assert _expressions_only(proposals), proposals
     assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     assert final == original
 
 
 def _assert_cross_file_lifetime_refused(package: Path) -> None:
     paths = sorted(package.glob("*.py"))
-    originals = {path: path.read_text() for path in paths}
     engine = UnificationRefactorEngine(min_lines=1, cross_module_helpers=True)
-    assert engine.analyze_files([str(path) for path in paths], progress="none") == []
+    proposals = engine.analyze_files([str(path) for path in paths], progress="none")
+    assert _expressions_only(proposals), proposals
     assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
-    assert _fixed_point_directory(package) == []
-    assert {path: path.read_text() for path in paths} == originals
+    assert _fixed_point_directory(package) == sorted({p.description for p in proposals})
+    for path in paths:
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, ast.FunctionDef) and is_generated_helper_name(node.name):
+                assert [type(statement) for statement in node.body] == [ast.Return]
 
 
 def _extracted_helper(
