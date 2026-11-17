@@ -75,3 +75,23 @@ def test_boolean_test_tails_stay_visible(tmp_path: Path) -> None:
         if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
     ]
     assert all(sum(isinstance(stmt, ast.Assert) for stmt in helper.body) <= 1 for helper in helpers)
+
+
+@pytest.mark.parametrize("wrapper", ["if ready:", "try:", "for ready in flags:"])
+def test_nested_statement_runs_are_not_bundled(wrapper: str) -> None:
+    """Re-audit 2: enclosing control flow must not hide an arbitrary assertion bundle."""
+    source = (
+        "def helper(config, first, second, expected, ready, flags):\n"
+        f"    {wrapper}\n"
+        "        assert expected == config(first)\n"
+        "        assert expected == config(second)\n"
+    )
+    if wrapper == "try:":
+        source += "    finally:\n        config.close()\n"
+    helper = ast.parse(source).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    sites = [
+        Replacement((index, index), ast.parse("helper(c, a, b, e, r, f)").body[0])
+        for index in range(20)
+    ]
+    assert not worthwhile_helper(helper, sites)

@@ -106,10 +106,7 @@ def worthwhile_helper(
     # A setup or a different final check must not hide a repeated run inside
     # the candidate. In particular, do not bundle the last few test cases
     # merely because their combined syntax repays a larger signature.
-    if any(
-        _independent_statement_groups(helper, statements[index : index + 2])
-        for index in range(len(statements) - 1)
-    ):
+    if _contains_independent_statement_run(helper):
         return False
     callers = (
         list(rendered_callers)
@@ -127,3 +124,18 @@ def worthwhile_helper(
     original_cost = _syntax_cost(statements) * sites
     generated_cost = _syntax_cost([helper]) + caller_cost
     return generated_cost < original_cost
+
+
+def _contains_independent_statement_run(helper: ast.FunctionDef) -> bool:
+    """Find repeated cases in any suite, including inside a branch or exception handler."""
+    for node in ast.walk(helper):
+        for _, value in ast.iter_fields(node):
+            if not isinstance(value, list):
+                continue
+            statements = [statement for statement in value if isinstance(statement, ast.stmt)]
+            if any(
+                _independent_statement_groups(helper, statements[index : index + 2])
+                for index in range(len(statements) - 1)
+            ):
+                return True
+    return False
