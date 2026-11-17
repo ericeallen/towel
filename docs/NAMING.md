@@ -1,26 +1,64 @@
 # Naming helpers
 
-[Documentation index](README.md)
-
 Towel can tell that code repeats, not what it means, so it names helpers
 `__extracted_func_0` and the values that differ `_param_0`. `towel rename-helpers`
-gives them real names, and updates every call, in one checked step. This page
-starts from the [quick start](QUICKSTART.md)'s project, `demo`, and its
-refactored copy:
+gives them real names, and updates every call, in one checked step.
+
+This page needs a helper Towel wrote that you have not named yet. If you have
+followed the [quick start](QUICKSTART.md) to the end, its helper already has
+a name, so make a new project here, with the quick start's code as it was
+before Towel changed it:
 
 ```bash
-towel dry demo cleaned --no-interactive
+mkdir shop
+printf '[project]\nname = "shop"\nversion = "0.1.0"\n' > shop/pyproject.toml
+```
+
+Save this as `shop/charges.py`:
+
+```python
+def checkout_total(amount):
+    base = max(amount, 0)
+    discount = base * 0.10
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    return round(discounted + shipping + tax, 2)
+
+
+def member_total(amount):
+    base = max(amount, 0)
+    discount = base * 0.25
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    return round(discounted + shipping + tax, 2)
+
+
+def wholesale_total(amount):
+    base = max(amount, 0)
+    discount = base * 0.40
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    return round(discounted + shipping + tax, 2)
+```
+
+Then let Towel write a refactored copy:
+
+```bash
+towel dry shop named --no-interactive
 ```
 
 `--list --json` gives the full inventory:
 
 ```bash
-towel rename-helpers cleaned --list --json
+towel rename-helpers named --list --json
 ```
 
 ```json
 {
-  "target": "cleaned",
+  "target": "named",
 ...
   "helpers": [
     {
@@ -60,7 +98,7 @@ this as `renames.json`:
 `--preview` shows the change without making it:
 
 ```bash
-towel rename-helpers cleaned --rename-file renames.json --preview
+towel rename-helpers named --rename-file renames.json --preview
 ```
 
 ```diff
@@ -98,11 +136,10 @@ towel rename-helpers cleaned --rename-file renames.json --preview
 [PREVIEW] Would make 6 change(s)
 ```
 
-Then apply it, and run the tests:
+Then apply it, and run your tests:
 
 ```bash
-towel rename-helpers cleaned --rename-file renames.json
-python3 -m unittest discover -s cleaned
+towel rename-helpers named --rename-file renames.json
 ```
 
 ```text
@@ -110,11 +147,6 @@ python3 -m unittest discover -s cleaned
   charges.py:__extracted_func_0._param_0 -> discount_rate
 
 Applied 6 change(s)
-.
-----------------------------------------------------------------------
-Ran 1 test in 0.000s
-
-OK
 ```
 
 ## Asking an assistant for names
@@ -137,9 +169,11 @@ about what the code means.
 
 Paths are relative to the target. When only one file has a helper of a given
 name, the path can be left out (`"__extracted_func_0": "discounted_total"`), as
-the quick start does. A helper method's new name must also start with two
-underscores, and not end with two: that keeps it private to its class, so a
-subclass cannot override it by accident.
+the quick start does. `--list` prints a helper method's name without its
+class; take the exact key from `--list --json`. A helper method's new name
+must start with two underscores, and not end with two, even where your style
+prefers one: that keeps it private to its class, so a subclass cannot
+override it by accident.
 
 ## Where to run it
 
@@ -157,14 +191,20 @@ project, at their original paths, and rename there.
 ## What can go wrong
 
 The whole mapping is checked before anything is written, and applied as one
-batch. A key that names no helper, a name that collides with another or is a
-Python keyword, or a use of the helper Towel cannot follow (such as
-`getattr(module, "__extracted_func_0")`) refuses the batch: nothing changes,
-and the exit status is 2. `--json` reports the result for a script.
+batch. A key that names no helper, a Python keyword, a name the helper already
+uses anywhere in its body, even as an attribute (renaming a parameter to
+`status` in a helper that reads `task.status` is refused), or a use of the
+helper Towel cannot follow (such as `getattr(module, "__extracted_func_0")`)
+refuses the batch: nothing changes, and the exit status is 2. `--json` reports
+the result for a script.
 
-`.towel-helpers.json`, which `dry` writes beside its output, gives the
-inventory each call's code before and after the change. Delete it once the
-helpers are named; without it, renaming still works, but the inventory shows no
-call-site changes. `--format` formats the files a rename changes with the
+`.towel-helpers.json`, which `dry` writes into its output directory, gives the
+inventory each call's code before and after the change. `rename-helpers` reads
+it only from the directory you give it, so give the directory `dry` wrote:
+after `towel dry src/pkg src/pkg`, that is `src/pkg`, not the project root.
+Delete the file once the helpers are named; without it, renaming still works,
+but the inventory shows no call-site changes. `--format` formats the files a rename changes with the
 project's Ruff or Black; without it, Towel says which formatter command would
 restore the project's layout.
+
+[Documentation index](README.md)

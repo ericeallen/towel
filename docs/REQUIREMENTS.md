@@ -1,7 +1,5 @@
 # Requirements
 
-[Documentation index](README.md)
-
 ```bash
 uv tool install code-towel     # or: pipx install code-towel
 towel --version
@@ -9,7 +7,9 @@ towel --version
 
 Towel needs Python and nothing else: its runtime uses only the standard
 library. The optional `format` and `types` extras add Ruff, Black, mypy and
-Pyright, which Towel uses when a project configures them.
+Pyright. Towel type-checks with whichever checker is installed where it runs,
+whether or not the project configures one, and formats with Ruff or Black when
+the project uses one ([typed projects](TYPING.md)).
 
 ## Requirements
 
@@ -36,3 +36,5 @@ copies the whole target there. Type checking keeps a second copy of the
 checker's inputs, and a mypy cache, for the length of the run. An interrupted
 in-place write keeps the original files in its journal until you recover them
 ([recovery](CLI_GUIDE.md#recovery-and-interrupted-writes)).
+
+[Documentation index](README.md)

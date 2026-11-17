@@ -1,7 +1,5 @@
 # Frequently asked questions
 
-[Documentation index](README.md)
-
 ## Will Towel change my files without asking?
 
 No. `towel preview` never writes. `towel dry` writes only after you answer
@@ -118,3 +116,5 @@ what an abbreviation means. Use `--summary`
 ## Where do I ask a question or report a bug?
 
 See [getting help](GETTING_HELP.md).
+
+[Documentation index](README.md)

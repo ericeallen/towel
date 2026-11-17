@@ -385,7 +385,7 @@ proposals = engine.analyze_directory("src/", recursive=False)
 The scanner automatically skips:
 - Hidden directories (starting with `.`)
 - `__pycache__`
-- `node_modules`, and every environment: a directory holding a `pyvenv.cfg` or a
+- `node_modules`, `build`, `dist` and `.eggs`, and every environment: a directory holding a `pyvenv.cfg` or a
   `conda-meta`, whatever its name (a package of your own called `env` or `venv`
   is analyzed like any other)
 - The directories and files `excluded_directories` names (`--exclude`)

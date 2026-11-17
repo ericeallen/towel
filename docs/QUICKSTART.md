@@ -1,7 +1,5 @@
 # Quick start
 
-[Documentation index](README.md)
-
 Three functions below compute a price the same way and differ only in their
 discount. In about ten minutes Towel turns them into one helper and three
 one-line callers; you name the helper, run the tests and keep the result. You
@@ -154,13 +152,17 @@ Input files were not changed.
 ```
 
 The shared calculation became `__extracted_func_0`, and the discount, the one
-thing that differed, became its parameter `_param_0`. Each function now passes
-its own rate. The note says the inserted code is not formatted: this project
+thing that differed, became its parameter `_param_0`. Each of the three
+functions now passes its own rate; the summary names the first two copies
+Towel matched. Generated names are placeholders, `_param_0` here and
+`__param_0` in some projects ([why](GENERATED_CODE.md#names-parameters-and-other-details)),
+and step 4 replaces them. The note says the inserted code is not formatted: this project
 does not configure Ruff or Black, so Towel leaves layout alone.
 
 ## 3. Write the change to a copy
 
-`towel dry` makes the change. Given a new directory, it writes the refactored
+`towel dry` makes the change; despite its name, it writes (the name is for
+"don't repeat yourself"). Given a new directory, it writes the refactored
 project there and leaves `demo` as it was. It asks before writing; answer `y`:
 
 ```bash
@@ -168,30 +170,19 @@ towel dry demo cleaned
 ```
 
 ```text
-======================================================================
-APPLYING REFACTORINGS (FIXED-POINT ITERATION)
-======================================================================
-
-This will apply refactorings one at a time until no more are found.
-Helpers go before the first definition of their module,
-or inside the class or function the duplicates share.
-Nothing is written until you confirm, once the run knows what it would change.
-
-
-Refactoring directory: cleaned
-Note: no formatter configured, so generated code is inserted unformatted. Configure Ruff or Black in the project to format generated code.
-
+...
 1 refactoring(s) in 1 file(s): charges.py; will write cleaned/.
 Write these changes? [y/N] y
 
 Analysed 2 Python files (4 functions).
 Applied 1 refactoring(s) across 1 file(s).
-
-  charges.py: 1 refactoring(s)
-    - Extract common code from checkout_total and member_total
-
+...
 Wrote call-site before/after to cleaned/.towel-helpers.json (for naming; safe to delete).
 ```
+
+Before the question, `dry` prints a banner and the same note as `preview`;
+"fixed-point iteration" in the banner means it repeats until it finds nothing
+more to extract.
 
 The copy's tests pass too:
 
@@ -335,3 +326,5 @@ If a helper's call has a `lambda` in it,
 
 See also the [command reference](CLI_GUIDE.md) and the
 [Python API guide](USAGE_GUIDE.md).
+
+[Documentation index](README.md)

@@ -1,7 +1,5 @@
 # Performance
 
-[Documentation index](README.md)
-
 A module takes seconds. A 30,000-line package takes tens of seconds without
 type checking and a few minutes with it. A 150,000-line project with strict
 mypy and Pyright can take an hour or more: checking each change is most of
@@ -77,3 +75,5 @@ that hundreds of times, and in a typed project checks each one.
 
 The dated investigations and release comparisons behind these figures, up to
 1.949, are in [performance measurements](maintainers/PERFORMANCE_HISTORY.md).
+
+[Documentation index](README.md)

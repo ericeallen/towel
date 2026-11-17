@@ -1,13 +1,12 @@
 # Reading Towel's output
 
-[Documentation index](README.md)
-
 Most of what Towel writes is a helper and calls to it, with the values that
 differed between the copies passed as arguments, as in the
 [quick start](QUICKSTART.md). This page explains the rest: a `lambda` in a
 call, a helper inside a class, a call to a function you already had, and what
 strict mode adds. Every example runs in a project whose `pyproject.toml`
-configures Black, so the inserted code is formatted.
+configures Black (a `[tool.black]` table with `line-length = 88`), so the
+inserted code is formatted.
 
 ## A `lambda:` that delays an argument
 
@@ -339,3 +338,5 @@ or leave its file out with `--exclude`
 ([command reference](CLI_GUIDE.md#protect-a-function)). The complete rules
 behind every form on this page are in
 [generated code, in full](design/GENERATED_CODE_RULES.md).
+
+[Documentation index](README.md)

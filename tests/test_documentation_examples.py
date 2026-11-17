@@ -263,7 +263,7 @@ PAGES: Tuple[Page, ...] = (
     Page("docs/USING_TOWEL.md", project="project", git=True),
     Page("docs/FAQ.md", project="project", git=True),
     Page("docs/CLI_GUIDE.md", project="project", git=True),
-    Page("docs/NAMING.md", project="quickstart"),
+    Page("docs/NAMING.md"),
     Page("docs/GALLERY.md", project="gallery"),
     Page("docs/REQUIREMENTS.md"),
     Page("docs/CROSS_MODULE.md", project="crossmodule"),

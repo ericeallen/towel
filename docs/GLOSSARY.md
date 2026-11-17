@@ -1,7 +1,5 @@
 # Glossary
 
-[Documentation index](README.md)
-
 The words Towel's pages and messages use, each in plain terms. Terms are grouped
 by when you meet them: running Towel, reading its output, and the rarer cases.
 
@@ -145,3 +143,5 @@ Recovery journal
     `.towel-transaction-<id>` directory until the write is complete. If the
     write is interrupted, `towel recover` on that directory puts the originals
     back; see the [command reference](CLI_GUIDE.md#recovery-and-interrupted-writes).
+
+[Documentation index](README.md)

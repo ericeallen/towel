@@ -1,7 +1,5 @@
 # Recipes
 
-[Documentation index](README.md)
-
 Short, tested ways to use Towel in a project's routine. The examples run in a
 repository with a package under `src/shop/` and a second project under
 `packages/billing/`.
@@ -48,7 +46,7 @@ Towel ships a pre-commit hook, `towel-check`, which runs
 ```yaml
 repos:
   - repo: https://github.com/ericeallen/towel
-    rev: v2.0
+    rev: v2.0             # the tag of the version `towel --version` shows
     hooks:
       - id: towel-check
         stages: [manual]
@@ -146,3 +144,5 @@ towel dry src/ src/ --max-refactorings 2       # stop after two changes, then re
 memory, use fewer workers: `--jobs 2`, or `TOWEL_WORKERS=2` in the
 environment. [Using Towel on a project](USING_TOWEL.md) shows how to review
 the result, and [performance](PERFORMANCE.md) gives typical times.
+
+[Documentation index](README.md)

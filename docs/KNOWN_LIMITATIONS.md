@@ -1,7 +1,5 @@
 # Known limitations
 
-[Documentation index](README.md)
-
 Towel checks every change it makes against what your code does, but it reads
 your code as text and structure; it cannot see code that looks at itself.
 Save this as `audit.py`, whose functions record which function called them:
@@ -135,3 +133,5 @@ give figures.
 [The correctness model](design/CORRECTNESS_MODEL.md) states every check
 Towel makes, every reason it declines, and what it does not model, for
 contributors and for anyone auditing a result.
+
+[Documentation index](README.md)

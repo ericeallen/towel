@@ -1,7 +1,5 @@
 # Gallery
 
-[Documentation index](README.md)
-
 Five extractions Towel 2.0 makes in published open-source projects that are not
 part of [its validation](VALIDATION.md). Each command runs on the module exactly
 as the project released it; the excerpt shows the change the text describes,
@@ -370,7 +368,9 @@ The copy helper takes the command's three words as arguments. The paste helper t
 
 ## Try your own
 
-`towel preview` writes nothing, so it is safe to point at any project:
+`towel preview` writes nothing, so it is safe to point at any project. Give it
+your package or `src/` directory; here `isodate/` holds only `duration.py`, the
+module this page started with:
 
 ```bash
 towel preview isodate/ --summary --no-types --no-format
@@ -386,3 +386,5 @@ Input files were not changed.
 ```
 
 The [quick start](QUICKSTART.md) takes a change from preview to a tested commit.
+
+[Documentation index](README.md)

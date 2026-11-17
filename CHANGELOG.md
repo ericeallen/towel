@@ -20,7 +20,7 @@ is now a site, and shows every command's output.
   exactly when Python frees an object it no longer uses, that reading an
   attribute or comparing has no side effects, and that module functions are
   not rebound while a helper runs. `--strict`, or `strict = true` under
-  `[tool.towel]`, keeps 1.949's behaviour exactly
+  `[tool.towel]`, keeps 1.949's behavior exactly
   ([relaxed and strict](https://github.com/ericeallen/towel/blob/main/docs/RELAXED_AND_STRICT.md)).
 - **`preview --check` exits 3** when it would change code. Status 3 is new, and
   only `--check` returns it.
@@ -44,8 +44,9 @@ is now a site, and shows every command's output.
   run later, repeatedly or conditionally.
 - Copies that differ in an attribute of the block's own loop variable become
   one helper with a callback (`lambda item: item.weight_kg`).
-- Callers are redirected to an existing function whose whole body is the
-  duplicate ("Reuse NAME").
+- A block of statements that duplicates the whole body of an existing
+  function becomes a call to that function ("Reuse NAME"), where nothing can
+  rebind the function while it runs. A repeated expression gets a new helper.
 - Repeated multi-line expressions, blocks repeated inside one function, blocks
   that `await` (as `async def` helpers), differing f-string text and
   consistently renamed locals are extracted.
@@ -62,7 +63,8 @@ is now a site, and shows every command's output.
 - JSON results gain `mode`, `types`, `config_path`, `outcome`, `analysed`,
   `left_alone` and `relaxed_findings` (schema 1, additive).
 - Python 3.14 and 3.15. Strict mode's lifetime guarantees are certified for
-  3.11 to 3.13; on later versions it leaves alone what they cover.
+  3.11 to 3.13; on later versions it leaves alone what they cover, so install
+  on 3.13 to use `--strict` (`uv tool install` now picks 3.14 or 3.15).
 
 ### Changed
 

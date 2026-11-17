@@ -1,7 +1,5 @@
 # How Towel is validated
 
-[Documentation index](README.md)
-
 **What Towel promises.** A change Towel makes keeps what your program
 computes and does: its results, output, exceptions and the order of its side
 effects. That holds for programs that do not use reflection or
@@ -39,3 +37,5 @@ in its [release notes](https://github.com/ericeallen/towel/releases) and the
 [release procedure](maintainers/RELEASING.md) gives every step. To see what
 Towel did on code like yours, see the [gallery](GALLERY.md), and run your own
 tests on the result: they know your program better than any of these checks.
+
+[Documentation index](README.md)

@@ -1,8 +1,7 @@
 # Compatibility and automation
 
-[Documentation index](README.md)
-
-This contract applies to **1.949 and later releases**. Towel remains beta.
+This contract has applied since **1.949**; what 2.0 added is marked "Added
+in 2.0". Towel remains beta.
 Correctness repairs may decline previously accepted extractions or change
 the generated code; the contract does not freeze extraction counts, helper
 names, formatting, timing, diagnostic wording or human-readable console output.
@@ -131,7 +130,8 @@ The supported surface consists of:
 - `UnificationRefactorEngine` with the documented basic constructor options
   `min_lines`, `max_parameters`, `parameterize_constants`,
   `parameterize_builtins`, `excluded_directories`, `cross_module_helpers`,
-  `skip_trivial_helpers`, `annotate_helpers` and `max_candidate_pairs`.
+  `skip_trivial_helpers`, `annotate_helpers`, `max_candidate_pairs` and
+  `strict` (added in 2.0).
 - Its `analyze_file`, `analyze_files`, `plan_refactoring`,
   `refactor_to_fixed_point` and `refactor_directory_to_fixed_point` methods,
   with their documented argument and return shapes.
@@ -162,3 +162,5 @@ update those pins deliberately.
 Security fixes are provided for the latest released version under the
 [security policy](https://github.com/ericeallen/towel/blob/main/SECURITY.md). This is a solo-maintained project with
 best-effort support and no response-time commitment.
+
+[Documentation index](README.md)

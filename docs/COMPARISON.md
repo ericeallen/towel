@@ -1,7 +1,5 @@
 # How Towel compares
 
-[Documentation index](README.md)
-
 Several tools deal with duplicated code. Most find it and leave the change to
 you; Towel makes the change, and makes only changes it can show keep your
 program's behavior. Which you want depends on the job.
@@ -112,3 +110,5 @@ the design better. Review the diff and run your tests, as the
 The other tools' descriptions above come from their own documentation as
 read in November 2026: pylint 4.1, PMD 7, jscpd's README, PyCharm's help and
 GitHub's Copilot documentation.
+
+[Documentation index](README.md)

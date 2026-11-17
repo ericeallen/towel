@@ -1,7 +1,5 @@
 # Why something was left alone
 
-[Documentation index](README.md)
-
 When Towel finds similar code and does not extract it, the run says why, in a
 sentence, with the reason's name in brackets. Save this as `feed.py`:
 
@@ -43,15 +41,40 @@ name. When there is something you can do, the next line says what. Below the
 reasons, each place is named by file and lines, largest first; the run shows
 the five largest, and `--explain` lists them all.
 
+## When Towel finds nothing to do
+
+A run that changes nothing ends in one of two ways.
+
+**"No repeated code found in N files."** Towel compares the bodies of functions and
+methods, and found no two alike. It does not examine code outside functions:
+statements at a module's top level, or a script's, are never extracted. When
+such statements repeat, the run says so, with their lines; to have Towel
+share them, move them into a function.
+
+**"Found N places with similar code and extracted none."** Towel found code of
+the same shape and the reasons above say why it left each place alone. Similar
+is not the same as duplicated: most of these places are short, or differ in
+more than values, and read better as they are. If the reasons are that a
+helper would not be smaller, or that the copies differ too much, Towel is
+telling you there is nothing worth extracting, and you are done. Do not
+rewrite code only so that Towel can extract it. Act on a reason when its
+place is code you would have extracted by hand; the sentence's "What you can
+do" line, where there is one, says how.
+
+`--explain` lists every place and its reason, which helps you find the one
+you meant; on a large project it is long.
+
 ## The reasons you will meet most
 
 - **The helper would not be smaller** (`unprofitable_helper`). A helper and its
   calls must be smaller than the copies they replace. Short duplicates often
   fail this, and are better left as they are.
 - **The copies differ too much** (`not_structurally_similar`,
-  `unification_failed`). A parameter can stand for a value or an expression,
-  not for an operator, a method name or a slice, and each difference needs a
-  parameter: more than `--max-parameters` (5) and the copies stay.
+  `unification_failed`). A parameter can stand for a value, a variable or an
+  expression, including text inside an f-string, but not for an operator, and
+  each difference needs a parameter: more than `--max-parameters` (5) and the
+  copies stay. Raise `--max-parameters` only when the sentence says the
+  copies need more parameters.
 - **A variable carries over** (`unsafe_reassignment_block1`,
   `conditionally_bound_return`). A block that continues a variable set before
   it (`total += x` after `total = 0`), or sets one only on some paths, cannot
@@ -192,3 +215,5 @@ the run lists ([automation](COMPATIBILITY.md)).
 | `would be the one unannotated function of its module` | No annotated signature of the helper type-checks, and an unannotated one would be the only unannotated function of a fully annotated module. | To proceed without type verification, use --no-types. |
 
 <!-- END reason table -->
+
+[Documentation index](README.md)

@@ -1,7 +1,5 @@
 # Using Towel on a project
 
-[Documentation index](README.md)
-
 On a real project, let Git keep the original: work on a branch, let Towel
 change the files in place, and review the change as you would a colleague's.
 The examples on this page run in a Git repository holding a package, `shop/`,
@@ -29,7 +27,9 @@ Input files were not changed.
 ```
 
 Without `--summary`, `preview` also prints the diff. `--inventory` lists the
-helpers it would write, with their parameters.
+helpers it would write, with their parameters. On a large project, skip this
+step: `dry` does the same analysis, shows the same summary, and asks before
+writing anything, so a `preview` first runs the analysis twice.
 
 ## Make the change
 
@@ -104,26 +104,19 @@ To keep Towel away from some code for good, mark the function with
 
 ## Name the helpers, test, commit
 
+`--list --json` gives the rename key of each helper and parameter, the exact
+string a mapping uses:
+
 ```bash
-towel rename-helpers shop/ --list
+towel rename-helpers shop/ --list --json | grep rename_key
 ```
 
 ```text
-Found 2 extracted helper function(s):
-
-  cart.py:13
-    Function: __extracted_func_2
-      def __extracted_func_2(self):
-              total = 0
-              for item in self.items:
-      ...
-
-  pricing.py:1
-    Function: __extracted_func_0
-      def __extracted_func_0(amount, _param_0):
-          base = max(amount, 0)
-          discount = base * _param_0
-      ...
+      "rename_key": "cart.py:Cart.__extracted_func_2",
+          "rename_key": "cart.py:Cart.__extracted_func_2.self",
+      "rename_key": "pricing.py:__extracted_func_0",
+          "rename_key": "pricing.py:__extracted_func_0.amount",
+          "rename_key": "pricing.py:__extracted_func_0._param_0",
 ```
 
 Save this as `renames.json`:
@@ -156,11 +149,12 @@ OK
 
 Helpers are numbered across the whole run, so the method in `cart.py` is
 `__extracted_func_2`. Each key is the file, relative to the target, and the
-helper's name, with its class for a method; `towel rename-helpers shop/ --list --json`
-gives every key, and each helper's call sites ([naming guide](NAMING.md)). A
+helper's name, with its class for a method; without `grep`, the inventory also
+shows each helper's code and call sites ([naming guide](NAMING.md)). A
 method's new name keeps its two leading underscores, which keep it private to
-its class. `--format` formats the renamed files with the project's Ruff or
-Black, since a longer name can make a line too long. Then commit, without the naming
+its class. `rename-helpers` formats only when you pass `--format`, which runs
+the project's Ruff or Black on the renamed files, since a longer name can make
+a line too long. Then commit, without the naming
 file Towel wrote:
 
 ```bash
@@ -204,3 +198,5 @@ If a run is stopped while it writes (Ctrl-C, a crash, a full disk), some files
 may have changed and others not. The run leaves a journal named
 `.towel-transaction-<id>` in the target; `towel recover` with that path puts
 every file back ([recovery](CLI_GUIDE.md#recovery-and-interrupted-writes)).
+
+[Documentation index](README.md)

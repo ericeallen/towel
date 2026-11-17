@@ -1,7 +1,5 @@
 # Command reference
 
-[Documentation index](README.md)
-
 ```bash
 towel preview shop/                  # show what would change; write nothing
 towel dry shop/ cleaned/             # write a changed copy; shop/ stays as it is
@@ -209,3 +207,5 @@ applies a JSON mapping, `--preview` shows the diff without writing, and
 `--format` formats the files it changes. A rejected mapping changes nothing
 and exits 2. The [naming guide](NAMING.md) covers it in full.
 `towel recover JOURNAL` is described [above](#recovery-and-interrupted-writes).
+
+[Documentation index](README.md)

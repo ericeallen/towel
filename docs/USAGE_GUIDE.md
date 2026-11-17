@@ -125,6 +125,10 @@ options are keyword-only; these are the ones most callers set:
 | `expression_candidates` | `True` | Also extract a repeated expression of at least `min_lines` lines. |
 | `include_ignored` | `False` | Also analyze files Git ignores, `--include-ignored`. |
 
+The [compatibility contract](COMPATIBILITY.md#python-api) lists the options
+it supports; `complete_scope`, `expression_candidates` and `include_ignored`
+are not among them yet, so pin the Towel version if you rely on them.
+
 The engine checks types and formats code only when you give it a type oracle
 and a formatter; the command line builds both from the project's
 configuration. [Formatting and type-checker setup](design/PYTHON_API_REFERENCE.md#formatting-and-type-checker-setup)

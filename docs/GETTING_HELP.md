@@ -1,7 +1,5 @@
 # Getting help
 
-[Documentation index](README.md)
-
 ## Where to ask
 
 Ask on the [issue tracker](https://github.com/ericeallen/towel/issues). It is the
@@ -59,3 +57,5 @@ If you would like to fix something yourself, the
 explains how to set up a development environment and run the checks, and the
 [code of conduct](https://github.com/ericeallen/towel/blob/main/CODE_OF_CONDUCT.md)
 applies to every conversation about the project.
+
+[Documentation index](README.md)
