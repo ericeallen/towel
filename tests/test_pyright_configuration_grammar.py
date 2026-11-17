@@ -159,7 +159,15 @@ def test_a_configuration_pyright_rejects_refuses_the_run_before_anything_is_writ
     path = _project(tmp_path / "project", configuration)
     before = path.read_bytes()
     result = invoke(
-        ["dry", str(path.parent), str(path.parent), "--no-interactive", "--progress", "none"]
+        [
+            "dry",
+            str(path.parent),
+            str(path.parent),
+            "--strict",
+            "--no-interactive",
+            "--progress",
+            "none",
+        ]
     )
     assert result.status == 1, result
     assert "Original project type check failed" in result.stderr

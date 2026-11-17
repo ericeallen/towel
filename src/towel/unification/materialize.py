@@ -109,10 +109,18 @@ from .placement import HelperPlacement, _HelperNaming, method_helper_position
 from .statement_facts import bindings_of, loaded_names
 
 
-def _padded(lines: List[str], insert_at: int, block: List[str]) -> List[str]:
-    """``block`` with a blank line on each side that touches a non-blank line of ``lines``."""
-    prefix = ["\n"] if insert_at > 0 and lines[insert_at - 1].strip() else []
-    suffix = ["\n"] if insert_at < len(lines) and lines[insert_at].strip() else []
+def _padded(
+    lines: List[str], insert_at: int, block: List[str], *, blank_lines: int = 1
+) -> List[str]:
+    """Separate ``block`` from its neighbors, counting blank lines already present."""
+    before = insert_at
+    while before > 0 and not lines[before - 1].strip():
+        before -= 1
+    after = insert_at
+    while after < len(lines) and not lines[after].strip():
+        after += 1
+    prefix = ["\n"] * max(0, blank_lines - (insert_at - before)) if insert_at > 0 else []
+    suffix = ["\n"] * max(0, blank_lines - (after - insert_at)) if insert_at < len(lines) else []
     return prefix + block + suffix
 
 
@@ -789,7 +797,7 @@ class Materialization(
                     "\n"
                 )
             ]
-            lines[insert_line:insert_line] = _padded(lines, insert_line, func_lines)
+            lines[insert_line:insert_line] = _padded(lines, insert_line, func_lines, blank_lines=2)
             return
         node: ast.AST = proposal.extracted_function
         dependencies = self._placeable_dependencies(

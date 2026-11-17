@@ -298,7 +298,21 @@ class InsertionPoints(EngineState):
             return after
         for statement in tree.body:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                return min([statement.lineno] + [d.lineno for d in statement.decorator_list]) - 1
+                position = _first_line(statement) - 1
+                # A contiguous comment block describes the definition after it.
+                # Keep interpreter, encoding and whole-file checker directives
+                # ahead of generated code even when no blank line separates them.
+                while position and _is_comment(lines[position - 1]):
+                    previous = position - 1
+                    line = lines[previous]
+                    if (
+                        (previous == 0 and line.startswith("#!"))
+                        or (previous < 2 and _CODING.match(line))
+                        or _FILE_TYPE_IGNORE.match(line)
+                    ):
+                        break
+                    position = previous
+                return position
         return len(lines)
 
     def _find_class_insert_position(

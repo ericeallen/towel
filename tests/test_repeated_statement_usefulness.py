@@ -74,20 +74,20 @@ def test_single_case_remains_worthwhile() -> None:
             "self, a, b, c, d",
             "    self.assertEqual(num2words(a, lang='tet'), b)\n"
             "    self.assertEqual(num2words(c, lang='en'), d)\n",
-            True,
+            False,
         ),
         (
             "self, a, b",
             "    self.assertEqual(num2words(a, lang='tet'), b)\n"
             "    self.assertEqual(num2words(a, lang='tet'), b)\n",
-            True,
+            False,
         ),
     ],
 )
 def test_shared_context_preserves_independent_groups_but_overlapping_data_does_not(
     parameters: str, statements: str, worthwhile: bool
 ) -> None:
-    """R2: overlapping cases and different operations retain the ordinary cost rule."""
+    """Re-audit 2: literal changes or identical cases do not make a useful group."""
     # Shared expected values still permit independent groups (the same receiver
     # is shared too); only partial overlap or different structure links cases.
     assert _worthwhile(parameters, statements) is worthwhile

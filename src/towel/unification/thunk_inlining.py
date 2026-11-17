@@ -131,7 +131,8 @@ class ValuePolicy:
     """Per block, the hygienic renames of its names to the helper's spelling."""
     certain_names: FrozenSet[str] = frozenset()
     """Relaxed: module-level and builtin names every site is sure to resolve, which the
-    helper, standing in the sites' module, therefore reads without failing."""
+    helper reads without failing. Across modules only builtin names qualify,
+    subject to the shared helper's namespace checks during placement."""
 
 
 STRICT = ValuePolicy()

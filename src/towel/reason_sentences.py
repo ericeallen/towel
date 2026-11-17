@@ -111,8 +111,8 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         " GeneratorExit the block stops is raised again in its function."
     ),
     RejectReason.CREATED_OBJECT_ESCAPES: _says(
-        "The block creates a function, lambda, class or generator that is used after the block,"
-        " or handed to code Towel cannot see (such as items.sort(key=lambda ...)).",
+        "The block creates a function, lambda, class or generator that Towel cannot prove safe"
+        " to move into a helper.",
         "Use sorted, min or max with key=, or define the function at module level.",
     ),
     RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY: _says(
@@ -158,8 +158,8 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         " holding it, unconditionally, at its top.",
     ),
     RejectReason.IMPURE_EAGER_PARAMETER: _says(
-        "An expression that differs between the blocks would be evaluated earlier, at the call,"
-        " and it is neither a constant nor a plain variable."
+        "Towel cannot pass a differing expression at the call without changing when it is"
+        " evaluated or whether it can fail."
     ),
     RejectReason.INCOMPLETE_LIFETIME_BLOCK1: _says(
         "The first block reads a variable that is assigned only later in its function, or"
@@ -219,7 +219,7 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         "The block reads, assigns or declares a nonlocal variable."
     ),
     RejectReason.NOT_STRUCTURALLY_SIMILAR: _says(
-        "The blocks have the same kinds of statements but are less than 60% alike in detail."
+        "The blocks differ too much in size or structure to share a helper."
     ),
     RejectReason.ORPHANED_VARIABLES: _says(
         "Later code would read a variable that only the block assigns and the helper does not"
@@ -264,7 +264,8 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         " does not work."
     ),
     RejectReason.TRIVIAL_FORWARDING_HELPER: _says(
-        "The helper would hold only a single call, raise or rename, and no logic of its own."
+        "The helper would only forward calls, raise, rename or unpack values, or call earlier"
+        " helpers; it would share no new logic."
     ),
     RejectReason.TRIVIAL_RETURN_BLOCKS: _says(
         "The helper would compute nothing: it would return what it was given."
@@ -309,8 +310,8 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         "Remove the formatter comment.",
     ),
     RejectReason.FORWARDED_CALLEE: _says(
-        "The blocks call different things that are not plain names, such as"
-        " client.get_profile(...) and client.get_preferences(...).",
+        "Passing the different callees would require a forwarding lambda that repeats their"
+        " lookup on each call.",
         "Assign the method to a variable first, then call the variable.",
     ),
     RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL: _says(
@@ -334,11 +335,10 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         " a one-byte bytes literal."
     ),
     RejectReason.UNIFICATION_FAILED: _says(
-        "The blocks differ in something a parameter cannot stand for: an operator, text inside"
-        " an f-string, a variable named differently inside a loop or branch, a method name, a"
-        " slice, or more differences than --max-parameters allows.",
-        "Raise --max-parameters, use the same local names, or build the string with + or"
-        " format.",
+        "The blocks differ in something a parameter cannot stand for, such as an operator or"
+        " variable bindings that do not correspond, or need more parameters than"
+        " --max-parameters allows.",
+        "If the blocks need more parameters, raise --max-parameters.",
     ),
     RejectReason.UNPROFITABLE_HELPER: _UNPROFITABLE,
     RejectReason.UNPROVEN_IMPORT: _says(
@@ -380,9 +380,8 @@ EXPRESSION_REASONS: Mapping[RejectReason, Explanation] = {
         "Rename the lambda parameter or comprehension variable if it only shares the name.",
     ),
     RejectReason.CREATED_OBJECT_ESCAPES: _says(
-        "The expression creates a lambda or generator that is used after the expression has"
-        " been evaluated, or handed to code Towel cannot see (such as"
-        " items.sort(key=lambda ...)).",
+        "The expression creates a lambda or generator that Towel cannot prove safe to move"
+        " into a helper.",
         "Use sorted, min or max with key=, or a list in place of the generator.",
     ),
     RejectReason.DIRECTIVE_ON_SHARED_LINE: _says(
@@ -391,8 +390,8 @@ EXPRESSION_REASONS: Mapping[RejectReason, Explanation] = {
         "Move the comment off the lines where the expression begins and ends.",
     ),
     RejectReason.IMPURE_EAGER_PARAMETER: _says(
-        "A part that differs between the expressions would be evaluated earlier, at the call,"
-        " and it is neither a constant nor a plain variable."
+        "Towel cannot pass a differing part at the call without changing when it is evaluated"
+        " or whether it can fail."
     ),
     RejectReason.INCOMPLETE_LIFETIME_BLOCK1: _says(
         "The first expression reads a variable that is assigned only later in its function."
@@ -406,7 +405,7 @@ EXPRESSION_REASONS: Mapping[RejectReason, Explanation] = {
     ),
     RejectReason.NONLOCAL_SAFETY_SKIP: _says("The expression reads a nonlocal variable."),
     RejectReason.NOT_STRUCTURALLY_SIMILAR: _says(
-        "The expressions have the same outline but are less than 60% alike in detail."
+        "The expressions differ too much in size or structure to share a helper."
     ),
     RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY: _says(
         "With --strict: the expression is inside a try or with statement and reads a variable"
@@ -421,13 +420,13 @@ EXPRESSION_REASONS: Mapping[RejectReason, Explanation] = {
         "Assign the variable on every path before the expression.",
     ),
     RejectReason.TRIVIAL_FORWARDING_HELPER: _says(
-        "The helper would hold only a single call and no logic of its own."
+        "The helper would only forward a call or call earlier helpers, sharing no new logic."
     ),
     RejectReason.UNIFICATION_FAILED: _says(
-        "The expressions differ in something a parameter cannot stand for: an operator, text"
-        " inside an f-string, a method name, a slice, or more differences than"
+        "The expressions differ in something a parameter cannot stand for, such as an operator"
+        " or variable bindings that do not correspond, or need more parameters than"
         " --max-parameters allows.",
-        "Raise --max-parameters.",
+        "If the expressions need more parameters, raise --max-parameters.",
     ),
 }
 """The sentences that read differently for a pair of expression candidates.
@@ -480,8 +479,8 @@ PROPOSAL_REASONS: Mapping[str, Explanation] = {
         TYPE_CHECKING_REMEDIES,
     ),
     "not verifiable: the type checker does not look at the code it changes": _says(
-        "The type checker takes this code to be unreachable on the platform and Python version"
-        " it checks for, so a change to it could not be checked.",
+        "Towel could not establish that the type checker examines the changed code, so the"
+        " change could not be verified.",
         UNTYPED_REMEDY,
     ),
     "not representable in its file's encoding": _says(

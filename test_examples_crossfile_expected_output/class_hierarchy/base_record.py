@@ -2,6 +2,7 @@
 Base of a class hierarchy whose subclass lives in another module.
 """
 
+
 def _extracted_func_0(self):
     count = len(self.values)
     total = sum(self.values)

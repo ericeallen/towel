@@ -118,9 +118,9 @@ def test_expressions_and_statements_declined_for_one_reason_are_two_lines() -> N
     )
     lines = reason_lines(report)
     assert lines[2:] == [
-        "  3  The expressions have the same outline but are less than 60% alike in detail."
+        "  3  The expressions differ too much in size or structure to share a helper."
         " [not_structurally_similar]",
-        "  2  The blocks have the same kinds of statements but are less than 60% alike in detail."
+        "  2  The blocks differ too much in size or structure to share a helper."
         " [not_structurally_similar]",
         "  1  The call would have to pass a builtin such as len to the helper, or one expression"
         " uses a variable named like a builtin that the other uses as the builtin."

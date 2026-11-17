@@ -61,6 +61,7 @@ from . import argument_ownership
 from .argument_ownership import argument_handoff_plan
 from .extraction_policy import overlaps_protected
 from .block_signature import BlockSignature, BlockSignatureIndex, extract_block_signature
+from .builtins import BUILTIN_NAMES
 from .extractor import has_complete_return_coverage, is_value_producing
 from .function_scope import code_names, function_names, identifiers, scope_moving_names
 from .frame_ownership import FrameOwnership, frame_ownership
@@ -954,13 +955,20 @@ class BlockAnalysis(EngineState):
         resolves. A name is passed by value wherever the helper used it only
         if no callee can rebind it meanwhile (``_rebindable_module_names``).
         A name every site resolves is one the helper reads without
-        failing, when it stands in the sites' one module.
+        failing, when it stands in the sites' one module. Across modules,
+        relaxed mode also reads a builtin without failing; placement later
+        certifies that no participating module or project write binds it.
         """
         by_value: List[FrozenSet[str]] = []
         # The helper of sites in one module stands in that module and reads
         # its names as they do.
         one_module = len({id(analyzer.analyzed_tree) for _, _, analyzer, _ in sites}) == 1
         certain = frozenset.intersection(*(frozenset(site[3]) for site in sites))
+        if not one_module:
+            # A shared helper retains only builtin spellings; other module
+            # names may be absent from its host. Explicit parameterization
+            # preserves the builtin lookup at each caller instead.
+            certain = certain & BUILTIN_NAMES if not self.parameterize_builtins else frozenset()
         for function, nodes, analyzer, available in sites:
             read: Set[str] = set().union(*(loaded_names(node) for node in nodes))
             rebindable = self._rebindable_module_names(
@@ -972,7 +980,7 @@ class BlockAnalysis(EngineState):
             plain_values=not self.strict,
             available=tuple(by_value),
             renames=tuple(renames),
-            certain_names=certain if one_module and not self.strict else frozenset(),
+            certain_names=certain if not self.strict else frozenset(),
         )
 
     def _own_scope_locals(

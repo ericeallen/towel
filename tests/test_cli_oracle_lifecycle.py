@@ -76,7 +76,16 @@ def test_cli_closes_checker_when_the_original_cannot_be_checked(
     oracle.check_project.return_value = CheckFailure("checker timed out")
     monkeypatch.setattr(cli, "_type_oracle", lambda path: oracle)
     result = invoke(
-        ["dry", str(source), str(output), "--no-interactive", "--no-format", "--progress", "none"]
+        [
+            "dry",
+            str(source),
+            str(output),
+            "--strict",
+            "--no-interactive",
+            "--no-format",
+            "--progress",
+            "none",
+        ]
     )
     assert result.status == 1
     assert "Original project type check failed" in result.stderr
