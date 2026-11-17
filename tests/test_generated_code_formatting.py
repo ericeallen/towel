@@ -141,7 +141,7 @@ def test_black_settings_default_without_configuration(tmp_path: Path) -> None:
     assert BlackSettings.for_project(tmp_path / "m.py") == BlackSettings()
 
 
-def test_engine_inserts_unparsed_text_without_a_formatter(tmp_path: Path) -> None:
+def test_engine_preserves_call_text_without_a_formatter(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(LITERAL_STRINGS)
     result = _refactor(path)
@@ -192,9 +192,10 @@ def test_formatted_method_helper_is_reindented_inside_the_class(tmp_path: Path) 
     assert '"Mr. "' in result
 
 
-def test_dry_formats_by_default_and_not_with_no_format(tmp_path: Path) -> None:
+def test_dry_uses_configured_formatter_by_default_and_not_with_no_format(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
+    (source / "pyproject.toml").write_text("[tool.black]\n")
     (source / "m.py").write_text(LITERAL_STRINGS)
     formatted = tmp_path / "formatted"
     plain = tmp_path / "plain"
@@ -396,10 +397,10 @@ def test_ruff_formats_when_the_project_configures_it(tmp_path: Path) -> None:
     assert '"a"' in formatted
 
 
-def test_black_is_the_formatter_without_ruff_configuration(tmp_path: Path) -> None:
+def test_black_is_the_formatter_when_configured_without_ruff(tmp_path: Path) -> None:
     from towel.formatting import formatter_for_project
 
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (tmp_path / "pyproject.toml").write_text("[tool.black]\n")
     choice = formatter_for_project(tmp_path / "m.py")
     formatter, note = choice.tool, choice.note
     assert formatter is not None and note == "Black"
@@ -666,3 +667,23 @@ def test_dry_sorts_inserted_imports_for_an_isort_project(tmp_path: Path) -> None
     text = (out / "m.py").read_text()
     if "from typing import" in text:
         assert text.index("import os") < text.index("from typing import")
+
+
+@pytest.mark.parametrize(
+    "configuration", ["", "[project]\nname='x'\n", "[tool.pycodestyle]\nmax-line-length=79\n"]
+)
+def test_unconfigured_projects_do_not_get_an_installed_formatter(
+    tmp_path: Path, configuration: str
+) -> None:
+    """Audit R6: installing Black must not opt an unformatted project into Black."""
+    from towel.formatting import formatter_for_project, formatter_factory_for_project
+
+    pytest.importorskip("black")
+    if configuration:
+        (tmp_path / "pyproject.toml").write_text(configuration)
+    module = tmp_path / "module.py"
+    module.write_text("value = 'unchanged'\n")
+    choice = formatter_for_project(module)
+    assert choice.tool is None
+    assert choice.note == "no formatter configured"
+    assert formatter_factory_for_project(tmp_path)(str(module)) is None

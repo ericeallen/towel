@@ -67,15 +67,12 @@ class TempModule:
 
 
 class TestRefactorEngineAdversarial(unittest.TestCase):
-    def _engine(
-        self, *, min_lines: int = 2, reuse_existing_functions: bool = True
-    ) -> UnificationRefactorEngine:
+    def _engine(self, *, min_lines: int = 2) -> UnificationRefactorEngine:
         return UnificationRefactorEngine(
             skip_trivial_helpers=False,
             max_parameters=5,
             min_lines=min_lines,
             parameterize_constants=True,
-            reuse_existing_functions=reuse_existing_functions,
             cross_module_helpers=True,
         )
 
@@ -126,11 +123,16 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
     def test_augassign_target_is_not_parameterized(self):
         code = """
+        def identity(function):
+            return function
+
+        @identity
         def f1(x):
             total = 0
             total += x
             return total
 
+        @identity
         def f2(x):
             sum = 0
             sum += x
@@ -138,9 +140,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         """
         m = TempModule(code)
         self.addCleanup(m.cleanup)
-        # The helper's parameters are under test; keep the extraction rather
-        # than having ``f2`` call ``f1``.
-        engine = self._engine(min_lines=2, reuse_existing_functions=False)
+        # Decorators prevent reuse so both sites exercise the generated
+        # helper's augmented-assignment parameters.
+        engine = self._engine(min_lines=2)
         props = engine.analyze_file(str(m.path))
         if not lifetime_order_certified():
             self.assertEqual(props, [])
@@ -1309,8 +1311,14 @@ class TestCrossFileImports(unittest.TestCase):
             (pkg / "__init__.py").write_text("\n", encoding="utf-8")
             a = pkg / "a.py"
             b = pkg / "b.py"
+            # Decorated definitions require a fresh helper, keeping this
+            # test focused on insertion of that helper's cross-file import.
             a.write_text(
                 textwrap.dedent("""
+                    def identity(function):
+                        return function
+
+                    @identity
                     def fa(x):
                         y = x + 1
                         z = y * 2
@@ -1322,6 +1330,10 @@ class TestCrossFileImports(unittest.TestCase):
                 textwrap.dedent("""
                     import pkg.a
 
+                    def identity(function):
+                        return function
+
+                    @identity
                     def fb(x):
                         y = x + 1
                         z = y * 2
@@ -1335,7 +1347,6 @@ class TestCrossFileImports(unittest.TestCase):
                 min_lines=2,
                 parameterize_constants=True,
                 prefer_absolute_imports=True,
-                reuse_existing_functions=False,  # the helper import is under test
                 cross_module_helpers=True,
             )
             props = engine.analyze_directory(str(pkg), recursive=False)

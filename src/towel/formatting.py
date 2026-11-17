@@ -17,8 +17,8 @@
 ``ast.unparse`` renders a helper or a call on one line with single-quoted
 strings. A formatter makes the inserted text read like the surrounding code.
 The engine accepts any ``SnippetFormatter``; :func:`formatter_for_project`
-supplies ``ruff format`` when the project configures ruff and Black
-otherwise, whichever is installed, at the line length the project declares
+supplies ``ruff format`` or Black when the project configures a formatter,
+at the line length the project declares
 in any of its tool sections. Formatting must never change meaning, so every
 formatter is wrapped by :func:`checked`, which compares the syntax tree
 before and after, and each tool leaves alone what the project's
@@ -414,6 +414,8 @@ def format_at_indentation(formatter: SnippetFormatter, source: str, prefix: str)
     the materializer's reindentation, each tab represents a four-space level.
     The suites are only formatter input, never generated program statements.
     """
+    from .unification.source_render import reindent_source
+
     depth = (len(prefix.expandtabs(4)) + 3) // 4
     if not depth:
         return formatter(source)
@@ -421,7 +423,7 @@ def format_at_indentation(formatter: SnippetFormatter, source: str, prefix: str)
     wrapped = "\n".join(
         [
             *("    " * level + "if True:" for level in range(depth)),
-            *(indentation + line for line in source.split("\n")),
+            reindent_source(source, indentation),
         ]
     )
     formatted = formatter(wrapped)
@@ -436,9 +438,7 @@ def format_at_indentation(formatter: SnippetFormatter, source: str, prefix: str)
     # Formatter indentation may use tabs or a configured width of its own.
     first = next(line for line in lines if line.strip())
     margin = first[: len(first) - len(first.lstrip())]
-    unwrapped = "\n".join(
-        line[len(margin) :] if line.startswith(margin) else line for line in lines
-    )
+    unwrapped = reindent_source("\n".join(lines), "", margin)
     # Ruff separates a definition from its synthetic enclosing ``if`` with a
     # blank line. That suite's spacing does not belong to the destination;
     # insertion supplies its own separator. Keep blanks the input already had.
@@ -780,10 +780,10 @@ def _black_for_project(
 def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
     """The formatter the project's configuration calls for, and a note on what was chosen.
 
-    ruff when the project configures it and it is installed; otherwise Black
-    when installed; otherwise none. The note explains a fallback or absence.
-    A formatter whose configuration excludes ``path`` leaves the code Towel
-    writes there as ``ast.unparse`` renders it.
+    Ruff when configured, with Black as its fallback; Black when configured
+    on its own; otherwise none. The note explains a fallback or absence.
+    A formatter whose configuration excludes ``path`` leaves the assembled
+    source text alone.
     """
     return _formatter_for_project(path, None)
 
@@ -800,6 +800,9 @@ def _formatter_for_project(
                 return _black_for_project(path, f"Black; {note}", tools)
             except ImportError:
                 return ToolChoice(None, f"{note}, and Black is not installed either")
+    tool = load_pyproject(_root(path)).get("tool", {})
+    if not isinstance(tool, Mapping) or not isinstance(tool.get("black"), Mapping):
+        return ToolChoice(None, "no formatter configured")
     try:
         return _black_for_project(path, "Black", tools)
     except ImportError:

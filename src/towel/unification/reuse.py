@@ -12,18 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Duplicates that are the whole body of a function.
+"""Reuse proved whole-body functions when their program never rebinds them.
 
-A duplicate that is all a function does is extracted like any other, and
-the function becomes a call of the new helper. It is never rewritten to call
-another existing function that restates it instead: a call by name looks
-that function up in its module every time, so ``mock.patch("mod.f1")``, or
-any other rebinding of ``mod.f1``, would then change ``f2`` too (audit r06).
-An earlier pass's generated helper may instead be reused when the proposed
-call proves it computes precisely the new helper's result. Otherwise a
-proposal that reduces it to a forwarder is declined. Equivalent module helpers
-created by simultaneous batches can share one definition through an alias:
-their generated callers keep their bindings without acquiring a forwarding call.
+Relaxed mode requires a clean program scan. Strict mode additionally requires
+complete consumer scope and callers with no ownership transfer. Introduced
+helpers retain the separately proved reuse and alias path below.
 """
 
 from __future__ import annotations
@@ -31,6 +24,7 @@ from __future__ import annotations
 import ast
 import copy
 import dataclasses
+from dataclasses import dataclass
 from pathlib import Path
 
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -53,6 +47,32 @@ from ..source_text import read_source
 from .function_index import FunctionIndex
 from .import_graph import imported_alias_sites
 from .module_bindings import global_bindings
+from .import_graph import import_runs_new_code, would_create_import_cycle
+from .rebinding import rebinding_reason
+
+
+@dataclass(frozen=True)
+class _ReusePlan:
+    """How a helper's arguments map onto an existing function it restates.
+
+    ``parameter_positions[j]`` is the helper argument index that supplies the
+    function's j-th positional parameter. Every argument must be one of
+    those parameters: dropping ambient arguments could change their binding.
+    ``return_positions`` reorders each site's assignment targets into the
+    order the function returns its values.
+    """
+
+    parameter_positions: Tuple[int, ...]
+    # For each name the function's final ``return`` yields, its index in the
+    # generated assignment; empty when the sites do not assign a result.
+    return_positions: Tuple[int, ...] = ()
+
+
+def _store_target(names: Sequence[str]) -> ast.expr:
+    """The assignment target binding ``names``: one name, or a tuple of them."""
+    if len(names) == 1:
+        return ast.Name(id=names[0], ctx=ast.Store())
+    return ast.Tuple(elts=[ast.Name(id=name, ctx=ast.Store()) for name in names], ctx=ast.Store())
 
 
 def _bare_names(expression: ast.expr) -> Optional[List[str]]:
@@ -401,6 +421,287 @@ class ExistingFunctionReuse(EngineState):
                     targets=[ast.Name(id=function.name, ctx=ast.Store())],
                     value=ast.Name(id=target.name, ctx=ast.Load()),
                 )
+            ),
+        )
+
+    def _reuse_plan(self, call: ast.Call, target: FunctionArtifact) -> Optional[_ReusePlan]:
+        """Map the helper's arguments bijectively onto the function's parameters.
+
+        Ambient arguments cannot be dropped: identical imports in two modules
+        still have independent bindings, either of which the program can rebind.
+        """
+        if not isinstance(target.node, ast.FunctionDef):
+            return None
+        parameters = self._positional_parameter_names(target.node)
+        names = [argument.id for argument in call.args if isinstance(argument, ast.Name)]
+        if (
+            parameters is None
+            or len(names) != len(call.args)
+            or len(set(names)) != len(names)
+            or set(names) != set(parameters)
+        ):
+            return None
+        return _ReusePlan(tuple(names.index(parameter) for parameter in parameters))
+
+    def _reusable_function_at(
+        self,
+        replacement: Replacement,
+        default_file: str,
+        functions: FunctionIndex,
+    ) -> Optional[FunctionArtifact]:
+        """The plain module-level function whose whole body ``replacement`` is, if any.
+
+        Only a function that a call by name reproduces qualifies: defined once,
+        unconditionally, at module level, without decorators, not async (the
+        generated helper is synchronous), and never rebound or deleted through a
+        ``global`` declaration or a module-level ``del``.
+        """
+        file_path = replacement.file_path or default_file
+        for artifact in functions.body_starting_at(file_path, replacement.line_range[0]):
+            function = artifact.node
+            if (
+                artifact.class_name is not None
+                or artifact.enclosing_function is not None
+                or not isinstance(function, ast.FunctionDef)
+                or function.decorator_list
+                or not self._site_is_whole_body(replacement, function)
+            ):
+                continue
+            tree = artifact.scope_analyzer.analyzed_tree
+            if not isinstance(tree, ast.Module) or not any(
+                statement is function for statement in tree.body
+            ):
+                return None
+            return artifact
+        return None
+
+    def _existing_function_reachable(
+        self,
+        target: FunctionArtifact,
+        replacement: Replacement,
+        default_file: str,
+        functions: FunctionIndex,
+    ) -> bool:
+        """Whether a call by name at the replacement site resolves to ``target``.
+
+        In the target's own module the name must resolve through the site's
+        enclosing scopes to that definition; in another module it must be free
+        there, so the import the materializer adds is what binds it. A
+        class-private spelling is mangled inside a class body either way.
+        """
+        file_path = replacement.file_path or default_file
+        name = target.node.name
+        if replacement.class_name is not None and name.startswith("__") and not name.endswith("__"):
+            return False
+        site = functions.innermost_at(file_path, replacement.line_range)
+        if site is None:
+            return False
+        scope = site.scope_analyzer.node_scopes.get(site.node)
+        if scope is None:
+            return False
+        binding = scope.lookup(name)
+        if file_path == target.file_path:
+            return binding is not None and binding.node is target.node
+        if binding is None:
+            return True
+        statement = binding.node
+        if binding.scope_id != site.root_scope.scope_id or not isinstance(
+            statement, ast.ImportFrom
+        ):
+            return False
+        return any(
+            (alias.asname or alias.name) == name
+            and imported_alias_sites(file_path, statement, alias, "", self.import_graph)
+            == frozenset({(Path(target.file_path).resolve(), name)})
+            for alias in statement.names
+        )
+
+    def _call_to_existing_function(
+        self,
+        replacement: Replacement,
+        helper_name: str,
+        target: FunctionArtifact,
+        plan: "_ReusePlan",
+        site: FunctionArtifact,
+    ) -> Optional[Replacement]:
+        """The replacement with its helper call retargeted at the existing function.
+
+        Parameter arguments are reordered into the function's order; when that
+        order differs from the helper's, only names and constants may move,
+        since evaluating other expressions in a new order could be observed.
+        """
+        node = copy.deepcopy(replacement.node)
+        call = self._unwrap_helper_call(node, helper_name)
+        if call is None or len(call.args) != len(plan.parameter_positions):
+            return None
+        parameter_arguments = [call.args[index] for index in plan.parameter_positions]
+        identity = plan.parameter_positions == tuple(sorted(plan.parameter_positions))
+        if not identity and not all(
+            isinstance(arg, (ast.Name, ast.Constant)) for arg in parameter_arguments
+        ):
+            return None
+        call.args = parameter_arguments
+        call.func = ast.Name(id=target.node.name, ctx=ast.Load())
+        assigned = self._assigned_names(node)
+        if isinstance(node, ast.Assign) and assigned is not None and plan.return_positions:
+            if self.strict and plan.return_positions != tuple(sorted(plan.return_positions)):
+                # First stores allocate frame slots; permuting them changes
+                # the order in which their values are released on frame exit.
+                return None
+            reordered = [assigned[position] for position in plan.return_positions]
+            node.targets = [_store_target(reordered)]
+        return dataclasses.replace(replacement, node=node)
+
+    def _redirect_to_existing_function(
+        self,
+        proposal: RefactoringProposal,
+        functions: FunctionIndex,
+    ) -> Optional[RefactoringProposal]:
+        """The proposal rewritten to call a function that one duplicate already is.
+
+        When a duplicate site is the whole body of a plain module-level function
+        and the generated call there passes exactly that function's parameters,
+        the helper applied to any arguments is that function applied to them.
+        The fresh helper would only restate the function, so it is dropped: the
+        function stays as it is and every other site calls it. Candidates are
+        tried in source order; one the other sites cannot reach by name, or
+        whose import would close a cycle, is skipped. None keeps the extraction.
+
+        A site that assigns what the helper returns qualifies when the
+        function ends by returning exactly those names, in any order; the
+        other sites then unpack the function's result in its order.
+        """
+        if self._census.skipped or (self.strict and not self.complete_scope):
+            return None
+        helper_name = proposal.extracted_function.name
+        candidates: List[Tuple[int, FunctionArtifact]] = []
+        for index, replacement in enumerate(proposal.replacements):
+            target = self._reusable_function_at(replacement, proposal.file_path, functions)
+            if target is not None and not (
+                is_generated_helper_name(target.node.name)
+                and self._helper_introduced_during_run(target.node.name, target.file_path)
+            ):
+                candidates.append((index, target))
+        candidates.sort(key=lambda item: (item[1].file_path, item[1].node.lineno))
+        for index, target in candidates:
+            if self.strict and any(
+                replacement.argument_handoff is not None
+                for position, replacement in enumerate(proposal.replacements)
+                if position != index
+            ):
+                continue
+            reason = rebinding_reason(self._rebinding_sources, target.file_path, target.node)
+            if reason is not None:
+                self._pair_rebindings.add(reason)
+                continue
+            redirected = self._redirected_through(proposal, index, target, helper_name, functions)
+            if redirected is not None:
+                try:
+                    self._require_early_reused_helper(redirected)
+                except RefactoringError:
+                    continue
+                return redirected
+        return None
+
+    def _redirected_through(
+        self,
+        proposal: RefactoringProposal,
+        index: int,
+        target: FunctionArtifact,
+        helper_name: str,
+        functions: FunctionIndex,
+    ) -> Optional[RefactoringProposal]:
+        """The proposal redirected through ``target``, or None when one site cannot follow.
+
+        The site at ``index`` is the whole body of ``target``. Every other site
+        must be a plain call the function's parameters can take, must reach the
+        function by name, and its module must not gain an import that closes a
+        cycle or runs code it did not run before.
+        """
+        function = target.node
+        call = self._unwrap_helper_call(proposal.replacements[index].node, helper_name)
+        if call is None or not isinstance(function, ast.FunctionDef):
+            return None
+        plan = self._reuse_plan(call, target)
+        if plan is None:
+            return None
+        assigned = self._assigned_names(proposal.replacements[index].node)
+        if assigned is not None:
+            final = body_without_docstring(target.node.body)[-1]
+            positions = self._return_positions(assigned, final)
+            if positions is None:
+                return None
+            plan = dataclasses.replace(plan, return_positions=positions)
+        others = [
+            replacement
+            for position, replacement in enumerate(proposal.replacements)
+            if position != index
+        ]
+        sites = [
+            site
+            for replacement in others
+            if (
+                site := functions.innermost_at(
+                    replacement.file_path or proposal.file_path, replacement.line_range
+                )
+            )
+            is not None
+        ]
+        if len(sites) != len(others) or any(
+            dataclasses.replace(replacement.comments, argument_lines=frozenset()) != SiteComments()
+            for replacement in others
+        ):
+            return None
+        rewritten = [
+            rewritten_site
+            for replacement, site in zip(others, sites)
+            if (
+                rewritten_site := self._call_to_existing_function(
+                    replacement, helper_name, target, plan, site
+                )
+            )
+            is not None
+        ]
+        if len(rewritten) != len(others):
+            return None
+        if not all(
+            self._existing_function_reachable(target, replacement, proposal.file_path, functions)
+            for replacement in others
+        ):
+            return None
+        borrowers = {replacement.file_path or proposal.file_path for replacement in others}
+        participating = {target.file_path} | borrowers
+        if would_create_import_cycle(target.file_path, participating, self.import_graph):
+            return None
+        if any(
+            import_runs_new_code(target.file_path, borrower, self.import_graph)
+            for borrower in borrowers - {target.file_path}
+        ):
+            return None
+        callers = sorted({site.node.name for site in sites})
+        location = Path(target.file_path).name
+        return dataclasses.replace(
+            proposal,
+            file_path=target.file_path,
+            extracted_function=copy.deepcopy(function),
+            replacements=rewritten,
+            description=(
+                f"Reuse {target.node.name} ({location}) for duplicated code in "
+                + ", ".join(callers)
+            ),
+            insert_into_class=None,
+            insert_into_function=None,
+            method_kind=None,
+            method_param_name=None,
+            wants_type_inference=False,
+            required_imports=(),
+            type_checking_imports=(),
+            helper_type_declarations=(),
+            helper_comments=HelperComments(),
+            reused_function=ReusedFunction(
+                name=target.node.name,
+                file_path=target.file_path,
+                line_range=(target.node.lineno, target.node.end_lineno or target.node.lineno),
             ),
         )
 

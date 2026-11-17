@@ -38,7 +38,7 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.substitution import Substitution
 
 
-def test_synthetic_parameters_are_positional_only_and_free_names_follow() -> None:
+def test_synthetic_parameters_and_preceding_free_names_are_positional_only() -> None:
     block = ast.parse("answer = value + 7\nreturn answer\n").body
     substitution = Substitution()
     substitution.add_mapping(0, ast.Constant(value=7), "__param_0")
@@ -49,9 +49,9 @@ def test_synthetic_parameters_are_positional_only_and_free_names_follow() -> Non
         enclosing_names=set(),
         is_value_producing=True,
     )
-    assert [arg.arg for arg in helper.args.posonlyargs] == ["__param_0"]
-    assert [arg.arg for arg in helper.args.args] == ["value"]
-    assert order == {"__param_0": 0, "value": 1}
+    assert [arg.arg for arg in helper.args.posonlyargs] == ["value", "__param_0"]
+    assert not helper.args.args
+    assert order == {"value": 0, "__param_0": 1}
     generated = HygienicExtractor().generate_call(
         function_name=helper.name,
         block_idx=0,
@@ -317,7 +317,7 @@ def test_cross_module_repeated_passes_preserve_binding_and_origin_target(
         helper
         for helper in helpers
         if any(
-            argument.arg.startswith("__param_")
+            argument.arg.startswith("__param_" if expected_slash else "_param_")
             for argument in (*helper.args.posonlyargs, *helper.args.args)
         )
     ]
@@ -360,3 +360,42 @@ def test_reusing_an_existing_synthetic_named_parameter_keeps_provider_signature(
         before, include_attributes=False
     )
     assert not provider.args.posonlyargs
+
+
+@pytest.mark.parametrize("target", [None, "3.7"])
+def test_legacy_synthetic_names_do_not_collide_or_imply_positional_only(
+    tmp_path: Path, target: str | None
+) -> None:
+    declaration = f'requires-python = ">={target}"\n' if target else ""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "probe"\nversion = "0"\n' + declaration
+    )
+    source = "".join(
+        f"def {name}(value: int, _param_0: int) -> int:\n"
+        f'    print(value, "{name}")\n'
+        "    answer = value + _param_0\n"
+        "    print(answer)\n"
+        "    return answer\n\n"
+        for name in ("first", "second")
+    )
+    path = tmp_path / "legacy.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
+    proposals = engine.analyze_file(str(path))
+    assert proposals
+    result = engine.apply_refactoring(str(path), proposals[0])
+    helper = next(
+        node
+        for node in ast.parse(result).body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func_")
+    )
+    names = [parameter.arg for parameter in helper.args.args]
+    assert names == ["value", "_param_0", "_param_0_1"] + (
+        ["_towel_owner"] if engine.strict else []
+    )
+    ast.parse(result, feature_version=(3, 7))
+    driver = "\nprint(first(3, 7), second(5, 11))\n"
+    before = subprocess.run([sys.executable, "-c", source + driver], capture_output=True)
+    after = subprocess.run([sys.executable, "-c", result + driver], capture_output=True)
+    assert before.returncode == after.returncode == 0
+    assert before.stdout == after.stdout

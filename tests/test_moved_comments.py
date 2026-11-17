@@ -75,9 +75,15 @@ def _without_comments(source: str) -> str:
 def _engine(**options: object) -> UnificationRefactorEngine:
     # Minimal fixtures isolate comment placement and directive safety from
     # the optional readability policy. The CLI control keeps product defaults.
-    return UnificationRefactorEngine(
+    engine = UnificationRefactorEngine(
         min_lines=3, settings=SERIAL, skip_trivial_helpers=False, **options  # type: ignore[arg-type]
     )
+    # This harness tests newly inserted helpers and their comments. Redirects
+    # deliberately insert no helper, and have their own preservation tests.
+    from unittest.mock import Mock
+
+    setattr(engine, "_redirect_to_existing_function", Mock(return_value=None))
+    return engine
 
 
 def _refactor(path: Path, **options: object) -> str:
@@ -813,7 +819,10 @@ def test_typed_shared_helper_with_comments_is_applicable_without_mutating_propos
         helper = ast.parse(host).body[0]
         assert isinstance(helper, ast.FunctionDef)
         if owned_locals:
-            assert any(isinstance(arg.annotation, ast.Constant) for arg in helper.args.args)
+            assert any(
+                isinstance(arg.annotation, ast.Constant)
+                for arg in (*helper.args.posonlyargs, *helper.args.args)
+            )
         else:
             assert isinstance(helper.returns, ast.Constant)
             assert helper.returns.value == "int"

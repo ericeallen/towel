@@ -159,7 +159,11 @@ def _assert_fresh_helper_call(function: ast.FunctionDef, helper: ast.FunctionDef
 
 
 def _assert_owned_helper_call(
-    function: ast.FunctionDef, helper: ast.FunctionDef, parameters: tuple[str, ...]
+    function: ast.FunctionDef,
+    helper: ast.FunctionDef,
+    parameters: tuple[str, ...],
+    *,
+    argument_order: tuple[str, ...] | None = None,
 ) -> None:
     """The whole body transfers original arguments, then calls a fresh owned ABI."""
     assert len(function.body) == len(parameters) + 2
@@ -202,9 +206,11 @@ def _assert_owned_helper_call(
     assert len(calls) == 1
     call = calls[0]
     assert len(call.args) == len(parameters) + 1 and not call.keywords
+    ordered = parameters if argument_order is None else argument_order
+    assert sorted(ordered) == sorted(parameters)
     expected_arguments = [
-        ast.parse(f"{box}[0][{len(parameters)-1-index}]", mode="eval").body
-        for index in range(len(parameters))
+        ast.parse(f"{box}[0][{len(parameters)-1-parameters.index(name)}]", mode="eval").body
+        for name in ordered
     ]
     expected_arguments.append(ast.parse(f"{box}.pop()", mode="eval").body)
     assert [ast.dump(argument) for argument in call.args] == [

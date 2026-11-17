@@ -33,9 +33,9 @@ def parameter_nodes(args: ast.arguments) -> Iterator[ast.arg]:
     """Yield every ``ast.arg`` of an arguments block, in declaration order."""
     yield from args.posonlyargs
     yield from args.args
-    yield from args.kwonlyargs
     if args.vararg:
         yield args.vararg
+    yield from args.kwonlyargs
     if args.kwarg:
         yield args.kwarg
 

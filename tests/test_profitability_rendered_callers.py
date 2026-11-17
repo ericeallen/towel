@@ -158,7 +158,7 @@ def test_method_dispatch_cost_matches_the_written_callers(
     naming = engine._helper_naming(proposal)
     if kind != "staticmethod":
         assert proposal.insert_into_class == "C"
-        assert naming.receiver_parameter_index == (1 if receiver_used else None)
+        assert naming.receiver_parameter_index == (0 if receiver_used else None)
     elif manual_host:
         assert proposal.insert_into_class == "C"
     else:

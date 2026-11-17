@@ -321,11 +321,9 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         ) + "".join(f"def membership_{suffix}():\n{membership}" for suffix in ("a", "b"))
         path = self.root / "clustering.py"
         path.write_text(source, encoding="utf-8")
-        # Clustering onto a shared helper is under test; with reuse the
-        # attribute functions would simply call ``attributes_a``.
-        engine = UnificationRefactorEngine(
-            skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
-        )
+        # Strict analysis of an incomplete scope keeps this test focused on
+        # clustering onto a fresh helper rather than redirecting to attributes_a.
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3, strict=True)
         with contextlib.redirect_stdout(io.StringIO()):
             proposals = engine.analyze_files([str(path)], progress="none")
         proposal = next(

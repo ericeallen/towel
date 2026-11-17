@@ -261,6 +261,17 @@ class EngineState:
     parameterize_builtins: bool
     """Whether a builtin that may differ between sites is passed as a parameter instead of declined."""
 
+    def _require_early_reused_helper(self, proposal: RefactoringProposal) -> None:
+        """Materialization proves a reused function available before imports."""
+        raise NotImplementedError
+
+    complete_scope: bool
+    _declared_complete_scope: bool
+    _rebinding_sources: Dict[str, Optional[str]]
+    _reported_rebindings: set[str]
+    _pair_rebindings: set[str]
+    excluded_directories: Tuple[str, ...]
+
     strict: bool
     include_ignored: bool
     """Whether 1.949's guarantees are kept in full: exact object lifetimes, and typed verification that
@@ -403,6 +414,7 @@ class EngineState:
         progress: ProgressMode = DEFAULT_PROGRESS,
         invalidate_paths: Optional[List[str]] = None,
         changed_files: Optional[FrozenSet[str]] = None,
+        program_root: Optional[Path] = None,
     ) -> List[RefactoringProposal]:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError

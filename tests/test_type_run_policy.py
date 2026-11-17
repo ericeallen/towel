@@ -50,6 +50,14 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.probe_answers import answer_probes, only_probes
 
 
+@pytest.fixture(autouse=True)
+def _exercise_fresh_helper_inference(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These policy tests exercise helper inference; redirect verification has its own tests."""
+    monkeypatch.setattr(
+        UnificationRefactorEngine, "_redirect_to_existing_function", lambda *args: None
+    )
+
+
 def _source(*, typed: bool = True) -> str:
     signature = "value: int) -> int" if typed else "value)"
     if not argument_ownership._supported_runtime():
@@ -217,7 +225,7 @@ def test_clean_unannotated_run_never_disables_for_prospective_errors(
         type_oracle=oracle, reuse_existing_functions=reuse, annotate_helpers=False
     )
     proposal = engine.analyze_file(str(path))[0]
-    # No function is redirected to another, whatever the setting says.
+    # The fresh-helper harness keeps inference active; the deprecated setting is still a no-op.
     assert proposal.reused_function is None
     for _ in range(2):
         with pytest.raises(RefactoringError, match="[Tt]ype (errors|check failed)"):
