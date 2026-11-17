@@ -314,14 +314,21 @@ def test_same_class_helpers_keep_private_attributes_super_and_classmethods_worki
     # local bindings.
     original_root = _project(tmp_path / "unsafe", {"pkg/__init__.py": "", "pkg/lib.py": SAME_CLASS})
     original_before = _run(original_root, SAME_CLASS_DRIVER, original_root)
-    assert _refactor(original_root / "pkg") == 2
+    applied = _refactor(original_root / "pkg")
     original_after = (original_root / "pkg/lib.py").read_text()
     assert _run(original_root, SAME_CLASS_DRIVER, original_root) == original_before
     original_helpers = _class_helpers(original_after)
-    assert len(original_helpers["Account"]) == 2
     assert all(map(is_class_private, original_helpers["Account"]))
-    assert "lambda joined: joined.upper()" in original_after
-    assert "lambda joined: joined.lower()" in original_after
+    if lifetime_order_certified():
+        assert applied == 2 and len(original_helpers["Account"]) == 2
+        assert "lambda joined: joined.upper()" in original_after
+        assert "lambda joined: joined.lower()" in original_after
+    else:
+        # Where frame release order is uncertified (CPython 3.14+), strict
+        # mode declines both whole-body transfers; only the instance methods'
+        # common prefix, which hands over no local, is shared.
+        assert applied == 1 and len(original_helpers["Account"]) == 1
+        assert "lambda joined" not in original_after
     source = SAME_CLASS.replace(
         'parts = [cls.__name__, name, cls.unit()]\n        joined = "/".join(parts)\n        return joined.',
         'print("class", cls.__name__)\n        print("unit", cls.unit())\n        return "/".join([cls.__name__, name, cls.unit()]).',

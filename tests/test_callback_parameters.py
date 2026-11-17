@@ -40,6 +40,7 @@ from typing import List, Tuple
 import pytest
 
 from towel.api import UnificationRefactorEngine
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.thunk_inlining import reads_first
 from tests.test_cli_integration import invoke
 
@@ -215,8 +216,13 @@ def test_an_attribute_of_a_comprehension_target_becomes_a_callback(
 ) -> None:
     """Sound in both modes: the callback is called where the block read the attribute."""
     generated, same = refactored(tmp_path, COMPREHENSION_TARGET, strict=strict)
-    assert "lambda item: item.name" in generated and "lambda item: item.price" in generated
-    assert "[_param_0(item) for item in items if item.price]" in generated
+    if strict and not _supported_runtime():
+        # The blocks hand items to the helper, which strict mode declines
+        # where frame release order is uncertified (CPython 3.14+).
+        assert generated == COMPREHENSION_TARGET
+    else:
+        assert "lambda item: item.name" in generated and "lambda item: item.price" in generated
+        assert "[_param_0(item) for item in items if item.price]" in generated
     assert same
 
 

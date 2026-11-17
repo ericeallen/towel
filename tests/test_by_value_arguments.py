@@ -58,6 +58,7 @@ from tests.test_class_object_annotations import (
     requires_mypy,
 )
 from tests.test_program_type_names import _class_and_list_helper_annotations
+from towel.unification.argument_ownership import _supported_runtime
 
 # The default mode is what this module pins; strict runs ask for it by name.
 pytestmark = pytest.mark.relaxed_mode
@@ -66,6 +67,22 @@ pytestmark = pytest.mark.relaxed_mode
 def _passes_alpha_by_value(generated: str) -> bool:
     """Whether a helper call passes ``alpha`` itself, in any position (not ``lambda: alpha``)."""
     return re.search(r"_extracted_func_0\((?:[^()]*, )?alpha[,)]", generated) is not None
+
+
+def _declined_without_lifetime_proofs(tmp_path: Path, source: str, generated: str) -> None:
+    """Strict mode where frame release order is uncertified (CPython 3.14+).
+
+    Each candidate below hands a caller's local to the helper, which strict
+    mode declines there (``lifetime_order_uncertified``), so the program is
+    left as it was and no lambda is written at all.
+    """
+    assert generated == source
+    path = tmp_path / "uncertified.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False, strict=True)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        assert engine.analyze_file(str(path)) == []
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
 
 
 # -- The audit's material ------------------------------------------------------
@@ -98,7 +115,11 @@ def test_a_module_level_function_is_passed_as_it_is(
 def test_strict_mode_still_defers_a_module_level_function(tmp_path: Path) -> None:
     """Strict mode is 1.949: a callee may rebind the name, so the helper looks it up where the block did."""
     generated, same = refactored_scenario(tmp_path, "by_value/callee_parsers", strict=True)
-    assert "lambda: parse_user" in generated and "lambda: parse_product" in generated
+    if _supported_runtime():
+        assert "lambda: parse_user" in generated and "lambda: parse_product" in generated
+    else:
+        # The blocks hand path to the helper, which strict mode declines here.
+        assert "extracted_func" not in generated
     assert same
 
 
@@ -213,7 +234,10 @@ def test_a_concatenation_in_a_loop_stays_a_lambda(tmp_path: Path, strict: bool) 
     false before and must stay so.
     """
     generated, same = refactored(tmp_path, CONCATENATION_IN_A_LOOP, strict=strict)
-    assert "results.append(__param_0())" in generated
+    if strict and not _supported_runtime():
+        _declined_without_lifetime_proofs(tmp_path, CONCATENATION_IN_A_LOOP, generated)
+    else:
+        assert "results.append(__param_0())" in generated
     assert same
 
 
@@ -470,8 +494,11 @@ print(run_ticks(""))
 def test_a_differing_call_in_a_loop_body_stays_a_lambda(tmp_path: Path, strict: bool) -> None:
     """The call runs once per item, after that item's ``print``, and not at all for no items."""
     generated, same = refactored(tmp_path, CALL_IN_A_LOOP, strict=strict)
-    assert "lambda: tick()" in generated and "lambda: -tock(100)" in generated
-    assert "seen.append((item, _param_0()))" in generated
+    if strict and not _supported_runtime():
+        _declined_without_lifetime_proofs(tmp_path, CALL_IN_A_LOOP, generated)
+    else:
+        assert "lambda: tick()" in generated and "lambda: -tock(100)" in generated
+        assert "seen.append((item, _param_0()))" in generated
     assert same
 
 
@@ -514,7 +541,10 @@ print(depth_of(None, "d"))
 def test_a_guarded_attribute_read_stays_a_lambda(tmp_path: Path, strict: bool) -> None:
     """``if box: use(box.width)``: read at the call, ``None.width`` would raise where nothing did."""
     generated, same = refactored(tmp_path, GUARDED_ATTRIBUTE, strict=strict)
-    assert "result = show(label, _param_0())" in generated
+    if strict and not _supported_runtime():
+        _declined_without_lifetime_proofs(tmp_path, GUARDED_ATTRIBUTE, generated)
+    else:
+        assert "result = show(label, _param_0())" in generated
     assert same
     if not strict:
         assert "lambda: box.width" in generated and "lambda: box.depth" in generated
@@ -612,7 +642,10 @@ def test_an_attribute_read_before_any_call_is_passed_by_value(tmp_path: Path) ->
 def test_strict_mode_defers_the_attribute_read_before_any_call(tmp_path: Path) -> None:
     """Strict mode assumes nothing of an attribute read: a property may run code."""
     generated, same = refactored(tmp_path, ATTRIBUTE_AFTER_PLAIN_STEPS, strict=True)
-    assert "shown = report(title, _param_0())" in generated
+    if _supported_runtime():
+        assert "shown = report(title, _param_0())" in generated
+    else:
+        _declined_without_lifetime_proofs(tmp_path, ATTRIBUTE_AFTER_PLAIN_STEPS, generated)
     assert same
 
 
@@ -675,7 +708,10 @@ def test_a_read_is_not_moved_ahead_of_formatting_or_hashing(
     """
     source = PROTOCOL_BEFORE_A_READ.replace("TITLE", title)
     generated, same = refactored(tmp_path, source, strict=strict)
-    assert re.search(r"report\(title, _param_\d+\(\)", generated), generated
+    if strict and not _supported_runtime():
+        _declined_without_lifetime_proofs(tmp_path, source, generated)
+    else:
+        assert re.search(r"report\(title, _param_\d+\(\)", generated), generated
     assert same
 
 
@@ -776,7 +812,10 @@ def test_a_plain_read_is_not_moved_ahead_of_a_step_that_can_fail(
     instead. A plain value has no side effects; it can still fail.
     """
     generated, same = refactored(tmp_path, PLAIN_READ_AFTER_A_FAILING_STEP, strict=strict)
-    assert re.search(r"report\(title, _param_\d+\(\)\)", generated), generated
+    if strict and not _supported_runtime():
+        _declined_without_lifetime_proofs(tmp_path, PLAIN_READ_AFTER_A_FAILING_STEP, generated)
+    else:
+        assert re.search(r"report\(title, _param_\d+\(\)\)", generated), generated
     assert same
 
 
@@ -1331,7 +1370,10 @@ print(grid, empty_rows(2))
 def test_a_list_made_once_per_iteration_stays_a_lambda(tmp_path: Path, strict: bool) -> None:
     """By value, every row would be the same list and ``grid[0][0] = 9`` would change them all."""
     generated, same = refactored(tmp_path, DISPLAY_IN_A_LOOP, strict=strict)
-    assert "lambda: [0, 0]" in generated and "rows.append(_param_0())" in generated
+    if strict and not _supported_runtime():
+        _declined_without_lifetime_proofs(tmp_path, DISPLAY_IN_A_LOOP, generated)
+    else:
+        assert "lambda: [0, 0]" in generated and "rows.append(_param_0())" in generated
     assert same
 
 
