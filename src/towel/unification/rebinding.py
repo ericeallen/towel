@@ -174,15 +174,20 @@ _NAMESPACE_READS = frozenset(
 _NAMESPACE_WRITES = frozenset(
     ("clear", "popitem", "update", "__ior__", "pop", "setdefault", "__setitem__", "__delitem__")
 )
-_NAMESPACE_FUNCTIONS = frozenset(("globals", "vars", "builtins.globals", "builtins.vars"))
+_NAMESPACE_FUNCTIONS = ("globals", "vars")
+# Executed text may bind any name in any module; the scan cannot read it.
+_DYNAMIC_CODE_FUNCTIONS = ("exec", "eval")
 
 
-def _namespace_function_reference(node: ast.expr, aliases: Mapping[str, str]) -> bool:
-    """``globals`` or ``vars`` itself, under any import alias, or named by a string."""
+def _builtin_reference(node: ast.expr, aliases: Mapping[str, str], names: Sequence[str]) -> bool:
+    """One of the builtins ``names``, under any import alias, or fetched by name.
+
+    A method of the same name (``model.eval``) is not the builtin.
+    """
+    spellings = {*names, *(f"builtins.{name}" for name in names)}
     if isinstance(node, (ast.Name, ast.Attribute)):
         return isinstance(node.ctx, ast.Load) and (
-            _call_spelling(node, aliases) in _NAMESPACE_FUNCTIONS
-            or _call_spelling(node, {}) in _NAMESPACE_FUNCTIONS
+            _call_spelling(node, aliases) in spellings or _call_spelling(node, {}) in spellings
         )
     return (
         isinstance(node, ast.Call)
@@ -190,7 +195,7 @@ def _namespace_function_reference(node: ast.expr, aliases: Mapping[str, str]) ->
         and node.func.id == "getattr"
         and len(node.args) > 1
         and isinstance(node.args[1], ast.Constant)
-        and node.args[1].value in ("globals", "vars")
+        and node.args[1].value in names
     )
 
 
@@ -368,9 +373,13 @@ def rebinding_reason(
             ):
                 line = node.lineno
             # Only a direct call by name is inspected; ``getattr`` returns one.
+            if isinstance(node, ast.expr) and _builtin_reference(
+                node, aliases, _DYNAMIC_CODE_FUNCTIONS
+            ):
+                line = node.lineno
             if (
                 isinstance(node, ast.expr)
-                and _namespace_function_reference(node, aliases)
+                and _builtin_reference(node, aliases, _NAMESPACE_FUNCTIONS)
                 and (
                     isinstance(node, ast.Call)
                     or not (isinstance(parent, ast.Call) and parent.func is node)

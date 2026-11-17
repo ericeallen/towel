@@ -52,7 +52,19 @@ FUNCTION_NAMESPACES = {
     "frame_locals_at_module": "__import__('sys')._getframe().f_locals['total'] = REPLACEMENT\n",
 }
 
-MUTATIONS = {**NAMESPACE_ESCAPES, **FUNCTION_NAMESPACES}
+# Source text executed at run time can bind anything the scan cannot read.
+DYNAMIC_CODE = {
+    "exec_string": "exec('total = REPLACEMENT')\n",
+    "exec_with_globals": "exec('total = REPLACEMENT', globals())\n",
+    "eval_returns_globals": "eval('globals()')['total'] = REPLACEMENT\n",
+    "eval_walrus": "eval('(total := REPLACEMENT)')\n",
+    "exec_alias": "run = exec\nrun('total = REPLACEMENT')\n",
+    "exec_imported_alias": "from builtins import exec as run\nrun('total = REPLACEMENT')\n",
+    "builtins_exec": "import builtins\nbuiltins.exec('total = REPLACEMENT')\n",
+    "exec_by_name": "import builtins\ngetattr(builtins, 'exec')('total = REPLACEMENT')\n",
+}
+
+MUTATIONS = {**NAMESPACE_ESCAPES, **FUNCTION_NAMESPACES, **DYNAMIC_CODE}
 
 
 def _scan(source: str) -> str | None:
@@ -102,3 +114,19 @@ def test_rebinding_is_located(mutation: str) -> None:
 def test_namespace_reads_do_not_block_redirect(use: str) -> None:
     """Integration 6 control: reading the namespace, or writing another key, is no rebinding."""
     assert _scan(STATEMENT_PAIR + use + "\n") is None
+
+
+def test_dynamic_code_in_another_module_blocks_redirect() -> None:
+    """Integration 6: executed text in any consumer may import and rebind the target."""
+    provider = STATEMENT_PAIR
+    consumer = "exec('import mod; mod.total = None')\n"
+    target = ast.parse(provider).body[0]
+    assert isinstance(target, ast.FunctionDef)
+    reason = rebinding_reason({"mod.py": provider, "main.py": consumer}, "mod.py", target)
+    assert reason is not None and "main.py:1" in reason
+
+
+@pytest.mark.parametrize("call", ["model.eval()", "self.exec(query)", "evaluate(x)"])
+def test_methods_named_like_dynamic_code_do_not_block_redirect(call: str) -> None:
+    """Integration 6 control: only the builtins execute text; methods of that name do not."""
+    assert _scan(STATEMENT_PAIR + call + "\n") is None
