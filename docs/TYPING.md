@@ -18,7 +18,7 @@ On this page:
 
 ## Choosing a checker
 
-Install the optional tools with `pip install "code-towel[types]"`.
+Install the optional tools with `uv tool install "code-towel[types]"`, or into Towel's environment.
 Towel follows the project's configuration:
 
 | Project configuration | Behavior |
@@ -28,9 +28,12 @@ Towel follows the project's configuration:
 | Both | mypy infers; both verify. A new error from the first checker rejects the candidate without asking the other. |
 | Neither | Use an installed checker, preferring mypy. |
 
-A configured checker must be installed where Towel runs. Otherwise the typed
-run refuses before writing anything and names the missing checker. Install
-it, or explicitly choose [unverified extraction](#running-without-verification).
+A configured checker should be installed where Towel runs. If it is not,
+Towel warns, naming the checker, the configuration that asks for it and how
+to install it, and goes on without type checking: helpers are written without
+annotations, as with [`--no-types`](#running-without-verification), and
+`--json` reports `"types": "unverified"`. With `--strict`, the run refuses
+instead, before writing anything, and exits 1.
 
 With no mypy configuration, verification uses mypy's defaults, as a direct
 mypy check of the same files would. Unannotated function bodies go unchecked,
@@ -113,10 +116,13 @@ flow are not covered by this specific proof.
 
 ### Untyped imports
 
-A file is left unchanged when the checker cannot type a name it imports, for
-example because an import cannot be resolved or its stubs are missing. Towel
-reports these files. Install the missing dependencies or stubs to make typed
-extraction possible there.
+When the checker cannot type a name a file imports, for example because the
+import cannot be resolved or its stubs are missing, a change there cannot be
+checked. A change whose helper and callers have no annotations goes ahead
+anyway, and the run says once that it did. A change to annotated code is left
+alone, and the run names the first unresolved import. With `--strict`, every
+change in such a file is left alone. Install the missing dependencies or stubs
+where Towel runs to check these changes, or use `--no-types`.
 
 Towel asks every configured checker what each import binds. Suppressing the
 usual diagnostic with `ignore_missing_imports` or Pyright's
@@ -143,9 +149,9 @@ verify.
 
 ### Checker failures
 
-A checker crash, timeout or plugin-loading failure refuses the typed run.
-It does not silently switch to untyped extraction. Fix the checker setup or
-make the explicit choice to use `--no-types`.
+A checker that crashes, times out or cannot load its plugins during a run
+refuses the typed run: Towel does not switch to untyped extraction part-way.
+Fix the checker setup, or choose `--no-types`.
 
 ## Constructing annotations
 
@@ -222,8 +228,10 @@ decline the proposal.
 
 ## Running without verification
 
-`--no-types` preserves annotations already in the source and generates
-unannotated helpers. It explicitly disables typed verification.
+`--no-types` preserves annotations already in the source, writes helpers
+without annotations and runs no checker, which is several times faster.
+`--json` reports `"types": "off"`; a run whose checker verified its changes
+reports `"verified"`.
 
 An API engine with no type oracle can copy caller declarations but cannot
 reason about them: unions remain unreduced, and conflicting return declarations

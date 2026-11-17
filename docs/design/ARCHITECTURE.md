@@ -2021,7 +2021,7 @@ Existing unparsed-program refusal rules and excluded non-parsing-file treatment
 remain unchanged. This scan does not inspect reflective namespace operations
 or retain source/ASTs in its boolean. The source-local module-binding facts
 include the same attribute-write condition. That boolean is separate from the
-bounded per-analyzer source-verdict memo; the [performance guide](../PERFORMANCE.md#1947-large-module-builtin-guard-repair)
+bounded per-analyzer source-verdict memo; the [performance guide](../maintainers/PERFORMANCE_HISTORY.md#1947-large-module-builtin-guard-repair)
 records its storage and warning-policy limits. Both pair and clustered-site
 checks apply the [captured-mapping dependency policy](GENERATED_CODE_RULES.md#arguments-and-evaluation).
 

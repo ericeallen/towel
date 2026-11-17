@@ -263,6 +263,8 @@ PAGES: Tuple[Page, ...] = (
     Page("docs/CLI_GUIDE.md", project="project", git=True),
     Page("docs/NAMING.md", project="quickstart"),
     Page("docs/GALLERY.md", project="gallery"),
+    Page("docs/REQUIREMENTS.md"),
+    Page("docs/CROSS_MODULE.md", project="crossmodule"),
 )
 """Every user page that shows a command; `test_every_page_that_shows_a_command_is_run` keeps it complete."""
 
@@ -297,6 +299,7 @@ class Transcript:
     ran: Tuple[str, ...]
     skipped: Tuple[Tuple[str, str], ...]
     compared: int
+    shown: int
 
 
 def follow(page: Page, scratch: Path) -> Transcript:
@@ -306,6 +309,7 @@ def follow(page: Page, scratch: Path) -> Transcript:
     ran: List[str] = []
     skipped: List[Tuple[str, str]] = []
     compared = 0
+    shown_outputs = 0
     printed: Optional[Tuple[str, bool]] = None
     for fence in fences(text):
         where = f"{page.path}:{fence.line}"
@@ -330,6 +334,7 @@ def follow(page: Page, scratch: Path) -> Transcript:
             continue
         elif fence.language in OUTPUT_LANGUAGES and fence.adjacent_to_previous and printed:
             output, strict = printed
+            shown_outputs += 1
             if not strict or strict_output_certified():
                 actual = _normalized(output, scratch)
                 shown = _normalized(fence.body, scratch)
@@ -338,7 +343,7 @@ def follow(page: Page, scratch: Path) -> Transcript:
                 ), f"{where}: the page shows\n{shown}\n\nbut the commands printed\n{actual}"
                 compared += 1
         printed = None
-    return Transcript(tuple(ran), tuple(skipped), compared)
+    return Transcript(tuple(ran), tuple(skipped), compared, shown_outputs)
 
 
 @pytest.mark.parametrize("page", PAGES, ids=[page.path for page in PAGES])
@@ -347,6 +352,17 @@ def test_a_page_does_what_it_says(page: Page, tmp_path: Path) -> None:
     scratch.mkdir()
     transcript = follow(page, scratch)
     assert transcript.ran, f"{page.path}: no command was run"
+    text = (ROOT / page.path).read_text(encoding="utf-8")
+    outputs = [
+        fence
+        for previous, fence in zip(fences(text), fences(text)[1:])
+        if previous.language == "bash"
+        and fence.language in OUTPUT_LANGUAGES
+        and fence.adjacent_to_previous
+    ]
+    assert transcript.shown == len(outputs), f"{page.path}: an output it shows was not compared"
+    if strict_output_certified():
+        assert transcript.compared == transcript.shown
 
 
 def _shows_a_command(text: str) -> bool:

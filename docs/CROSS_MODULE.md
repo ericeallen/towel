@@ -2,7 +2,67 @@
 
 [Documentation index](README.md)
 
-Cross-module sharing adds imports between project modules. It is opt-in: pass `--cross-module` on the command line or `cross_module_helpers=True` to the engine.
+By default Towel shares a helper only within one module. With `--cross-module`
+it also shares one between modules: the helper goes into one of them and the
+others import it. In this project, `shop/invoices.py` imports `shop.orders`
+and repeats the calculation in `order_total`:
+
+```bash
+towel preview shop/ --cross-module
+```
+
+```diff
+Would apply 2 refactoring(s).
+Analysed 3 Python files (3 functions).
+Would change 2 file(s):
+  invoices.py: 1 refactoring(s)
+    - Extract common code from invoice_total (invoices.py) and order_total (orders.py)
+  orders.py: 1 refactoring(s)
+    - Extract common code from invoice_total (invoices.py) and order_total (orders.py)
+--- before/invoices.py
++++ after/invoices.py
+@@ -1,11 +1,9 @@
+ import shop.orders
++from shop.orders import __extracted_func_0
+
+
+ def invoice_total(invoice):
+-    subtotal = invoice.amount_due
+-    tax = round(subtotal * 0.08, 2)
+-    shipping = 0 if subtotal >= 100 else 5
+-    return round(subtotal + tax + shipping, 2)
++    return __extracted_func_0(invoice.amount_due)
+
+
+ def reorder(invoice):
+--- before/orders.py
++++ after/orders.py
+@@ -1,5 +1,8 @@
+-def order_total(order):
+-    subtotal = order.subtotal
++def __extracted_func_0(__param_0):
++    subtotal = __param_0
+     tax = round(subtotal * 0.08, 2)
+     shipping = 0 if subtotal >= 100 else 5
+     return round(subtotal + tax + shipping, 2)
++
++def order_total(order):
++    return __extracted_func_0(order.subtotal)
+Input files were not changed.
+```
+
+The helper went into `shop/orders.py`, the module `invoices.py` already
+imports, so the new import loads nothing that was not loaded before. Towel
+adds an import between modules only where that is true. When it shares
+nothing, the run ends by naming, for each pair of modules, what was missing,
+usually that neither imports the other at its top; adding that import is then
+the change that lets Towel share the code. The rest of this page explains the
+rules, for when a run refuses.
+
+In relaxed mode, the default, a helper shared between modules reads a module
+both import the same way, and a builtin such as `len`, directly, unless the
+project could rebind that name; `--strict` passes them in, as before 2.0.
+`cross_module_helpers=True` turns the feature on in the [Python API](USAGE_GUIDE.md).
 
 On this page:
 

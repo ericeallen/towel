@@ -84,6 +84,12 @@ The preview/dry result schema is version 1:
 | `diff` | Unified diff for a completed preview; otherwise an empty string. |
 | `helpers` | Helper inventory object, or `null` if unavailable. An optional inventory-read failure does not undo successful publication. |
 | `error` | Human-readable failure explanation, or `null`. |
+| `config_path` | Absolute path of the `pyproject.toml` whose `[tool.towel]` table the run used, or `null`. Added in 2.0. |
+| `outcome` | On a completed run, `"applied"`, `"all_left_alone"` (similar code found, none extracted), `"no_repeated_code"` or `"no_python_files"`; `null` on failure. Added in 2.0. |
+| `analysed` | `{"files": N, "functions": M, "skipped": [...]}`: what the run read, and each file it skipped with the reason; `null` on failure. Added in 2.0. |
+| `left_alone` | How many places with similar code the run lists as left alone by default; `0` on failure. Added in 2.0. |
+| `relaxed_findings` | In relaxed mode, code that may depend on what strict mode keeps: a list of `{"kind", "path", "line", "detail"}`, where `kind` is `"finalizer"`, `"weakref_callback"`, `"gc_callback"` or `"function_rebinding"`. Added in 2.0. |
+| `partial_diff`, `finally_confirmed` | Only on a preview stopped before it finished (`status` `"incomplete"`): the diff of what it had done, which was not checked as a whole, and `false`. Added in 2.0. |
 
 When `published` is `null`, inspect the destination and any recovery journal
 before retrying. An explicit interrupt or error can happen after source

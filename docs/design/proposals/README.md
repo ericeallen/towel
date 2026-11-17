@@ -12,7 +12,7 @@ decisions and code take precedence. **1.947 was published October 26, 2026**,
 following 1.946. The [1.947 overview](../../maintainers/RELEASE_1_947.md) describes the audit
 repairs; the [publication record](../../maintainers/PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
 separates completed release validation from the historical source-bound checks
-below. The [release comparison](../../PERFORMANCE.md#1947-published-release-comparison)
+below. The [release comparison](../../maintainers/PERFORMANCE_HISTORY.md#1947-published-release-comparison)
 records the measured full-CLI costs against 1.946 without claiming a general speedup.
 Documentation changes do not establish new release-gate results.
 Development checkpoints do not become current validation results, and their

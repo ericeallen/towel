@@ -280,7 +280,7 @@ def test_preparation_performance_summaries_match_all_retained_samples() -> None:
             "docs/maintainers/RELEASE_HISTORY.md",
             "CHANGELOG.md",
             "docs/maintainers/RELEASE_1_946.md",
-            "docs/PERFORMANCE.md",
+            "docs/maintainers/PERFORMANCE_HISTORY.md",
         )
     }
     for project in ("click", "rich"):

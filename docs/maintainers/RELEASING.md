@@ -38,7 +38,7 @@ the sole cause of the original signal kill: the failed and earlier passing
 campaigns used different memory limits and concurrent workloads. The corrected
 diagnostic then reached its three-hour deadline with no recorded OOM events;
 it produced no adopted output or transformed consumer test result. See the
-[diagnostic scope and parsing repair](../PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation).
+[diagnostic scope and parsing repair](PERFORMANCE_HISTORY.md#1947-sphinx-memory-and-parsing-investigation).
 
 The corpus harness now distinguishes signal kills from expired deadlines and
 defaults to one project worker. The further lexical correction admits only
@@ -57,7 +57,7 @@ runner's write, read, rename and removal probe passed before resumption.
 
 The resumed corpus then stopped on PrettyTable's 30-minute refactor timeout.
 Bounded diagnostics identified repeated parsing of a warning-free source caused
-by the lexical warning classifier. The [narrow runtime correction](../PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+by the lexical warning classifier. The [narrow runtime correction](PERFORMANCE_HISTORY.md#1947-prettytable-warning-classifier-repair)
 requires a new freeze and the complete declared release campaign. This differs
 from the permission-only repair: completed `877b375` gates do not validate the
 changed runtime. Preserve those records and the incomplete corpus under their

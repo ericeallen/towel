@@ -1902,7 +1902,7 @@ October 10 complete CLI comparison at audited `9d57b0d` measured Click at +21.85
 and Rich at +78.10% relative to published 1.792, with two samples per arm on a
 shared host. These observations do not establish recovered performance or a
 release timing guarantee. See the [October 10 Click and Rich
-assessment](../PERFORMANCE.md#october-10-click-and-rich-assessment) for the exact
+assessment](../maintainers/PERFORMANCE_HISTORY.md#october-10-click-and-rich-assessment) for the exact
 workloads, correctness checks and environment qualifications.
 
 Analysis is quadratic in candidate blocks per file. The measures below keep

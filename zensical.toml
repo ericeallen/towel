@@ -86,6 +86,7 @@ nav = [
     { "1.947 overview" = "maintainers/RELEASE_1_947.md" },
     { "1.946 overview" = "maintainers/RELEASE_1_946.md" },
     { "Historical release evidence" = "maintainers/RELEASE_HISTORY.md" },
+    { "Performance measurements" = "maintainers/PERFORMANCE_HISTORY.md" },
     { "Adversarial review" = "maintainers/ADVERSARIAL_REVIEW.md" },
     { "Open-source audit" = "maintainers/OPEN_SOURCE_AUDIT.md" },
     { "Correctness review, October 31" = "maintainers/reviews/gemini-2026-10-31/REPORT.md" },

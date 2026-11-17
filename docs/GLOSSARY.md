@@ -8,9 +8,9 @@ by when you meet them: running Towel, reading its output, and the rarer cases.
 ## Running Towel
 
 Block
-:   A run of consecutive statements inside a function or method. Towel compares
-    blocks with one another; `--min-lines` sets the shortest it considers
-    (default 3).
+:   A run of consecutive statements inside a function or method, or, from 2.0,
+    an expression spanning several lines. Towel compares blocks with one
+    another; `--min-lines` sets the shortest it considers (default 3).
 
 Duplicate pair
 :   Two blocks with the same shape, differing only in names, values or
@@ -33,8 +33,8 @@ Fixed point
 Left alone, or declined
 :   Towel found duplicate blocks but did not extract them, because it could not
     show that the change keeps the program's behaviour or because the helper
-    would cost more to read than the code it replaces. `towel preview --explain`
-    gives the reason for each pair.
+    would cost more to read than the code it replaces. Every run gives the
+    reasons; `--explain` lists every place ([reasons](WHY_LEFT_ALONE.md)).
 
 Refused
 :   A run, or a request such as a rename, that stops before writing anything,
@@ -44,7 +44,7 @@ Relaxed mode
 :   The default from Towel 2.0. Towel preserves what the program computes and
     does: its results, its output, its exceptions and the order of its side
     effects. It assumes the program does not depend on exactly when an object
-    it no longer uses is released.
+    it no longer uses is released ([relaxed and strict](RELAXED_AND_STRICT.md)).
 
 Strict mode
 :   `--strict` makes Towel also preserve exactly when objects are released and
@@ -70,7 +70,7 @@ Helper
 
 Parameter
 :   Each difference between the duplicated blocks becomes a parameter of the
-    helper, named `__param_0`, `__param_1` and so on until you rename it.
+    helper, named `_param_0` or `__param_0` and so on until you rename it.
     `--max-parameters` limits how many a helper may take (default 5).
 
 Anti-unification
@@ -82,8 +82,17 @@ Thunk
 :   A zero-argument lambda, such as `lambda: welcome_email(user)`, passed to a
     helper in place of a value. The helper calls it only where the original code
     evaluated that expression, so it runs as often, and as late, as it did
-    before. [Reading Towel's output](design/GENERATED_CODE_RULES.md#why-some-arguments-are-wrapped-in-lambda)
+    before. [Reading Towel's output](GENERATED_CODE.md#a-lambda-that-delays-an-argument)
     shows an example.
+
+Callback
+:   A lambda with a parameter, such as `lambda item: item.weight_kg`, passed
+    where the copies differ in something computed from a variable of the
+    helper's own loop or block.
+
+Reuse, or redirect
+:   When one copy is already the whole body of a function, the other copies
+    call that function instead of a new helper; the run says "Reuse NAME".
 
 `# towel: no-extract`
 :   A comment placed after a function's final colon that keeps that function out

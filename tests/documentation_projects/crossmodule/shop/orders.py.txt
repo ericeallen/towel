@@ -1,0 +1,5 @@
+def order_total(order):
+    subtotal = order.subtotal
+    tax = round(subtotal * 0.08, 2)
+    shipping = 0 if subtotal >= 100 else 5
+    return round(subtotal + tax + shipping, 2)

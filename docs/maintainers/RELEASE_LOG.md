@@ -132,7 +132,7 @@ strict typing and the full Python 3.13 suite. Differential fuzzing completed
 [publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
 for matrix counts, corpus qualifications, hashes and resource limits.
 
-The [controlled comparison](../PERFORMANCE.md#1947-published-release-comparison)
+The [controlled comparison](PERFORMANCE_HISTORY.md#1947-published-release-comparison)
 observed Click +2.58%, Rich +8.84% and Voluptuous +1.25% mean full-CLI time
 versus 1.946, with two samples per version on a shared host. Original consumer
 outcomes were preserved. No general speed improvement is claimed.
@@ -152,7 +152,7 @@ incremental invalidation (`7947727` repair) and Black/isort worker ownership
 container memory limits and concurrent workloads; Sphinx itself uses Ruff.
 The corrected diagnostic subsequently expired at its three-hour deadline with
 no recorded memory-limit or OOM events, no adopted output and no transformed
-consumer tests. The [performance record](../PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation)
+consumer tests. The [performance record](PERFORMANCE_HISTORY.md#1947-sphinx-memory-and-parsing-investigation)
 retains these limits and the further narrow raw formatted-literal cache repair.
 The changed runtime requires a fresh freeze and complete release validation;
 final outcomes remain external and prior evidence keeps its original identity.
@@ -169,7 +169,7 @@ and one `TIMEOUT`. This incomplete campaign is not release acceptance.
 
 Bounded diagnostics traced the timeout to repeated parsing of a warning-free
 module whose ordinary raw-regex escapes were rejected by the lexical cache
-guard. The [performance record](../PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+guard. The [performance record](PERFORMANCE_HISTORY.md#1947-prettytable-warning-classifier-repair)
 documents the repeated inputs, narrow token-based correction and isolated
 33.096-second completed diagnostic without claiming a controlled speed ratio.
 The runtime correction requires a fresh freeze and complete release validation.
@@ -208,7 +208,7 @@ mapping guard repeatedly checked lexical warning eligibility before looking
 up module bindings: 2,988 calls over five exact strings, 99.8327% repeats.
 The published 1.946 wheel completed the same case and produced byte-identical
 Python files. Partial diagnostic profiles identify repeated tokenization,
-not an unprofiled production speed ratio. The [performance guide](../PERFORMANCE.md#1947-large-module-builtin-guard-repair)
+not an unprofiled production speed ratio. The [performance guide](PERFORMANCE_HISTORY.md#1947-large-module-builtin-guard-repair)
 retains the measurement conditions and limits.
 
 The subsequent repair covers all explicit module/global fallback reads and
@@ -309,7 +309,7 @@ an overbroad formatted-string warning guard. The repair admits these escapes
 when they precede every possible formatted-string start, preserving the
 existing diagnostic and cache boundaries. New runtime bytes require fresh
 complete performance assessments and release gates; the old completed gates
-remain bound to `a53e351`. See the [performance investigation](../PERFORMANCE.md#october-10-voluptuous-regression-investigation).
+remain bound to `a53e351`. See the [performance investigation](PERFORMANCE_HISTORY.md#october-10-voluptuous-regression-investigation).
 
 The preceding raw-regex repair source `a6dc6ed` completed fresh quality, strict typing,
 archive/RECORD and Twine checks plus a complete Voluptuous canary (182/182,
@@ -328,7 +328,7 @@ The later paired-backslash parity repair has scoped native diagnostic and
 fact-reuse evidence; it is outside those `a6dc6ed` samples. The latest prepared
 runtime requires a new final source freeze, fresh full release gates and new
 source-bound timing evidence. No completed campaign or timing benefit for that
-later runtime is claimed. See the [parity addendum](../PERFORMANCE.md#october-10-backslash-parity-repair).
+later runtime is claimed. See the [parity addendum](PERFORMANCE_HISTORY.md#october-10-backslash-parity-repair).
 
 At the earlier `9d57b0d` full audit, the canonical suite passed 10,583 tests and
 45 subtests, with 32 skips,
@@ -349,7 +349,7 @@ not establish isolated-host performance or restoration of the prior level.
 All original test pairs, visible diagnostics and output references passed;
 all measurement workers and containers closed. No actual sample was replaced,
 and no fallback or confirmation substitution was accepted. See
-[performance](../PERFORMANCE.md#october-10-click-and-rich-assessment) and the
+[performance](PERFORMANCE_HISTORY.md#october-10-click-and-rich-assessment) and the
 [retained source-bound evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-preparation/README.md).
 
 ## 2026-10-08: 1.792 published release
@@ -424,7 +424,7 @@ produced byte-identical outputs (19 refactorings across 8 files); none
 established a whole-command speedup. Exact refusal retention was active,
 but all five stored refusals became stale before rehearing, so the workload
 gave it no repeated unchanged-revision work to skip.
-[Performance evidence](../PERFORMANCE.md#october-6-optimization-experiments)
+[Performance evidence](PERFORMANCE_HISTORY.md#october-6-optimization-experiments)
 retains all arm identities, samples and limits.
 
 No matrix or corpus was rerun, at the maintainer's explicit instruction.
@@ -450,7 +450,7 @@ Four fresh-process observations per version were run in two balanced blocks;
 all 12 commands succeeded, with identical repeated Python output within each
 version. That candidate applied 20 refactorings versus 18 for 1.772. Background
 activity was recorded; this was a capacity/repeatability experiment, not a
-quiet-host preflight pass. The [performance guide](../PERFORMANCE.md#october-5-repaired-candidate-comparison)
+quiet-host preflight pass. The [performance guide](PERFORMANCE_HISTORY.md#october-5-repaired-candidate-comparison)
 records the exact source, runtime, archives, settings and limits.
 
 Final source-bound evidence assembly, the standard repository release gate,
@@ -641,7 +641,7 @@ and performance measurements; these focused controls did not approve it.
   insufficient: copied baseline cache values could hide a changed result.
   The configured cache directory is preserved. Final corpus validation remained
   pending at this checkpoint under the corrected harness and manifest.
-- The [complete CLI comparison](../PERFORMANCE.md#october-2-complete-cli-comparison)
+- The [complete CLI comparison](PERFORMANCE_HISTORY.md#october-2-complete-cli-comparison)
   measured the controlled typed, formatted Packaging fixture at 36.24 seconds
   versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit
   `000d751` applied 19 extractions versus 18 and preserved the preceding
