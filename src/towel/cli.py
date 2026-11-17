@@ -2733,8 +2733,9 @@ def _find_extracted_helpers(
                 continue
             lines = source.split("\n")
             start = node.lineno - 1
-            full_source = ast.get_source_segment(source, node) or "\n".join(
-                lines[start : node.end_lineno or start + 5]
+            full_source = textwrap.dedent(
+                ast.get_source_segment(source, node, padded=True)
+                or "\n".join(lines[start : node.end_lineno or start + 5])
             )
             helpers.append((py_file, node.name, node.lineno, full_source))
 
@@ -3001,7 +3002,9 @@ def helper_inventory(
                     "renameable": scope_kind == "module"
                     or (scope_kind == "class" and (private or not name.startswith("__"))),
                     "parameters": parameters,
-                    "source": ast.get_source_segment(source, node) or "",
+                    "source": textwrap.dedent(
+                        ast.get_source_segment(source, node, padded=True) or ""
+                    ),
                     "calls": helper_calls,
                     "changes": (
                         [change for change in changes if change["file"] == relative]
@@ -3460,7 +3463,7 @@ def _generate_llm_prompt(
         "generated parameters still have placeholder names (__extracted_func_0, __param_0, etc.).\n"
         "\n"
         "Please review each helper, its generated parameter keys, and its call site, and suggest\n"
-        "descriptive names for both the helper functions and their __param_N parameters.\n"
+        "descriptive names for both the helper functions and their __param_N or _param_N parameters.\n"
         "The new names should:\n"
         "- Be descriptive and indicate each function's purpose and each parameter's role\n"
         "- Follow Python naming conventions (lowercase with underscores)\n"
@@ -3485,7 +3488,9 @@ def _generate_llm_prompt(
             functions_section += f"```python\n{helper_source}\n```\n"
         if entry is not None:
             generated_params = [
-                param for param in entry["parameters"] if param["name"].startswith("__param_")
+                param
+                for param in entry["parameters"]
+                if param["name"].startswith(("__param_", "_param_"))
             ]
             if generated_params:
                 functions_section += "Generated parameter rename keys:\n"
@@ -3509,7 +3514,7 @@ def _generate_llm_prompt(
     output_format = (
         "\n"
         "Please provide your suggestions as a JSON object mapping each rename key to its new\n"
-        "name, including both helper keys and generated __param_N parameter keys.\n"
+        "name, including both helper keys and generated __param_N or _param_N parameter keys.\n"
         "\n"
         "Use the exact rename keys shown above (such as 'path.py:__extracted_func_0' for a\n"
         "helper and 'path.py:__extracted_func_0.__param_0' for one of its parameters).\n"
