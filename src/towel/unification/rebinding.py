@@ -151,7 +151,9 @@ class _BindingWrites(ast.NodeVisitor):
 def _namespace_mapping(node: ast.expr, *, provider: bool) -> bool:
     """Recognize direct reflective mappings without assuming a receiver identity."""
     if isinstance(node, ast.Attribute):
-        return node.attr == "__dict__"
+        # A function's globals and a module frame's globals and locals are
+        # the module's own namespace, as an object's ``__dict__`` may be.
+        return node.attr in ("__dict__", "__globals__", "f_globals", "f_locals")
     if not isinstance(node, ast.Call):
         return False
     called = (

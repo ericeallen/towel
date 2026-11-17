@@ -44,7 +44,15 @@ NAMESPACE_ESCAPES = {
     "builtins_globals_by_name": "import builtins\ngetattr(builtins, 'globals')()['total'] = REPLACEMENT\n",
 }
 
-MUTATIONS = {**NAMESPACE_ESCAPES}
+# A module namespace reached through a function's or a frame's attribute.
+FUNCTION_NAMESPACES = {
+    "function_globals_subscript": "report.__globals__['total'] = REPLACEMENT\n",
+    "function_globals_update": "report.__globals__.update(total=REPLACEMENT)\n",
+    "frame_globals": "__import__('sys')._getframe().f_globals['total'] = REPLACEMENT\n",
+    "frame_locals_at_module": "__import__('sys')._getframe().f_locals['total'] = REPLACEMENT\n",
+}
+
+MUTATIONS = {**NAMESPACE_ESCAPES, **FUNCTION_NAMESPACES}
 
 
 def _scan(source: str) -> str | None:
