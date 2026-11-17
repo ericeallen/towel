@@ -48,10 +48,11 @@ package-dir = {"" = "src"}
         write_file(root / "src" / "pkg" / "__init__.py", "")
         write_file(pkg_dir / "__init__.py", "")
 
-        # Two functions with identical blocks to trigger extraction
+        # Decorators exclude redirects so this fixture tests a fresh helper import.
         write_file(
             a_py,
             """
+@staticmethod
 def fa():
     s = 0
     if True:
@@ -65,6 +66,7 @@ def fa():
             """
 from .alpha import fa
 
+@staticmethod
 def fb():
     s = 0
     if True:
@@ -80,7 +82,6 @@ def fb():
             parameterize_constants=True,
             prefer_absolute_imports=True,
             pep420_namespace_packages=True,
-            reuse_existing_functions=False,  # the helper import spelling is under test
             cross_module_helpers=True,
         )
 
@@ -151,12 +152,12 @@ def test_same_dir_helper_uses_relative_import_under_non_identifier_root():
         write_file(pkg / "__init__.py", "")
         write_file(
             pkg / "alpha.py",
-            "def f1(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
+            "@staticmethod\ndef f1(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
             "        return -x\n    return x\n",
         )
         write_file(
             pkg / "beta.py",
-            "from .alpha import f1\n\ndef f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
+            "from .alpha import f1\n\n@staticmethod\ndef f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
             "        return -x\n    return x\n",
         )
 
@@ -165,7 +166,6 @@ def test_same_dir_helper_uses_relative_import_under_non_identifier_root():
             max_parameters=5,
             min_lines=3,
             prefer_absolute_imports=True,
-            reuse_existing_functions=False,  # the helper import spelling is under test
             cross_module_helpers=True,
         )
         proposals = engine.analyze_directory(str(root), recursive=True)
@@ -201,12 +201,12 @@ def test_out_of_place_package_import_is_relative_not_output_dir_name():
         write_file(pkg / "__init__.py", "")
         write_file(
             pkg / "alpha.py",
-            "def f1(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
+            "@staticmethod\ndef f1(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
             "        return -x\n    return x\n",
         )
         write_file(
             pkg / "beta.py",
-            "from .alpha import f1\n\ndef f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
+            "from .alpha import f1\n\n@staticmethod\ndef f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
             "        return -x\n    return x\n",
         )
 
@@ -215,7 +215,6 @@ def test_out_of_place_package_import_is_relative_not_output_dir_name():
             max_parameters=5,
             min_lines=3,
             prefer_absolute_imports=True,
-            reuse_existing_functions=False,  # the helper import spelling is under test
             cross_module_helpers=True,
         )
         proposals = engine.analyze_directory(str(pkg), recursive=True)

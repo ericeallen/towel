@@ -49,6 +49,17 @@ def g2():
     (dir_path / "sample.py").write_text(code, encoding="utf-8")
 
 
+def _proposal_descriptions(strict: bool) -> list[str]:
+    return (
+        ["Extract common code from f1 and f2", "Extract common code from g1 and g2"]
+        if strict
+        else [
+            "Reuse f1 (sample.py) for duplicated code in f2",
+            "Reuse g1 (sample.py) for duplicated code in g2",
+        ]
+    )
+
+
 def test_detail_progress_lists_proposals(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     fixture = tmp_path / "proj"
     _make_fixture(fixture)
@@ -65,15 +76,13 @@ def test_detail_progress_lists_proposals(tmp_path: Path, caplog: pytest.LogCaptu
     # and then lists every discovered proposal, numbered, in discovery order.
     assert "[towel] Discovered 2 proposal(s)" in messages
     listed = [message.strip() for message in messages if message.strip()[:2] in {"1.", "2."}]
-    assert listed == [
-        "1. Extract common code from f1 and f2",
-        "2. Extract common code from g1 and g2",
-    ]
+    expected = _proposal_descriptions(engine.strict)
+    assert listed == [f"{index}. {description}" for index, description in enumerate(expected, 1)]
     # One iteration applies only the first proposal, so the cap ends the run
     # with the second still pending.
     assert termination == "iteration_cap"
     applied = [description for _, descriptions in results.values() for description in descriptions]
-    assert applied == ["Extract common code from f1 and f2"]
+    assert applied == expected[:1]
 
 
 def test_termination_reason_fixed_point(tmp_path: Path) -> None:
@@ -230,12 +239,13 @@ def test_detail_progress_logs_each_pass_of_a_single_file(
     """``--progress detail`` promised dry and preview a log of each pass; a file run logged none."""
     _make_fixture(tmp_path / "proj")
     err = io.StringIO()
+    engine = UnificationRefactorEngine(min_lines=3)
     with (
         caplog.at_level(logging.INFO, logger="towel"),
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(err),
     ):
-        _, applied, _ = UnificationRefactorEngine(min_lines=3).refactor_to_fixed_point(
+        _, applied, _ = engine.refactor_to_fixed_point(
             str(tmp_path / "proj" / "sample.py"),
             progress="detail",
             output_path=str(tmp_path / "out.py"),
@@ -247,8 +257,8 @@ def test_detail_progress_logs_each_pass_of_a_single_file(
     assert messages.count("[towel] Discovered 1 proposal(s)") == 1
     listed = [message.strip() for message in messages if message.strip()[:2] in {"1.", "2."}]
     assert listed[:2] == [
-        "1. Extract common code from f1 and f2",
-        "2. Extract common code from g1 and g2",
+        f"{index}. {description}"
+        for index, description in enumerate(_proposal_descriptions(engine.strict), 1)
     ]
     assert "\r" not in err.getvalue(), "detail logs instead of drawing a bar"
 
