@@ -57,8 +57,8 @@ def test_config_stanzas_in_one_function_share_a_helper(tmp_path: Path, strict: b
     (helper,) = _helpers(generated)
     assert isinstance(ast.parse(generated).body[2], ast.FunctionDef)  # module level
     assert helper_calls(generated) == [
-        f"{helper.name}('host', '127.0.0.1', parser, settings)",
-        f"{helper.name}('root', '/srv/www', parser, settings)",
+        f"{helper.name}(parser, 'host', settings, '127.0.0.1')",
+        f"{helper.name}(parser, 'root', settings, '/srv/www')",
     ]
     assert 'parser.has_option("logging", "file")' in generated
 
