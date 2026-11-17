@@ -48,7 +48,9 @@ def test_timeout_preview_shows_unconfirmed_applied_changes(
     assert result["status"] == "incomplete" and result["termination"] == "time_limit"
     assert result["applied"] == 1
     assert result["diff"] == ""
-    assert "__extracted_func_" in result["partial_diff"]
+    # Shape item 5 reuses f1 in both modes: no arguments need ownership transfer.
+    assert "+    return f1()\n" in result["partial_diff"]
+    assert "-    x = 1\n-    y = x + 2\n-    return y\n" in result["partial_diff"]
     assert result["finally_confirmed"] is False
     assert (project / "sample.py").read_bytes() == before
     output = tmp_path / ("out" if directory else "out.py")

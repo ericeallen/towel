@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from towel.api import UnificationRefactorEngine
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.substitution import Substitution
 
@@ -95,6 +96,10 @@ def test_enclosing_signature_orders_pair_and_cluster_inputs(tmp_path: Path, stri
     )
     engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False, strict=strict)
     proposals = engine.analyze_file(str(path))
+    if strict and not _supported_runtime():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        return
     assert proposals
     proposal = max(proposals, key=lambda p: len(p.replacements))
     assert len(proposal.replacements) == 3

@@ -244,10 +244,9 @@ def test_complete_preview_keeps_cross_module_followups_and_exclusions(
     written = _contents(output)
     assert written.pop("vendor/ignored.py") == b"this is intentionally invalid Python!!!\n"
     previewed = dict(completed[0][1])
-    if strict:
-        # Strict retains excluded source in the whole-program stage; relaxed
-        # mode omits the invalid fixture. Both produce the same selected changes.
-        assert previewed.pop("vendor/ignored.py") == b"this is intentionally invalid Python!!!\n"
+    # An explicit exclusion preserves the file in both modes, even if it cannot
+    # parse. Runtime discovery must not relabel it as an unavailable input.
+    assert previewed.pop("vendor/ignored.py") == b"this is intentionally invalid Python!!!\n"
     assert written == previewed
 
 

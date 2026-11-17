@@ -167,7 +167,7 @@ def test_engine_fills_expression_arguments_and_the_return_from_mypy(
     result = engine.apply_refactoring(str(path), proposals[0])
     assert (
         _signature(result)
-        == "def __extracted_func_0(__param_0: int, box: Box, _towel_owner: 'object') -> str:"
+        == "def __extracted_func_0(box: Box, _param_0: int, _towel_owner: 'object') -> str:"
     )
     exec(compile(result, "<inferred>", "exec"), {})
 
@@ -223,22 +223,19 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
         for node in ast.walk(typed_tree)
         if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
     )
-    assert [parameter.arg for parameter in typed_helper.args.posonlyargs] == ["__param_0"]
+    assert [parameter.arg for parameter in typed_helper.args.posonlyargs] == ["items", "__param_0"]
     assert (
         typed_helper.args.vararg,
         typed_helper.args.kwarg,
         typed_helper.args.kwonlyargs,
         typed_helper.args.defaults,
     ) == (None, None, [], [])
-    multiplier_type = typed_helper.args.posonlyargs[0].annotation
+    multiplier_type = typed_helper.args.posonlyargs[1].annotation
     assert multiplier_type is not None and ast.unparse(multiplier_type) == "int"
-    assert [parameter.arg for parameter in typed_helper.args.args] == [
-        "items",
-        "_towel_owner",
-    ]
+    assert [parameter.arg for parameter in typed_helper.args.args] == ["_towel_owner"]
     owner_type = typed_helper.args.args[-1].annotation
     assert isinstance(owner_type, ast.Constant) and owner_type.value == "object"
-    items_type = typed_helper.args.args[0].annotation
+    items_type = typed_helper.args.posonlyargs[0].annotation
     assert isinstance(items_type, ast.Constant) and items_type.value == "list[int]"
     assert typed_helper.returns is not None and ast.unparse(typed_helper.returns) == "int"
     bare_tree = ast.parse((bare / "m.py").read_text())
@@ -254,11 +251,8 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
         bare_helper.args.kwonlyargs,
         bare_helper.args.defaults,
     ) == (None, None, [], [])
-    assert [parameter.arg for parameter in bare_helper.args.posonlyargs] == ["__param_0"]
-    assert [parameter.arg for parameter in bare_helper.args.args] == [
-        "items",
-        "_towel_owner",
-    ]
+    assert [parameter.arg for parameter in bare_helper.args.posonlyargs] == ["items", "__param_0"]
+    assert [parameter.arg for parameter in bare_helper.args.args] == ["_towel_owner"]
     assert all(parameter.annotation is None for parameter in parameters)
     assert bare_helper.returns is None
     for tree, helper in ((typed_tree, typed_helper), (bare_tree, bare_helper)):
@@ -277,8 +271,8 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
                 and node.func.id == helper.name
             ]
             calls.append(call)
-            assert ast.unparse(call.args[0]) == multiplier
-            assert original_argument_name(function, call.args[1]) == "items"
+            assert ast.unparse(call.args[1]) == multiplier
+            assert original_argument_name(function, call.args[0]) == "items"
             owner = call.args[-1]
             assert isinstance(owner, ast.Call) and isinstance(owner.func, ast.Attribute)
             assert owner.func.attr == "pop" and not owner.args and not owner.keywords
@@ -911,7 +905,7 @@ def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
         result = engine.apply_refactoring(str(path), proposals[0])
         assert (
             _signature(result)
-            == "def __extracted_func_0(__param_0: int, box: Box, _towel_owner: 'object') -> str:"
+            == "def __extracted_func_0(box: Box, _param_0: int, _towel_owner: 'object') -> str:"
         )
     finally:
         oracle.close()

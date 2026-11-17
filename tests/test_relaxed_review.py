@@ -38,6 +38,49 @@ CASES = cast(
 pytestmark = pytest.mark.relaxed_mode
 
 
+def _strict_output(name: str, archived: str) -> str:
+    """Apply only the shape brief's approved edits to the frozen 1.949 output.
+
+    Keep the review archive untouched and compare every remaining byte. Shape
+    items 1 and 2 preserve source parameter order and spelling in both modes.
+    Item 5 permits these two redirects: the project scope is complete, no name
+    is rebound, and the assertion-only callers need no ownership transfer.
+    """
+    edits: list[tuple[str, str]] = []
+    if name == "ext_long_effects":
+        edits += [
+            ("(__param_0, /, x)", "(x, __param_0, /)"),
+            ("__extracted_func_0(3, x)", "__extracted_func_0(x, 3)"),
+            ("__extracted_func_0(4, x)", "__extracted_func_0(x, 4)"),
+        ]
+    if name in {"ext_long_effects", "ext_long_partial_effects"}:
+        edits += [(f"print('stage {i}',", f'print("stage {i}",') for i in range(6)]
+    if name == "ext_long_fstring":
+        edits += [
+            ("(__param_0, /, x, _towel_owner)", "(x, __param_0, /, _towel_owner)"),
+            ("return f'{__param_0}:{h}'", 'return f"{__param_0}:{h}"'),
+            (
+                "__extracted_func_0('first', _towel_arguments[0][0],",
+                "__extracted_func_0(_towel_arguments[0][0], 'first',",
+            ),
+            (
+                "__extracted_func_0('second', _towel_arguments[0][0],",
+                "__extracted_func_0(_towel_arguments[0][0], 'second',",
+            ),
+        ]
+    if name in {"ext_long_tests", "iso_06_tests"}:
+        edits += [
+            ("\n\ndef first(x):\n    __extracted_func_0(x)\n", ""),
+            ("__extracted_func_0", "first"),
+        ]
+    if name == "ext_open_lock":
+        edits.append(("stream.write('abc')", 'stream.write("abc")'))
+    for old, new in edits:
+        assert old in archived, (name, old)
+        archived = archived.replace(old, new)
+    return archived
+
+
 def _run(path: Path) -> tuple[int, str, str]:
     result = subprocess.run(
         [sys.executable, str(path)], capture_output=True, text=True, timeout=30, check=False
@@ -48,7 +91,7 @@ def _run(path: Path) -> tuple[int, str, str]:
 @pytest.mark.parametrize("name", CASES)
 @pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
 def test_review_program(tmp_path: Path, name: str, strict: bool) -> None:
-    """Review defects 1 and guard gaps: retain behavior; strict output stays byte-identical."""
+    """Review defects 1 and guard gaps: retain behavior and all unapproved strict bytes."""
     case = CASES[name]
     source = tmp_path / "input.py"
     output = tmp_path / "output.py"
@@ -83,4 +126,4 @@ def test_review_program(tmp_path: Path, name: str, strict: bool) -> None:
     assert before[0] == 0, before
     assert after == before, (name, result.stdout, output.read_text(), before, after)
     if strict and case["strict"] is not None:
-        assert output.read_text() == case["strict"]
+        assert output.read_text() == _strict_output(name, case["strict"])
