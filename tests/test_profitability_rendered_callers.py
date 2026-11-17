@@ -144,12 +144,14 @@ def test_method_dispatch_cost_matches_the_written_callers(
     attribute = "values"
     decorator = "" if kind == "instance" else f"    @{kind}\n"
     source = "class C:\n    values = []\n" + "".join(
-        decorator
-        + f"    def {name}({parameters}):\n"
-        + "".join(
-            f"        {operand}.{attribute}.append({index if index else offset})\n"
-            for index in range(12)
-        )
+        decorator + f"    def {name}({parameters}):\n"
+        # A coherent update: independent appends are now refused by the
+        # re-audit's repeated-statement rule.
+        + f"        {operand}.{attribute}.extend([\n"
+        + "".join(f"            {index if index else offset},\n" for index in range(12))
+        + "        ])\n"
+        + f"        {operand}.{attribute}.sort()\n"
+        + f"        {operand}.{attribute}.reverse()\n"
         for name, offset in (("first", 0), ("second", 100))
     )
     engine, proposal, output = _verify_counted_callers(
@@ -177,7 +179,9 @@ def test_method_dispatch_cost_matches_the_written_callers(
             method = getattr(instance, name)
             method() if receiver_used else method(instance)
         observations.append(getattr(instance, attribute))
-    assert observations[0] == observations[1] == [*range(12), 100, *range(1, 12)]
+    assert (
+        observations[0] == observations[1] == sorted([*range(12), 100, *range(1, 12)], reverse=True)
+    )
 
 
 def _assert_lifetime_refusal(tmp_path: Path, source: str) -> str:

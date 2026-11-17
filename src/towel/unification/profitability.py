@@ -48,7 +48,8 @@ def _independent_statement_groups(helper: ast.FunctionDef, statements: Sequence[
     Shared inputs such as a receiver or language are context, not an argument
     group. Every other input must belong to exactly one statement, and the
     statements must match after renaming those private inputs in encounter
-    order. Constants, operations and the positions of shared inputs stay exact.
+    order. Literal values may differ; operations and shared-input positions
+    stay exact. A run with no private inputs is still a repeated operation.
     """
     if len(statements) < 2:
         return False
@@ -59,7 +60,7 @@ def _independent_statement_groups(helper: ast.FunctionDef, statements: Sequence[
     ]
     shared = set.intersection(*uses)
     groups = [used - shared for used in uses]
-    if not groups[0] or any(len(group) != len(groups[0]) for group in groups):
+    if any(len(group) != len(groups[0]) for group in groups):
         return False
     if sum(map(len, groups)) != len(set.union(*groups)):
         return False
@@ -72,6 +73,8 @@ def _independent_statement_groups(helper: ast.FunctionDef, statements: Sequence[
             if isinstance(node, ast.Name) and node.id in group:
                 # Not a legal identifier: cannot collide with source names.
                 node.id = names.setdefault(node.id, f"!case-input-{len(names)}")
+            elif isinstance(node, ast.Constant):
+                node.value = f"!literal-{type(node.value).__name__}"
         shapes.append(canonical_dump(normalized))
     return len(set(shapes)) == 1
 
@@ -100,7 +103,13 @@ def worthwhile_helper(
         return False
     if rendered_callers is not None and len(rendered_callers) != sites:
         raise ValueError("Every replacement needs its rendered caller")
-    if _independent_statement_groups(helper, statements):
+    # A setup or a different final check must not hide a repeated run inside
+    # the candidate. In particular, do not bundle the last few test cases
+    # merely because their combined syntax repays a larger signature.
+    if any(
+        _independent_statement_groups(helper, statements[index : index + 2])
+        for index in range(len(statements) - 1)
+    ):
         return False
     callers = (
         list(rendered_callers)
