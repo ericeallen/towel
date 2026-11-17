@@ -49,12 +49,23 @@ from towel.unification.pipeline import run_pipeline
 PROJECT_ROOT = Path(__file__).parent.parent
 CROSSFILE_DIR = PROJECT_ROOT / "test_examples_crossfile"
 
-# The one proposal analysis of the simple_crossfile project produces: both
-# validators call one new helper, which admin_service hosts.
-ADMIN_EMAIL_HELPER = (
-    "Extract common code from validate_admin_email (admin_service.py) and "
-    "validate_user_email (user_service.py)"
-)
+
+# The one proposal analysis of the simple_crossfile project produces. The
+# duplicate is the whole body of validate_admin_email. Since 2.0 relaxed
+# mode shares it across the modules (reach) and then calls the existing
+# function from the user module instead of a new helper (shape, "Redirect to an
+# existing function only within a clean consumer scope"); strict mode, which
+# redirects only under its three conditions, extracts a helper as 1.949 did.
+def admin_email_proposal() -> str:
+    """The one proposal for simple_crossfile in the mode under test."""
+    if towel.cli.DEFAULT_STRICT:
+        return (
+            "Extract common code from validate_admin_email (admin_service.py) and "
+            "validate_user_email (user_service.py)"
+        )
+    return (
+        "Reuse validate_admin_email (admin_service.py) for duplicated code in validate_user_email"
+    )
 
 
 def _participating_files(proposal) -> set[str]:
@@ -118,7 +129,7 @@ class TestCrossFileProposalStructure:
 
         # The one duplicate is the whole body of validate_admin_email, so the
         # user module is rewritten to call it.
-        assert [p.description for p in proposals] == [ADMIN_EMAIL_HELPER]
+        assert [p.description for p in proposals] == [admin_email_proposal()]
 
     def test_crossfile_proposal_has_replacements_in_multiple_files(self):
         """Cross-file proposals should have replacements spanning multiple files."""
@@ -200,7 +211,7 @@ class TestCrossFileWithPipeline:
             progress="none",
         )
 
-        assert [p.description for p in proposals] == [ADMIN_EMAIL_HELPER]
+        assert [p.description for p in proposals] == [admin_email_proposal()]
 
     def test_pipeline_crossfile_matches_engine(self):
         """Pipeline and engine should produce same results for cross-file."""
@@ -223,7 +234,7 @@ class TestCrossFileWithPipeline:
                 for p in proposals
             )
 
-        assert [p.description for p in pipeline_proposals] == [ADMIN_EMAIL_HELPER]
+        assert [p.description for p in pipeline_proposals] == [admin_email_proposal()]
         assert signatures(engine_proposals) == signatures(pipeline_proposals)
 
 
@@ -389,7 +400,7 @@ class TestCrossFilePerformance:
         with patch.object(UnificationRefactorEngine, "process_block_pairs", record):
             proposals = engine.analyze_files(files, progress="none")
 
-        assert [p.description for p in proposals] == [ADMIN_EMAIL_HELPER]
+        assert [p.description for p in proposals] == [admin_email_proposal()]
         assert evaluated, "the project has duplicate blocks to pair"
         assert len(evaluated) == len(set(evaluated)), "a block pair was evaluated twice"
 
@@ -402,12 +413,17 @@ class TestCrossFilePerformance:
             engine=UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True),
             progress="none",
         )
-        assert [p.description for p in proposals] == [ADMIN_EMAIL_HELPER]
+        assert [p.description for p in proposals] == [admin_email_proposal()]
 
 
 EXAMPLE3_HELPER = (
     "Extract common code from calculate_discount_for_regular_customer (example3_file1.py) and "
     "calculate_discount_for_premium_customer (example3_file2.py)"
+)
+
+EXAMPLE3_REUSE = (
+    "Reuse calculate_discount_for_regular_customer (example3_file1.py) for duplicated code in "
+    "calculate_discount_for_premium_customer"
 )
 
 EXAMPLE3_ORDERS = (
@@ -459,7 +475,11 @@ class TestExampleThreeCrossFile:
             # shorter common run, whose literals now move into the helper
             # (docs/design/DECISIONS.md, "Relaxed mode moves equal literals
             # into a shared helper"); strict mode keeps them in each module.
-            expected = [EXAMPLE3_HELPER] + ([] if towel.cli.DEFAULT_STRICT else [EXAMPLE3_ORDERS])
+            # The two discount functions are whole bodies of each other, so
+            # relaxed mode calls the regular one from the premium module.
+            expected = (
+                [EXAMPLE3_HELPER] if towel.cli.DEFAULT_STRICT else [EXAMPLE3_REUSE, EXAMPLE3_ORDERS]
+            )
             assert [p.description for p in proposals] == expected
             assert all(_participating_files(proposal) == {file1, file2} for proposal in proposals)
         else:

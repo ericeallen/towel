@@ -43,6 +43,8 @@ from typing import Dict, List, Tuple
 
 import pytest
 
+import towel.cli
+
 from tests.test_cli_integration import invoke
 from tests.test_callback_parameters import FIXTURES, helper_calls, run_script
 
@@ -123,7 +125,13 @@ def test_the_remedy_works(tmp_path: Path) -> None:
     )
     printed, generated = _dry(source, output)
     assert "shared nothing" not in printed
-    assert len(_helpers(generated)) == 1
+    if towel.cli.DEFAULT_STRICT:
+        assert len(_helpers(generated)) == 1
+    else:
+        # unique_tags is the whole body of unique_emails, so relaxed mode calls
+        # it (shape's redirect) instead of a new helper.
+        assert _helpers(generated) == []
+        assert "return unique_emails(emails)" in generated
     driver = source.parent / "driver.py"
     assert run_script(driver, str(output)) == run_script(driver, str(source))
 
@@ -491,7 +499,11 @@ def test_equal_literals_move_into_a_helper_in_another_module_only_in_relaxed_mod
         # Each common literal stays in its own module's pool, in a tuple.
         assert all("('total-'" in call or "lambda" in call for call in calls) or not calls
     else:
-        (helper,) = _helpers(generated)
-        assert "'total-' + text" in ast.unparse(helper)
+        # The two bodies are equal, so relaxed mode calls first from the other
+        # module (shape's redirect): first's literals serve both modules, which
+        # the equal-literals rule allows, and no call passes one.
+        assert _helpers(generated) == []
+        assert "return first(rows, text)" in generated
+        assert generated.count('"total-"') == 1
         assert all("'" not in call for call in calls)
     assert _same(tmp_path, source)

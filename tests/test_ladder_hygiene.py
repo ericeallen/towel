@@ -224,14 +224,15 @@ def _validation_proposal(
     with monkeypatch.context() as fixture:
         for module in ("block_analysis", "pair_evaluation"):
             fixture.setattr(f"towel.unification.{module}.caller_narrowing_leaves_with_block", keep)
-        # Shape extracts each repeated cache-fill statement independently.
-        # Select the one whose removal loses the caller's narrowing of self.
+        # The two cache fills of __lt__ repeat each other (reach pairs a long
+        # function with itself), and one helper, called on self and then on
+        # other, takes both: the caller loses its narrowing of both caches.
         (proposal,) = [
             p
             for p in engine.analyze_file(str(path))
-            if "__lt__" in p.description
+            if p.description == "Extract code repeated in __lt__"
             and isinstance(p.extracted_function.body[0], ast.If)
-            and ast.unparse(p.extracted_function.body[0].test) == "self._key_cache is None"
+            and ast.unparse(p.extracted_function.body[0].test) == "__param_0._key_cache is None"
         ]
     return proposal
 
@@ -270,9 +271,9 @@ def test_a_prior_refusal_is_checked_again_before_and_after_dependency_changes(
         first = hear()
         assert "it narrows what its caller reads after the call" in first, first
         assert "the block narrows self._key_cache" in first, first
-        # Only the left cache lost its narrowing; mypy diagnoses tuple's
-        # reflected comparison against that possibly-None value.
-        assert 'Unsupported operand types for > ("tuple[int, int]" and "None")' in first, first
+        # Both caches lost their narrowing; mypy diagnoses the comparison of a
+        # cached tuple with the other, possibly-None cache.
+        assert 'Unsupported operand types for < ("tuple[int, int]" and "None")' in first, first
         assert hear() == first
         (tmp_path / "unrelated.py").write_text("VALUE = 2\n")
         assert hear() == first
