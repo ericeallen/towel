@@ -275,15 +275,30 @@ def rebinding_reason(
             if isinstance(node, (ast.Import, ast.ImportFrom))
             for alias in node.names
         }
+        parents = {
+            child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+        }
         for node in ast.walk(tree):
-            # An escaped mutation primitive or namespace mapping can be used
-            # under any alias. Decline at the escape instead of guessing its uses.
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and (
-                node.value is not None
-                and (
-                    _namespace_mapping(node.value, provider=provider)
-                    or _mutation_reference(node.value, aliases)
+            # A mutation primitive used as a value can escape through an
+            # argument, default, return, container or any other expression.
+            # Only a direct call lets us inspect its target name. Inspect the
+            # outermost attribute, so ``patch.object`` is one reference.
+            parent = parents.get(node)
+            if (
+                isinstance(node, (ast.Name, ast.Attribute))
+                and isinstance(node.ctx, ast.Load)
+                and _mutation_reference(node, aliases)
+                and not (
+                    isinstance(parent, ast.Attribute)
+                    and parent.value is node
+                    and _mutation_reference(parent, aliases)
                 )
+                and not (isinstance(parent, ast.Call) and parent.func is node)
+            ):
+                line = node.lineno
+            # An escaped namespace mapping can be used under any alias.
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and (
+                node.value is not None and _namespace_mapping(node.value, provider=provider)
             ):
                 line = node.lineno
             if _namespace_mapping_write(node, name, provider=provider):
