@@ -940,7 +940,10 @@ def test_relaxed_refactoring_preserves_program_output(case: str) -> None:
             status, output, error = _run(after)
             expected_status, expected_output, expected_error = _run(before)
             assert (status, error) == (expected_status, expected_error)
-            if RELAXED_OBSERVES_FINALIZATION[case] == _ORDER and not _supported_runtime():
+            if not _supported_runtime() and case in {
+                "r1792_external_exception_partial",
+                "r1792_value_return_owner",
+            }:
                 # CPython 3.14 and later release a frame's variables in the
                 # reverse order of 3.11 to 3.13 (the Python ownership ruling),
                 # which here happens to restore the original order of release.
