@@ -44,6 +44,7 @@ import pytest
 
 from tests.test_helpers import refactor_to_fixed_point_silently, write_file
 from towel.unification import argument_ownership
+from towel.unification.parameters import is_generated_parameter
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 PYPROJECT = '[project]\nname = "sample"\nversion = "0"\n'
@@ -226,7 +227,10 @@ def _parameterized_calls(source: str, callee: str) -> List[str]:
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and ast.unparse(node.func) == callee
-        and "__param_" in ast.unparse(node)
+        and any(
+            isinstance(argument, ast.Name) and is_generated_parameter(argument.id, helper)
+            for argument in ast.walk(node)
+        )
     ]
 
 

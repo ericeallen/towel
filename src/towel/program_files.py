@@ -190,10 +190,11 @@ def parse_failure(path: Path, *, include_decoding_errors: bool = False) -> Optio
 def _complaint(data: bytes, path: Path, include_decoding_errors: bool) -> Optional[str]:
     try:
         # On 3.15 the encoding detector rejects NUL before reporting invalid
-        # encodings. Mask it only for this decoding check, keeping cookie token
-        # boundaries intact. Undecodable files retain the historical skip;
-        # decodable source containing NUL is always a syntax error.
-        text = decode_source(data.replace(b"\0", b" "))
+        # encodings. Mask it only for this decoding check with a nonblank,
+        # nonidentifier byte: neither cookie tokens nor eligibility to read a
+        # second-line cookie may change. Undecodable files retain the historical
+        # skip; decodable source containing NUL is always a syntax error.
+        text = decode_source(data.replace(b"\0", b"?"))
     except (SyntaxError, UnicodeError, LookupError) as error:
         return f"it cannot be decoded: {_described(error)}" if include_decoding_errors else None
     if b"\0" in data:
@@ -201,7 +202,6 @@ def _complaint(data: bytes, path: Path, include_decoding_errors: bool) -> Option
     try:
         ast.parse(text, filename=str(path))
     except (SyntaxError, ValueError, RecursionError) as error:
-        # ValueError: a null byte, before 3.12 made that a SyntaxError.
         return _described(error)
     return None
 

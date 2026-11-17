@@ -65,7 +65,7 @@ def test_include_ignored_and_discovery_census(tmp_path: Path) -> None:
     assert python_sources(tmp_path, include_ignored=True) == [tmp_path / "local.py"]
 
 
-@pytest.mark.parametrize("data", [b"def broken(:\n", b"x=1\0\n"])
+@pytest.mark.parametrize("data", [b"def broken(:\n", b"x=1\0\n", b"\0\n# coding: unknown\n"])
 def test_relaxed_nonprogram_files_warn_once_and_strict_refuses(
     tmp_path: Path, data: bytes, caplog: pytest.LogCaptureFixture
 ) -> None:

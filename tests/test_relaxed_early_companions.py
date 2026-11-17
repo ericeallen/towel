@@ -394,15 +394,20 @@ def test_inventory_records_executable_changes(tmp_path: Path) -> None:
     from towel.cli import _write_change_sidecar, _find_extracted_helpers
     from towel.cli import helper_inventory
 
-    source = "def f(a):\n    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\ndef g(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\ndef compute(v):\n    return v\n"
+    # The inventory describes generated helpers; decorated sites exclude redirects.
+    source = (
+        "@staticmethod\ndef f(a):\n"
+        "    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\n"
+        "@staticmethod\ndef g(b):\n"
+        "    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n"
+        "def compute(v):\n    return v\n"
+    )
     path = tmp_path / "program.py"
     driver = "\nprint(f(2), g(3))\n"
     path.write_text(source + driver)
     before = _observe(path)
     path.write_text(source)
-    engine = UnificationRefactorEngine(
-        strict=False, skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
-    )
+    engine = UnificationRefactorEngine(strict=False, skip_trivial_helpers=False, min_lines=3)
     engine.refactor_directory_to_fixed_point(str(tmp_path), str(tmp_path), progress="none")
     assert engine.change_log
     _write_change_sidecar(engine, str(tmp_path))

@@ -226,8 +226,8 @@ def test_opaque_factory_results_keep_their_original_lifetimes(
     ]
     assert len(helpers) == 1
     helper = helpers[0]
-    thunk_parameters = {argument.arg for argument in helper.args.posonlyargs}
-    assert len(thunk_parameters) == 2
+    assert [argument.arg for argument in helper.args.posonlyargs] == ["d", "__param_0", "__param_1"]
+    thunk_parameters = {"__param_1", "__param_0"}
     deferred_calls = {
         node.func.id
         for node in ast.walk(helper)
@@ -246,5 +246,6 @@ def test_opaque_factory_results_keep_their_original_lifetimes(
         and node.func.id == helper.name
     ]
     assert len(calls) == 2
-    assert all(all(isinstance(arg, ast.Lambda) for arg in call.args[:2]) for call in calls)
+    assert all(len(call.args) == 4 for call in calls)
+    assert all(all(isinstance(arg, ast.Lambda) for arg in call.args[1:3]) for call in calls)
     assert not list(tmp_path.rglob("*.pyc"))
