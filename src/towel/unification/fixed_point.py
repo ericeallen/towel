@@ -467,7 +467,7 @@ class FixedPointDrivers(Materialization):
             current_code = decode_source(current_bytes)
             ast.parse(current_code, filename=file_path)
         except UnicodeDecodeError as error:
-            raise ValueError(f"{file_path}: {error}") from error
+            raise ValueError(f"{file_path}: it cannot be decoded: {error}") from error
         except SyntaxError as error:
             raise ValueError(f"{file_path}: line {error.lineno}: {error.msg}") from error
         in_place = output_path is None or Path(output_path).resolve() == Path(file_path).resolve()
