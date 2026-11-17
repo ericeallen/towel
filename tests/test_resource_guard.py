@@ -191,6 +191,9 @@ def test_the_guard_is_silent_for_everything_else(imports: str, statement: str) -
 
 # -- The guard in a run --------------------------------------------------------
 
+# Each summary binds ``doubled`` before it prints, so the listing and the print stay in
+# the caller: a callback (``lambda size: size * 2``) would otherwise take them into the
+# helper, where the directory is alive anyway and the guard would have nothing to show.
 REPORTS = """\
 import os
 import tempfile
@@ -214,8 +217,9 @@ def write_summary(rows):
         for row in rows:
             handle.write(f"{row}\\n")
     size = os.path.getsize(path)
-    print("summary", sorted(os.listdir(os.path.dirname(path))), size * 2)
-    return size * 2
+    doubled = size * 2
+    print("summary", sorted(os.listdir(os.path.dirname(path))), doubled)
+    return doubled
 
 
 def plain_report(rows):
@@ -232,8 +236,9 @@ def plain_summary(rows):
     text = "\\n".join(lines)
     count = len(text.split())
     width = max(len(line) for line in lines)
-    print("summary", count * 2, width)
-    return count * 2
+    doubled = count * 2
+    print("summary", doubled, width)
+    return doubled
 
 
 if __name__ == "__main__":
