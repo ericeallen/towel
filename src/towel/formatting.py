@@ -79,6 +79,7 @@ from .project_tools import (
 )
 from .diagnostics import LOG
 from .source_text import decorator_line_numbers, definition_start_line, try_read_source
+from .source_files import current_source_policy, python_sources, source_is_skipped
 
 formatting_repeatability = _formatting_repeatability
 
@@ -757,7 +758,11 @@ class _RunFormatTools:
 
 
 def _black_for_project(
-    path: Path, note: str, tools: Optional[_RunFormatTools] = None
+    path: Path,
+    note: str,
+    tools: Optional[_RunFormatTools] = None,
+    *,
+    settings: Optional[BlackSettings] = None,
 ) -> ToolChoice[SnippetFormatter]:
     """Black with the project's settings, or no formatting where its configuration excludes ``path``.
 
@@ -774,7 +779,10 @@ def _black_for_project(
         if tools is None:
             tool.close()
         return ToolChoice(checked(_unformatted), f"{note}, which the project excludes {path} from")
-    return ToolChoice(_black_formatter(tool, BlackSettings.for_project(path)), note)
+    return ToolChoice(
+        _black_formatter(tool, BlackSettings.for_project(path) if settings is None else settings),
+        note,
+    )
 
 
 def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
@@ -788,25 +796,132 @@ def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
     return _formatter_for_project(path, None)
 
 
+FormatterKind = Literal["black", "ruff"]
+
+
+def _pre_commit_formatter(path: Path) -> Optional[FormatterKind]:
+    """Recognize standard block-list hook IDs without interpreting YAML or hook arguments.
+
+    A hook with argument overrides is not evidence for default formatter settings.
+    More elaborate YAML remains eligible for the already-formatted source check.
+    """
+    absolute = path.resolve()
+    folder = absolute if absolute.is_dir() else absolute.parent
+    hook_id = re.compile(r"^(\s*)-\s+id:\s*(['\"]?)(black|ruff-format)\2\s*(?:#.*)?$")
+    for directory in (folder, *folder.parents):
+        config = directory / ".pre-commit-config.yaml"
+        if not config.is_file():
+            continue
+        try:
+            lines = config.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError):
+            return None
+        found: set[FormatterKind] = set()
+        for index, line in enumerate(lines):
+            match = hook_id.fullmatch(line)
+            if match is None:
+                continue
+            indentation = len(match.group(1))
+            overridden = False
+            for following in lines[index + 1 :]:
+                if not following.strip() or following.lstrip().startswith("#"):
+                    continue
+                if len(following) - len(following.lstrip()) <= indentation:
+                    break
+                if re.match(r"\s+args:", following) and not re.fullmatch(
+                    r"\s+args:\s*\[\s*\]\s*(?:#.*)?", following
+                ):
+                    overridden = True
+                    break
+            if not overridden:
+                found.add("black" if match.group(3) == "black" else "ruff")
+        return "ruff" if "ruff" in found else "black" if "black" in found else None
+    return None
+
+
 def _formatter_for_project(
     path: Path, tools: Optional[_RunFormatTools]
 ) -> ToolChoice[SnippetFormatter]:
-    if project_configures_ruff(path):
+    hook = _pre_commit_formatter(path)
+    configured_ruff = project_configures_ruff(path)
+    tool = load_pyproject(_root(path)).get("tool", {})
+    configured_black = isinstance(tool, Mapping) and isinstance(tool.get("black"), Mapping)
+    if configured_ruff or (not configured_black and hook == "ruff"):
         try:
-            return ToolChoice(ruff_formatter(path), "ruff (project configuration)")
+            reason = "project configuration" if configured_ruff else "pre-commit hook"
+            return ToolChoice(ruff_formatter(path), f"ruff ({reason})")
         except FormatterUnavailable:
             note = "ruff is configured but not installed"
             try:
                 return _black_for_project(path, f"Black; {note}", tools)
             except ImportError:
                 return ToolChoice(None, f"{note}, and Black is not installed either")
-    tool = load_pyproject(_root(path)).get("tool", {})
-    if not isinstance(tool, Mapping) or not isinstance(tool.get("black"), Mapping):
+    if not configured_black and hook != "black":
         return ToolChoice(None, "no formatter configured")
     try:
-        return _black_for_project(path, "Black", tools)
+        return _black_for_project(
+            path,
+            ("Black" if configured_black else "Black (pre-commit hook, default settings)"),
+            tools,
+            settings=None if configured_black else BlackSettings(),
+        )
     except ImportError:
         return ToolChoice(None, "Black is not installed")
+
+
+def _sources_already_formatted(path: Path) -> Optional[FormatterKind]:
+    """Check the run's selected original inputs once, using installed tools without writes."""
+    policy = current_source_policy()
+    excluded = policy.excluded_names if policy is not None else frozenset()
+    sources = tuple(
+        str(source.resolve())
+        for source in python_sources(path, excluded=excluded)
+        if not source_is_skipped(source)
+    )
+    if not sources:
+        return None
+
+    def unchanged(command: List[str]) -> bool:
+        try:
+            result = subprocess.run(
+                [*command, *sources],
+                capture_output=True,
+                text=True,
+                cwd=str(_root(path)),
+                env=python_tool_environment(),
+                check=False,
+                timeout=TOOL_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0
+
+    # An inferred Black workflow uses Black's defaults, not a linter's line
+    # length. Match the settings used by its generated-snippet callback.
+    if unchanged(
+        [
+            sys.executable,
+            "-I",
+            "-m",
+            "black",
+            "--check",
+            "--no-cache",
+            "--workers",
+            "2",
+            "--config",
+            os.devnull,
+            "--line-length",
+            str(DEFAULT_LINE_LENGTH),
+        ]
+    ):
+        return "black"
+    try:
+        ruff = _ruff_executable()
+    except FormattingChangedCode:
+        return None
+    if ruff is not None and unchanged([*ruff, "format", "--check", "--no-cache"]):
+        return "ruff"
+    return None
 
 
 def formatter_factory_for_project(
@@ -821,10 +936,32 @@ def formatter_factory_for_project(
     selected: dict[str, Optional[SnippetFormatter]] = {}
     tools = _RunFormatTools()
     root = _root(path)
+    inferred: Optional[FormatterKind] = None
+    inspected = False
+    inspection_lock = threading.Lock()
 
     def choose(file_path: str) -> Optional[SnippetFormatter]:
+        nonlocal inspected, inferred
         if file_path not in selected:
-            choice = _formatter_for_project(Path(file_path), tools)
+            source = Path(file_path)
+            choice = _formatter_for_project(source, tools)
+            if choice.note == "no formatter configured":
+                with inspection_lock:
+                    if not inspected:
+                        inferred = _sources_already_formatted(path)
+                        inspected = True
+                if inferred == "black":
+                    choice = _black_for_project(
+                        source,
+                        "Black (all analyzed files already formatted)",
+                        tools,
+                        settings=BlackSettings(),
+                    )
+                elif inferred == "ruff":
+                    choice = ToolChoice(
+                        ruff_formatter(source),
+                        "ruff (all analyzed files already formatted)",
+                    )
             selected[file_path] = choice.tool
             if report is not None:
                 report(choice)

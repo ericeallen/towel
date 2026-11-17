@@ -1283,6 +1283,9 @@ def _generated_code_formatter(
             write_note(
                 f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}.",
             )
+        else:
+            reason = "Black (project configuration)" if choice.note == "Black" else choice.note
+            write_note(f"Note: formatting generated code with {reason}.")
 
     return formatter_factory_for_project(project_path, report)
 
