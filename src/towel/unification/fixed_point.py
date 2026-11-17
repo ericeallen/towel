@@ -940,6 +940,14 @@ class FixedPointDrivers(Materialization):
             for description in descriptions:
                 run.record(path, description)
                 run.applied += 1
+        if run.report_revision != run.revision:
+            # Incremental passes omit pairs in untouched files. Keep their
+            # speed while applying, then account for the whole final project
+            # once, including any helper merges that moved source locations.
+            proposals = self.analyze_directory(
+                str(directory), recursive=True, progress=reporter.analysis_mode, changed_files=None
+            )
+            self._note_analysis(directory, len(proposals))
         if run.applied:
             self.confirm_run_with_a_cold_checker(paths)
         self._refuse_a_run_the_checker_emptied(run.applied)
@@ -1194,7 +1202,9 @@ class FixedPointDrivers(Materialization):
             progress=reporter.analysis_mode,
             changed_files=restrict,
         )
-        self._note_analysis(output_path, len(proposals), reporter)
+        if restrict is None:
+            self._note_analysis(output_path, len(proposals), reporter)
+            run.report_revision = run.revision
         run.global_revision = run.revision
         run.changed_since_global.clear()
         if not proposals:
@@ -1420,6 +1430,8 @@ class _DirectoryRun:
     reheard_after: int = 0
     revision: int = 0
     global_revision: Optional[int] = None
+    # Only unrestricted analyses cover all the report's candidate pairs.
+    report_revision: Optional[int] = None
     applied: int = 0
 
     def owes_a_rehearing(self) -> bool:

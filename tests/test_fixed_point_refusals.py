@@ -94,8 +94,14 @@ def test_other_proposals_continue_and_changed_context_retries_a_refusal(
         restrictions.append(changed_files)
         # Three passes find work; the fourth is the rehearing, which looks at
         # an unchanged project on purpose to hear what was declined earlier.
-        # Any more than that and the run is circling.
-        assert len(restrictions) <= 4, "An unchanged project was reanalyzed more than once"
+        # If that rehearing applies the last proposal, incremental discovery
+        # is followed by one whole-project scan for the final report. It must
+        # find no work and must never cause another application attempt.
+        if len(restrictions) == 5:
+            assert incremental and eventually_succeeds and changed_files is None
+            assert all(path.read_text() == "VALUE = 1\n" for path in (first, second))
+        else:
+            assert len(restrictions) <= 4, "An unchanged project was reanalyzed more than once"
         return [
             proposal
             for proposal in proposals
