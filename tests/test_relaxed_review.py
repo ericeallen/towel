@@ -24,6 +24,8 @@ from typing import NotRequired, TypedDict, cast
 
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
+
 
 class ReviewCase(TypedDict):
     source: str
@@ -53,8 +55,8 @@ def test_review_program(tmp_path: Path, name: str, strict: bool) -> None:
     source = tmp_path / "input.py"
     output = tmp_path / "output.py"
     source.write_text(case["source"])
-    for name, contents in case.get("modules", {}).items():
-        (tmp_path / name).write_text(contents)
+    for module_name, contents in case.get("modules", {}).items():
+        (tmp_path / module_name).write_text(contents)
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "independent-review-fixture"\nversion = "0.0.0"\nrequires-python = ">=3.11"\n'
     )
@@ -82,5 +84,8 @@ def test_review_program(tmp_path: Path, name: str, strict: bool) -> None:
     before, after = _run(source), _run(output)
     assert before[0] == 0, before
     assert after == before, (name, result.stdout, output.read_text(), before, after)
-    if strict and case["strict"] is not None:
+    if strict and name == "ext_long_fstring" and not _supported_runtime():
+        assert output.read_text() == case["source"]
+        assert "[lifetime_order_uncertified]" in result.stdout
+    elif strict and case["strict"] is not None:
         assert output.read_text() == case["strict"]
