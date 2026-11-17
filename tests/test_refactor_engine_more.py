@@ -35,10 +35,11 @@ class TestRefactorEngineMore(unittest.TestCase):
             f1 = os.path.join(td, "f1.py")
             f2 = os.path.join(td, "f2.py")
 
-            # Two functions with unifiable 4-line blocks
+            # Decorators require a fresh helper so its import is exercised.
             write_file(
                 f1,
                 """
+@staticmethod
 def a():
     r = 1
     r += 2
@@ -53,6 +54,7 @@ def a():
 import f1
 
 
+@staticmethod
 def b():
     out = 1
     out += 2
@@ -66,7 +68,6 @@ def b():
             engine = UnificationRefactorEngine(
                 skip_trivial_helpers=False,
                 min_lines=3,
-                reuse_existing_functions=False,
                 cross_module_helpers=True,
             )
             proposals = engine.analyze_directory(td, recursive=False)

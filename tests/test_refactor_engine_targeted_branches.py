@@ -210,10 +210,13 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
         driver = "print(f1(), f2(), G); advance(); print(f1(), f2(), G)"
         self.assertEqual(observed(modified, driver), observed(safe, driver))
         self.assertEqual(observed(modified, driver), "2 2 0\n3 3 1\n")
+        reused = proposals[0].reused_function
+        assert (reused is None) == engine.strict
         helper = next(
             node
             for node in ast.parse(modified).body
-            if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+            if isinstance(node, ast.FunctionDef)
+            and (node.name == reused.name if reused is not None else "extracted_func" in node.name)
         )
         self.assertFalse(helper.args.args or helper.args.posonlyargs)
         self.assertTrue(

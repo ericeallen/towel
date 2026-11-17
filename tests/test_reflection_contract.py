@@ -92,8 +92,11 @@ def test_asserts_can_be_shared_between_modules_pytest_rewrites_differently(tmp_p
     )
     plain = tmp_path / "plain.py"
     rewritten = tmp_path / "test_values.py"
-    plain.write_text("def first(value):\n" + body)
-    rewritten.write_text("import plain\n\ndef second(value):\n" + body)
+    # Require a fresh helper so its assert crosses the rewrite-policy boundary.
+    plain_source = "@staticmethod\ndef first(value):\n" + body
+    rewritten_source = "import plain\n\n@staticmethod\ndef second(value):\n" + body
+    plain.write_text(plain_source)
+    rewritten.write_text(rewritten_source)
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
     )
@@ -105,8 +108,8 @@ def test_asserts_can_be_shared_between_modules_pytest_rewrites_differently(tmp_p
     if not lifetime_order_certified():
         assert results == {}
         assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
-        assert plain.read_text() == "def first(value):\n" + body
-        assert rewritten.read_text() == "import plain\n\ndef second(value):\n" + body
+        assert plain.read_text() == plain_source
+        assert rewritten.read_text() == rewritten_source
         assert not stderr.getvalue(), stderr.getvalue()
         return
     assert sum(applied for applied, _ in results.values()) > 0

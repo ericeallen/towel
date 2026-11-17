@@ -225,6 +225,9 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         " returns: the function's arguments or other variables on one side, variables the block"
         " assigns on the other."
     ),
+    RejectReason.RESOURCE_LIFETIME_UNPROVEN: _says(
+        "Moving the block could release a resource before its caller has finished using it."
+    ),
     RejectReason.RELATIVE_IMPORT_ACROSS_PACKAGES: _says(
         _CROSS_MODULE + "the block holds a relative import that would name a different module"
         " from the module holding the helper.",
