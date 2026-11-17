@@ -171,3 +171,30 @@ def test_direct_mutation_of_another_name_does_not_block_redirect(call: str) -> N
     target = ast.parse(source).body[0]
     assert isinstance(target, ast.FunctionDef)
     assert rebinding_reason({"mod.py": source}, "mod.py", target) is None
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("primitive", ["setattr", "delattr"])
+@pytest.mark.parametrize("alias", [False, True])
+def test_unrelated_import_cannot_hide_an_escaped_mutation_alias(
+    tmp_path: Path, strict: bool, primitive: str, alias: bool
+) -> None:
+    """Redirect review 2: aliases in separate scopes cannot erase a possible mutator."""
+    arguments = 'module, "total"'
+    if primitive == "setattr":
+        arguments += ", lambda value: print(-999)"
+    name = "setter" if alias else primitive
+    imported = f"from builtins import {primitive} as setter\n" if alias else ""
+    source, output = tmp_path / "input.py", tmp_path / "output.py"
+    source.write_text(
+        STATEMENT_PAIR
+        + imported
+        + f"def mutate(module, fn={name}):\n"
+        + f"    fn({arguments})\n"
+        + f"def unrelated():\n    from math import sin as {name}\n    return {name}(0)\n"
+        + "import __main__ as mod\nmutate(mod)\nreport(2)\n"
+    )
+    before = run_script(source)
+    assert before == (0, "before\n3\n4\n5\nafter 2\n", "")
+    dry(source, output, strict, "--complete-scope", "--no-format")
+    assert run_script(output) == before

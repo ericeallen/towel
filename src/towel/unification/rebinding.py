@@ -195,13 +195,19 @@ def _call_spelling(node: ast.expr, aliases: Mapping[str, str]) -> str:
     return ""
 
 
-def _mutation_reference(node: ast.expr, aliases: Mapping[str, str]) -> bool:
-    spelling = _call_spelling(node, aliases)
+def _mutation_spelling(spelling: str) -> bool:
     return "patch" in spelling.split(".") or spelling.rsplit(".", 1)[-1] in (
         "setattr",
         "delattr",
         "__setattr__",
         "__delattr__",
+    )
+
+
+def _mutation_reference(node: ast.expr, aliases: Mapping[str, str]) -> bool:
+    # An unrelated import cannot hide a builtin spelling used in another scope.
+    return _mutation_spelling(_call_spelling(node, aliases)) or _mutation_spelling(
+        _call_spelling(node, {})
     )
 
 
@@ -269,12 +275,15 @@ def rebinding_reason(
             writes = _BindingWrites(name, function.lineno)
             writes.visit(tree)
             line = writes.line
-        aliases = {
-            alias.asname or alias.name: alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.Import, ast.ImportFrom))
-            for alias in node.names
-        }
+        aliases: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    local = alias.asname or alias.name
+                    # Imports in separate scopes can share a local spelling.
+                    # None can erase evidence that it may name a mutator.
+                    if not _mutation_spelling(aliases.get(local, "")):
+                        aliases[local] = alias.name
         parents = {
             child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
         }
