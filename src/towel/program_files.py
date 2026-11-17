@@ -188,6 +188,11 @@ def parse_failure(path: Path, *, include_decoding_errors: bool = False) -> Optio
 
 
 def _complaint(data: bytes, path: Path, include_decoding_errors: bool) -> Optional[str]:
+    # Python source cannot contain NUL. On 3.15 the encoding detector rejects
+    # it before ast.parse, so do not mistake this syntax error for an encoding
+    # failure that strict discovery historically leaves out.
+    if b"\0" in data:
+        return "source code cannot contain null bytes"
     try:
         text = decode_source(data)
     except (SyntaxError, UnicodeError, LookupError) as error:
