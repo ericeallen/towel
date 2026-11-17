@@ -151,7 +151,9 @@ class _BindingWrites(ast.NodeVisitor):
 def _namespace_mapping(node: ast.expr, *, provider: bool) -> bool:
     """Recognize direct reflective mappings without assuming a receiver identity."""
     if isinstance(node, ast.Attribute):
-        return node.attr == "__dict__"
+        # A function's globals and a module frame's globals and locals are
+        # the module's own namespace, as an object's ``__dict__`` may be.
+        return node.attr in ("__dict__", "__globals__", "f_globals", "f_locals")
     if not isinstance(node, ast.Call):
         return False
     called = (
@@ -162,6 +164,63 @@ def _namespace_mapping(node: ast.expr, *, provider: bool) -> bool:
     return (called == "vars" and (bool(node.args) or provider)) or (
         called == "globals" and provider
     )
+
+
+# Methods that only read a namespace mapping. Writes are located by
+# ``_namespace_mapping_write``; any other use lets the mapping escape.
+_NAMESPACE_READS = frozenset(
+    ("get", "items", "keys", "values", "copy", "__contains__", "__getitem__", "__len__", "__iter__")
+)
+_NAMESPACE_WRITES = frozenset(
+    ("clear", "popitem", "update", "__ior__", "pop", "setdefault", "__setitem__", "__delitem__")
+)
+_NAMESPACE_FUNCTIONS = ("globals", "vars")
+# Executed text may bind any name in any module; the scan cannot read it.
+_DYNAMIC_CODE_FUNCTIONS = ("exec", "eval")
+
+
+def _builtin_reference(node: ast.expr, aliases: Mapping[str, str], names: Sequence[str]) -> bool:
+    """One of the builtins ``names``, under any import alias, or fetched by name.
+
+    A method of the same name (``model.eval``) is not the builtin.
+    """
+    spellings = {*names, *(f"builtins.{name}" for name in names)}
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        return isinstance(node.ctx, ast.Load) and (
+            _call_spelling(node, aliases) in spellings or _call_spelling(node, {}) in spellings
+        )
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) > 1
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value in names
+    )
+
+
+def _namespace_escapes(node: ast.expr, parents: Mapping[ast.AST, ast.AST]) -> bool:
+    """Whether a namespace mapping is used other than by direct reads and writes.
+
+    Subscripts, comparisons, iteration and the dict's own read and write
+    methods are inspected where they stand. Passed, stored, returned or bound
+    to a method value, the mapping may be written anywhere under any name.
+    """
+    parent = parents.get(node)
+    if isinstance(parent, ast.Subscript) and parent.value is node:
+        return False
+    if isinstance(parent, ast.Compare):
+        return False
+    if isinstance(parent, (ast.For, ast.AsyncFor, ast.comprehension)) and parent.iter is node:
+        return False
+    if isinstance(parent, ast.Attribute) and parent.value is node:
+        method = parents.get(parent)
+        return not (
+            isinstance(method, ast.Call)
+            and method.func is parent
+            and parent.attr in _NAMESPACE_READS | _NAMESPACE_WRITES
+        )
+    return True
 
 
 def _possibly_target_key(node: ast.expr, name: str) -> bool:
@@ -195,13 +254,19 @@ def _call_spelling(node: ast.expr, aliases: Mapping[str, str]) -> str:
     return ""
 
 
-def _mutation_reference(node: ast.expr, aliases: Mapping[str, str]) -> bool:
-    spelling = _call_spelling(node, aliases)
+def _mutation_spelling(spelling: str) -> bool:
     return "patch" in spelling.split(".") or spelling.rsplit(".", 1)[-1] in (
         "setattr",
         "delattr",
         "__setattr__",
         "__delattr__",
+    )
+
+
+def _mutation_reference(node: ast.expr, aliases: Mapping[str, str]) -> bool:
+    # An unrelated import cannot hide a builtin spelling used in another scope.
+    return _mutation_spelling(_call_spelling(node, aliases)) or _mutation_spelling(
+        _call_spelling(node, {})
     )
 
 
@@ -269,20 +334,55 @@ def rebinding_reason(
             writes = _BindingWrites(name, function.lineno)
             writes.visit(tree)
             line = writes.line
-        aliases = {
-            alias.asname or alias.name: alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.Import, ast.ImportFrom))
-            for alias in node.names
+        aliases: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    local = alias.asname or alias.name
+                    # Imports in separate scopes can share a local spelling.
+                    # None can erase evidence that it may name a mutator.
+                    if not _mutation_spelling(aliases.get(local, "")):
+                        aliases[local] = alias.name
+        parents = {
+            child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
         }
         for node in ast.walk(tree):
-            # An escaped mutation primitive or namespace mapping can be used
-            # under any alias. Decline at the escape instead of guessing its uses.
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and (
-                node.value is not None
+            # A mutation primitive used as a value can escape through an
+            # argument, default, return, container or any other expression.
+            # Only a direct call lets us inspect its target name. Inspect the
+            # outermost attribute, so ``patch.object`` is one reference.
+            parent = parents.get(node)
+            if (
+                isinstance(node, (ast.Name, ast.Attribute))
+                and isinstance(node.ctx, ast.Load)
+                and _mutation_reference(node, aliases)
+                and not (
+                    isinstance(parent, ast.Attribute)
+                    and parent.value is node
+                    and _mutation_reference(parent, aliases)
+                )
+                and not (isinstance(parent, ast.Call) and parent.func is node)
+            ):
+                line = node.lineno
+            # An escaped namespace mapping can be written under any alias,
+            # and ``globals`` itself, called anywhere, returns the caller's.
+            if (
+                isinstance(node, ast.expr)
+                and _namespace_mapping(node, provider=provider)
+                and _namespace_escapes(node, parents)
+            ):
+                line = node.lineno
+            # Only a direct call by name is inspected; ``getattr`` returns one.
+            if isinstance(node, ast.expr) and _builtin_reference(
+                node, aliases, _DYNAMIC_CODE_FUNCTIONS
+            ):
+                line = node.lineno
+            if (
+                isinstance(node, ast.expr)
+                and _builtin_reference(node, aliases, _NAMESPACE_FUNCTIONS)
                 and (
-                    _namespace_mapping(node.value, provider=provider)
-                    or _mutation_reference(node.value, aliases)
+                    isinstance(node, ast.Call)
+                    or not (isinstance(parent, ast.Call) and parent.func is node)
                 )
             ):
                 line = node.lineno

@@ -540,13 +540,7 @@ def test_a_comment_after_the_closing_parenthesis_stays(
         tmp_path, CLOSING_LINE_COMMENT.format(comment=comment), strict=strict
     )
     assert same
-    if strict:
-        assert helper_calls(generated) == ["__extracted_func_0(x)", "__extracted_func_0(z)"]
-    else:
-        # f2's whole body is the expression, so relaxed mode calls f2 (shape,
-        # "Redirect to an existing function only within a clean consumer scope").
-        assert helper_calls(generated) == []
-        assert "        f2(x)\n" in generated, generated
+    assert helper_calls(generated) == ["__extracted_func_0(x)", "__extracted_func_0(z)"]
     assert f")  {comment}\n" in generated, generated
 
 
