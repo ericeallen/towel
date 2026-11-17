@@ -312,7 +312,7 @@ including wildcard imports exporting `__builtins__` through `__all__` and
 ordinary `receiver.__builtins__` stores/deletions anywhere in the analyzed
 program. One fresh analysis-owned boolean carries the program-wide hazard;
 excluded runnable files count, and unknown input cannot establish absence.
-See the [evaluation-scope policy](../GENERATED_CODE.md#arguments-and-evaluation).
+See the [evaluation-scope policy](../design/GENERATED_CODE_RULES.md#arguments-and-evaluation).
 A separate source-local memo reuses only the immutable source/parser-dependent
 builtin-mapping verdict within a weakly owned scope analyzer, with one source and an 8 MiB source-storage budget per
 analyzer. Warning-capable sources and disabled

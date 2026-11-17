@@ -200,7 +200,7 @@ an explicit `__all__`. Any ordinary attribute store/deletion of
 without assuming a receiver's identity. A fresh project-wide boolean records
 that hazard once per analysis, including excluded runnable files and conservative
 unknown-input handling. It retains no source or AST. See the
-[evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation).
+[evaluation-scope policy](design/GENERATED_CODE_RULES.md#arguments-and-evaluation).
 Separately, the source-local memo retains one immutable verdict per live scope analyzer, keyed
 by the exact source and parser configuration. Only sources proven warning-free
 by the native parsing policy are admitted. Each analyzer
@@ -593,7 +593,7 @@ historical results from their named source states.
 Every time in this section was measured on an Apple M5 Max (18 cores,
 128 GiB), and each figure names its commit and conditions. Native timings use
 macOS; the release-corpus timing below uses a Docker Linux VM. The
-[measurement environment](KNOWN_LIMITATIONS.md#measurement-environment)
+[measurement environment](design/CORRECTNESS_MODEL.md#measurement-environment)
 records the rest. Expect other hardware to differ.
 
 ### Planning and bounding a run
@@ -622,7 +622,7 @@ seconds, or 35 s without the type checker and formatter (commit `8cb8b8c`,
 September 24, 2026, with other work loading the machine); a package the size of boltons (24,000 lines) or Click (29,000
 lines) takes tens of seconds, and pygments (137,000 lines) about two
 minutes, by the dated measurements in the
-[performance section of Known limitations](KNOWN_LIMITATIONS.md#performance),
+[performance section of Known limitations](design/CORRECTNESS_MODEL.md#performance),
 which is the one table of package timings and says what each figure
 measured; the largest projects in the ecosystem check, networkx and Sphinx
 (150,000 to 200,000 lines), take from several minutes to over an hour.

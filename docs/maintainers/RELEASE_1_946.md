@@ -72,7 +72,7 @@ defaulted, variadic and keyword-only signatures remain outside this pass.
 Every caller must prove an immutable result as well as unchanged evaluation
 order. Attributes, factories, unknown values and other unproved results stay
 deferred when eager evaluation could change their lifetime or exception cleanup.
-See [arguments and evaluation](../GENERATED_CODE.md#arguments-and-evaluation) and
+See [arguments and evaluation](../design/GENERATED_CODE_RULES.md#arguments-and-evaluation) and
 [ordering controls](https://github.com/ericeallen/towel/blob/main/tests/test_thunk_ordering_cli.py).
 
 ## More precise typing and stronger correctness checks

@@ -42,6 +42,7 @@ MOVED_SINCE_RECORDED = {
     "docs/PRODUCTION_READINESS.md": "docs/maintainers/PRODUCTION_READINESS.md",
     "docs/RELEASING.md": "docs/maintainers/RELEASING.md",
     "docs/proposals/next-validation-final.md": "docs/design/proposals/next-validation-final.md",
+    "docs/GENERATED_CODE.md": "docs/design/GENERATED_CODE_RULES.md",
 }
 FROZEN_EVIDENCE = "tests/release_evidence/"
 # Each documentation section: its index, and the directory whose pages it lists.

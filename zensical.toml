@@ -30,6 +30,7 @@ nav = [
   { "Quick start" = "QUICKSTART.md" },
   { "Using Towel on a project" = "USING_TOWEL.md" },
   { "Reading Towel's output" = "GENERATED_CODE.md" },
+  { "Relaxed and strict" = "RELAXED_AND_STRICT.md" },
   { "Why something was left alone" = [
     { "Common reasons" = "WHY_LEFT_ALONE.md" },
     { "Known limitations" = "KNOWN_LIMITATIONS.md" },
@@ -56,6 +57,8 @@ nav = [
     "design/README.md",
     { "Architecture" = "design/ARCHITECTURE.md" },
     { "Design decisions" = "design/DECISIONS.md" },
+    { "Correctness model" = "design/CORRECTNESS_MODEL.md" },
+    { "Generated code, in full" = "design/GENERATED_CODE_RULES.md" },
     { "Proposals" = [
       "design/proposals/README.md",
       { "October 8 review" = "design/proposals/REVIEW_2026-10-08.md" },

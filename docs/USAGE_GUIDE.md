@@ -174,7 +174,7 @@ and formatting tools, while the bare API defaults for those callbacks are `None`
 | Parameter | Default | Effect |
 |---|---|---|
 | `parameterize_constants` | `True` | Differing constant occurrences become helper parameters, subject to exact caller-column and compiler-pool checks. |
-| `parameterize_builtins` | `False` | Permit caller-side lookup thunks such as `lambda: len` when sharing across modules. Default cross-module bare builtin reads decline except `__debug__`. This option cannot override `builtin_mapping_replaced`: possible `__builtins__` replacement declines every explicit module/global fallback read (including custom keys and currently module-bound names), plus implicit import/class lookups. Ordinary `receiver.__builtins__` stores/deletions anywhere in the analyzed program make every module uncertain; excluded runnable files still count. Explicit locals, parameters and cells remain eligible; same-spelled locals do not redirect implicit operations. `__debug__` and blocks without captured-mapping dependencies retain their ordinary rules. See the [evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation). Unknown lookup results remain deferred; typed thunks retain their callable result, e.g. `Callable[[], Callable[..., int]]` for `lambda: len`. Blocks differing in which builtin they use still decline. |
+| `parameterize_builtins` | `False` | Permit caller-side lookup thunks such as `lambda: len` when sharing across modules. Default cross-module bare builtin reads decline except `__debug__`. This option cannot override `builtin_mapping_replaced`: possible `__builtins__` replacement declines every explicit module/global fallback read (including custom keys and currently module-bound names), plus implicit import/class lookups. Ordinary `receiver.__builtins__` stores/deletions anywhere in the analyzed program make every module uncertain; excluded runnable files still count. Explicit locals, parameters and cells remain eligible; same-spelled locals do not redirect implicit operations. `__debug__` and blocks without captured-mapping dependencies retain their ordinary rules. See the [evaluation-scope policy](design/GENERATED_CODE_RULES.md#arguments-and-evaluation). Unknown lookup results remain deferred; typed thunks retain their callable result, e.g. `Callable[[], Callable[..., int]]` for `lambda: len`. Blocks differing in which builtin they use still decline. |
 | `cross_module_helpers` | `False` | Also share a helper between duplicates in different modules, importing it into the others (`--cross-module/--no-cross-module`). Off, only duplicates within a module are paired and no import of a project module that runs is written. |
 | `excluded_directories` | `()` | Names of directories or files to leave unchanged (`--exclude`), at any depth. The checks that read the whole program still read them, and one that does not parse is taken for no part of the program; the program's import model reads nothing in an excluded directory. |
 | `max_candidate_pairs` | `20_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
@@ -615,7 +615,7 @@ import-safety, reassignment or owned-value lifetime checks (reported as
 
 An accepted cross-module extraction must also establish that every borrower
 can safely import the helper's host. See [cross-module checks](CROSS_MODULE.md)
-and [argument ownership](GENERATED_CODE.md#arguments-and-evaluation).
+and [argument ownership](design/GENERATED_CODE_RULES.md#arguments-and-evaluation).
 
 ### Example 3: Methods
 
@@ -650,7 +650,7 @@ When a shared method block passes these checks, its helper has a class-private
 name, preserving private attribute access and avoiding accidental overrides by
 ordinary differently named subclasses. Blocks shared by methods of different
 classes instead use a module-level helper with a receiver argument. See the
-[method insertion checks and scope limits](KNOWN_LIMITATIONS.md#method-insertion).
+[method insertion checks and scope limits](design/CORRECTNESS_MODEL.md#method-insertion).
 
 ### Decorated code
 
@@ -665,7 +665,7 @@ numba compiles; moving an assertion can change pytest's rewritten failure
 report; moving an inline-snapshot call can change the source it reads. These
 are unsupported observations, not detected refusal categories. Review such
 changes using your project's tests and requirements. See the
-[reflection and instrumentation limitations](KNOWN_LIMITATIONS.md#decorators-that-compile-or-instrument-a-body).
+[reflection and instrumentation limitations](design/CORRECTNESS_MODEL.md#decorators-that-compile-or-instrument-a-body).
 
 ## Tips
 
@@ -737,7 +737,7 @@ return fresh, definitely initialized outputs to a call inside the original
 branch, including all values needed to preserve cleanup. Earlier reads,
 rebindings, captures and unsupported ancestry remain conservative, and a
 successful binding proof does not waive frame ownership. See
-[fresh locals inside an IF](GENERATED_CODE.md#fresh-locals-inside-an-if).
+[fresh locals inside an IF](design/GENERATED_CODE_RULES.md#fresh-locals-inside-an-if).
 
 Likewise, leading thunk parameters are ordered automatically when their complete
 eligible prefix proves immutable results and preserves evaluation order. No API

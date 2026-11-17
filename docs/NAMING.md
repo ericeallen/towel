@@ -47,21 +47,21 @@ The commands below assume `path/to/cleaned` is the complete copied project.
 towel rename-helpers path/to/cleaned --list --json > helpers.json
 ```
 
-Read each helper and its call sites. Copy the exact `rename_key` from the
-inventory into a JSON object whose values are your chosen names. For example,
-on the quick start's output, `renames.json` can contain:
+Read each helper and its call sites. Copy the exact `rename_key` of each
+helper and parameter from the inventory into a JSON object whose values are
+your chosen names. For example, on the quick start's output, `renames.json`
+can contain:
 
 ```json
 {
-  "charges.py:__extracted_func_0": "discounted_total_with_shipping"
+  "charges.py:__extracted_func_0": "discounted_total",
+  "charges.py:__extracted_func_0._param_0": "discount_rate"
 }
 ```
 
 Only include keys present in your inventory; an unknown key aborts the batch
-with exit status 2. When a helper also has generated parameters such as
-`__param_0`, include their inventory keys too (for example
-`"orders.py:__extracted_func_0.__param_0": "tax_rate"`). The quick start's
-helper already takes `amount`, so it has no `__param_0` key.
+with exit status 2. Within one project the file name may be left out
+(`"__extracted_func_0": "discounted_total"`), as the quick start does.
 
 ```bash
 towel rename-helpers path/to/cleaned --complete-scope --rename-file renames.json --preview
@@ -107,7 +107,7 @@ Use the exact mapping key supplied by the inventory:
 Class-private helpers must remain class-private: a new name starts with two
 underscores and does not end with two. Otherwise the batch is refused. This
 protects against accidental overrides by ordinary differently named
-subclasses. See [method insertion](KNOWN_LIMITATIONS.md#method-insertion) for
+subclasses. See [method insertion](design/CORRECTNESS_MODEL.md#method-insertion) for
 the exact scope of that protection.
 
 An older class-level helper without leading double underscores is still

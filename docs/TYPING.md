@@ -231,4 +231,4 @@ leave the return annotation absent. This is distinct from proving a signature
 with a checker.
 
 For the full supported boundary, see
-[Type annotations on helpers](KNOWN_LIMITATIONS.md#type-annotations-on-helpers).
+[Type annotations on helpers](design/CORRECTNESS_MODEL.md#type-annotations-on-helpers).

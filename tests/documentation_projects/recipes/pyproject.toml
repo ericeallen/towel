@@ -1,0 +1,6 @@
+[project]
+name = "shop"
+version = "0.1.0"
+
+[tool.black]
+line-length = 88

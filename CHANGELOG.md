@@ -119,7 +119,7 @@ retain the state of their original candidates.
   excluded runnable files. Warning-free inputs reuse the
   source-only guard verdict within an analysis, avoiding repeated lexical scans
   while preserving native warning replay and parser-limit checks. See the
-  [captured-mapping policy](docs/GENERATED_CODE.md#arguments-and-evaluation).
+  [captured-mapping policy](docs/design/GENERATED_CODE_RULES.md#arguments-and-evaluation).
 - Local refreshes preserve incremental candidate pairing when the project root
   and builtin-mapping hazard are unchanged. Changing which files a refresh
   visits no longer triggers a full re-pair; genuine dependency changes and

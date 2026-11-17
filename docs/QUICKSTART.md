@@ -2,10 +2,10 @@
 
 [Documentation index](README.md)
 
-This example keeps the original project, extracts repeated pricing calculations
-into a complete copy, names the helper, tests the result, and adopts one reviewed
-file. It uses only Python's standard library and requires no assistant account.
-Run the commands from a fresh working directory on macOS or Linux.
+Three functions below compute a price the same way and differ only in their
+discount. In about ten minutes Towel turns them into one helper and three
+one-line callers; you name the helper, run the tests and keep the result. You
+need macOS or Linux and a terminal.
 
 ## Install
 
@@ -14,25 +14,24 @@ uv tool install code-towel     # or: pipx install code-towel
 towel --version
 ```
 
-Without uv or pipx, create a virtual environment in this working directory and
-keep it active while you follow the example:
+Without uv or pipx, make a virtual environment and keep it active while you
+follow this page:
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install "code-towel>=1.414"
-towel --version
 ```
 
-The PyPI package is `code-towel` and the command is `towel`. Do not install
-`towel`: that name belongs to a different, unrelated project. Python 3.11–3.13
-are supported. This guide describes version 1.949; check `towel --version`
-before following the example.
+The package is `code-towel` and the command is `towel`; the PyPI project named
+`towel` is unrelated. Towel runs on Python 3.11 to 3.15.
 
-## 1. Create and test a small project
+## 1. Make a small project
+
+In an empty directory:
 
 ```bash
 mkdir demo
-printf '[project]\nname = "towel-demo"\nversion = "0.0.0"\n' > demo/pyproject.toml
+printf '[project]\nname = "demo"\nversion = "0.1.0"\n' > demo/pyproject.toml
 ```
 
 Save this as `demo/charges.py`:
@@ -40,35 +39,29 @@ Save this as `demo/charges.py`:
 ```python
 def checkout_total(amount):
     base = max(amount, 0)
-    discount = base * 0.1
+    discount = base * 0.10
     discounted = base - discount
     tax = discounted * 0.08
     shipping = 5 if discounted < 100 else 0
-    with_shipping = discounted + shipping
-    total = with_shipping + tax
-    return round(total, 2)
+    return round(discounted + shipping + tax, 2)
 
 
-def quote_total(amount):
+def member_total(amount):
     base = max(amount, 0)
-    discount = base * 0.1
+    discount = base * 0.25
     discounted = base - discount
     tax = discounted * 0.08
     shipping = 5 if discounted < 100 else 0
-    with_shipping = discounted + shipping
-    total = with_shipping + tax
-    return round(total, 2)
+    return round(discounted + shipping + tax, 2)
 
 
-def invoice_total(amount):
+def wholesale_total(amount):
     base = max(amount, 0)
-    discount = base * 0.1
+    discount = base * 0.40
     discounted = base - discount
     tax = discounted * 0.08
     shipping = 5 if discounted < 100 else 0
-    with_shipping = discounted + shipping
-    total = with_shipping + tax
-    return round(total, 2)
+    return round(discounted + shipping + tax, 2)
 ```
 
 Save this as `demo/test_charges.py`:
@@ -76,109 +69,269 @@ Save this as `demo/test_charges.py`:
 ```python
 import unittest
 
-from charges import checkout_total, invoice_total, quote_total
+from charges import checkout_total, member_total, wholesale_total
 
 
 class PricingTests(unittest.TestCase):
-    def test_all_entry_points(self):
-        for calculate in (checkout_total, invoice_total, quote_total):
-            for amount, expected in ((0, 5.0), (50, 53.6), (150, 145.8)):
+    def test_prices(self):
+        expected = {
+            checkout_total: (5.0, 53.6, 194.4),
+            member_total: (5.0, 45.5, 162.0),
+            wholesale_total: (5.0, 37.4, 129.6),
+        }
+        for calculate, prices in expected.items():
+            for amount, price in zip((0, 50, 200), prices):
                 with self.subTest(function=calculate.__name__, amount=amount):
-                    self.assertEqual(calculate(amount), expected)
+                    self.assertEqual(calculate(amount), price)
 ```
+
+The tests pass:
 
 ```bash
 python3 -m unittest discover -s demo
 ```
 
-## 2. Preview and extract into a copy
+```text
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
 
-```bash
-towel preview demo --no-types --no-format
-towel dry demo cleaned --no-interactive --no-types --no-format
-diff -u demo/charges.py cleaned/charges.py
+OK
 ```
 
-`diff` exits 1 when it finds changes. The `cleaned` directory must not already
-exist. The original `demo` is unchanged. This example disables optional tools
-to make its result independent of installed formatters and type checkers.
-For your own project, use the defaults, and install `"code-towel[format,types]"`
-in place of `code-towel` to enable those checks and formatting.
+## 2. Preview the change
 
-The repeated calculation moves into a helper such as `__extracted_func_0`.
-Each caller retains bookkeeping that preserves argument cleanup order; its
-purpose is explained in [generated code](GENERATED_CODE.md#arguments-and-evaluation).
-Review those callers as well as the helper. Small duplicates whose new
-interfaces cost more than they save can be left unchanged.
-
-Complete preview runs the same pipeline as `dry` without publishing its output.
-It shows a summary and final diff; `--inventory` additionally shows the helper
-inventory. `--quick` is a partial structural listing, not a prediction of the
-final result. See [CLI output formats](CLI_GUIDE.md#diagnostics).
-
-## 3. Name the helper in the copied project
-
-Because `cleaned` is a complete project with the same internal module names,
-you can rename and test it before adopting anything into `demo`.
+`towel preview` shows what Towel would change, and changes nothing:
 
 ```bash
-towel rename-helpers cleaned --list --json > helpers.json
+towel preview demo
 ```
 
-Read the inventory. It includes the helper's source, callers, parameters and
-exact `rename_key`. For this example, save the following as `renames.json`:
+```diff
+Note: no formatter configured, so generated code is inserted unformatted. Configure Ruff or Black in the project to format generated code.
+Would apply 1 refactoring(s).
+Analysed 2 Python files (4 functions).
+Would change 1 file(s):
+  charges.py: 1 refactoring(s)
+    - Extract common code from checkout_total and member_total
+--- before/charges.py
++++ after/charges.py
+@@ -1,25 +1,19 @@
+-def checkout_total(amount):
++def __extracted_func_0(amount, _param_0):
+     base = max(amount, 0)
+-    discount = base * 0.10
++    discount = base * _param_0
+     discounted = base - discount
+     tax = discounted * 0.08
+     shipping = 5 if discounted < 100 else 0
+     return round(discounted + shipping + tax, 2)
 
-```json
-{
-  "charges.py:__extracted_func_0": "discounted_total_with_shipping"
-}
+
++def checkout_total(amount):
++    return __extracted_func_0(amount, 0.10)
++
++
+ def member_total(amount):
+-    base = max(amount, 0)
+-    discount = base * 0.25
+-    discounted = base - discount
+-    tax = discounted * 0.08
+-    shipping = 5 if discounted < 100 else 0
+-    return round(discounted + shipping + tax, 2)
++    return __extracted_func_0(amount, 0.25)
+
+
+ def wholesale_total(amount):
+-    base = max(amount, 0)
+-    discount = base * 0.40
+-    discounted = base - discount
+-    tax = discounted * 0.08
+-    shipping = 5 if discounted < 100 else 0
+-    return round(discounted + shipping + tax, 2)
++    return __extracted_func_0(amount, 0.40)
+Input files were not changed.
 ```
 
-Always use the key your own inventory reports; numbering can change when the
-input changes. A mapping can also rename parameters. You can write it yourself
-or ask an assistant to propose names; Towel calls no LLM service.
+The shared calculation became `__extracted_func_0`, and the discount, the one
+thing that differed, became its parameter `_param_0`. Each function now passes
+its own rate. The note says the inserted code is not formatted: this project
+does not configure Ruff or Black, so Towel leaves layout alone.
+
+## 3. Write the change to a copy
+
+`towel dry` makes the change. Given a new directory, it writes the refactored
+project there and leaves `demo` as it was. It asks before writing; answer `y`:
 
 ```bash
-towel rename-helpers cleaned --complete-scope --rename-file renames.json --preview
-towel rename-helpers cleaned --complete-scope --rename-file renames.json
+towel dry demo cleaned
+```
+
+```text
+======================================================================
+APPLYING REFACTORINGS (FIXED-POINT ITERATION)
+======================================================================
+
+This will apply refactorings one at a time until no more are found.
+Helpers go before the first definition of their module,
+or inside the class or function the duplicates share.
+Nothing is written until you confirm, once the run knows what it would change.
+
+
+Refactoring directory: cleaned
+Note: no formatter configured, so generated code is inserted unformatted. Configure Ruff or Black in the project to format generated code.
+
+1 refactoring(s) in 1 file(s): charges.py; will write cleaned/.
+Write these changes? [y/N] y
+
+Analysed 2 Python files (4 functions).
+Applied 1 refactoring(s) across 1 file(s).
+
+  charges.py: 1 refactoring(s)
+    - Extract common code from checkout_total and member_total
+
+Wrote call-site before/after to cleaned/.towel-helpers.json (for naming; safe to delete).
+```
+
+The copy's tests pass too:
+
+```bash
 python3 -m unittest discover -s cleaned
 ```
 
-The rename batch aborts completely if a name is unsafe. `--complete-scope`
-declares that this target contains every ordinary consumer, as this example
-does. For a package copied out of a larger project, restore its original import
-context first; see [consumer scope](NAMING.md#definition-selection-and-consumer-scope).
+```text
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
 
-## 4. Review and adopt the result
+OK
+```
+
+## 4. Name the helper
+
+`rename-helpers --list` shows the helpers Towel wrote:
+
+```bash
+towel rename-helpers cleaned --list
+```
+
+```text
+Found 1 extracted helper function(s):
+
+  charges.py:1
+    Function: __extracted_func_0
+      def __extracted_func_0(amount, _param_0):
+          base = max(amount, 0)
+          discount = base * _param_0
+      ...
+```
+
+Save this as `renames.json`, which names the helper and its parameter:
+
+```json
+{
+  "__extracted_func_0": "discounted_total",
+  "__extracted_func_0._param_0": "discount_rate"
+}
+```
+
+Apply it, and run the tests again:
+
+```bash
+towel rename-helpers cleaned --rename-file renames.json
+python3 -m unittest discover -s cleaned
+```
+
+```text
+  __extracted_func_0 -> discounted_total
+  __extracted_func_0._param_0 -> discount_rate
+
+Applied 6 change(s)
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+```
+
+Add `--preview` to see a rename's diff before applying it. Without
+`--rename-file`, `rename-helpers` prints a prompt you can give an AI assistant,
+which answers with a mapping like this one; Towel itself calls no AI service.
+The [naming guide](NAMING.md) has the details.
+
+## 5. Keep the result
+
+Compare the original with the result:
 
 ```bash
 diff -u demo/charges.py cleaned/charges.py
-# After reviewing that one file and its passing tests:
+```
+
+```diff
+--- demo/charges.py	2026-11-17 10:00:00
++++ cleaned/charges.py	2026-11-17 10:02:00
+@@ -1,25 +1,19 @@
+-def checkout_total(amount):
++def discounted_total(amount, discount_rate):
+     base = max(amount, 0)
+-    discount = base * 0.10
++    discount = base * discount_rate
+     discounted = base - discount
+     tax = discounted * 0.08
+     shipping = 5 if discounted < 100 else 0
+     return round(discounted + shipping + tax, 2)
+
+
++def checkout_total(amount):
++    return discounted_total(amount, 0.10)
++
++
+ def member_total(amount):
+-    base = max(amount, 0)
+-    discount = base * 0.25
+-    discounted = base - discount
+-    tax = discounted * 0.08
+-    shipping = 5 if discounted < 100 else 0
+-    return round(discounted + shipping + tax, 2)
++    return discounted_total(amount, 0.25)
+
+
+ def wholesale_total(amount):
+-    base = max(amount, 0)
+-    discount = base * 0.40
+-    discounted = base - discount
+-    tax = discounted * 0.08
+-    shipping = 5 if discounted < 100 else 0
+-    return round(discounted + shipping + tax, 2)
++    return discounted_total(amount, 0.40)
+```
+
+Copy the reviewed file into the project, and check it there:
+
+```bash
 cp cleaned/charges.py demo/charges.py
 python3 -m unittest discover -s demo
 ```
 
-The original project now contains the named, tested refactoring. In a real
-repository, make this change on a branch, inspect every changed file, and use
-its normal test and commit workflow. Copy only the files whose differences you
-have reviewed. `.towel-helpers.json` is optional naming metadata; after naming,
-it is not needed to run the refactored program.
+```text
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
 
-## Use the workflow on your project
+OK
+```
 
-Start at the complete project root, write into a fresh sibling directory, and
-keep the original until the copied project's own checks pass. By default,
-helpers are shared only within one module. `--cross-module` also introduces
-imports to share helpers between modules.
+That is the whole cycle: preview, write, test, name, review, keep.
 
-For bounded experiments, use `--time-limit 60`; expiration exits 124 and
-publishes no result. `--max-refactorings N` intentionally stops after N changes.
-`--max-pairs N` limits candidate pairs, not elapsed time or memory. For unattended
-commands, always pass `--no-interactive`. Errors and progress go to stderr;
-use `--json` for a structured result. See [compatibility](COMPATIBILITY.md).
+## Next
 
-- [Command-line guide](CLI_GUIDE.md) — options, exclusions and recovery
-- [Naming guide](NAMING.md) — rename mappings and project context
-- [Requirements](REQUIREMENTS.md) and [performance](PERFORMANCE.md) — support and resources
-- [Known limitations](KNOWN_LIMITATIONS.md) — what is verified and outside the model
-- [Python API guide](USAGE_GUIDE.md) — library integration
+On a real project you will usually work on a branch and let `dry` change the
+files in place: `towel dry src/ src/`, then `git diff`.
+[Using Towel on a project](USING_TOWEL.md) shows that workflow, and how to
+limit and review a large run. When Towel leaves code alone, the summary says
+why; [Why something was left alone](WHY_LEFT_ALONE.md) explains each reason.
+If a helper's call has a `lambda` in it,
+[Reading Towel's output](GENERATED_CODE.md) explains it.
+
+See also the [command reference](CLI_GUIDE.md) and the
+[Python API guide](USAGE_GUIDE.md).

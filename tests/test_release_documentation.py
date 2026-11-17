@@ -51,6 +51,7 @@ PATHS = (
     "docs/REQUIREMENTS.md",
     "docs/PERFORMANCE.md",
     "docs/KNOWN_LIMITATIONS.md",
+    "docs/design/CORRECTNESS_MODEL.md",
     "docs/maintainers/PRODUCTION_READINESS.md",
     "docs/maintainers/RELEASING.md",
     "pyproject.toml",
@@ -306,7 +307,7 @@ def _check_measurements(documents: Mapping[str, str]) -> None:
             _section(documents[path], heading),
             f"{context['host']} ({context['host_cores']} cores, {context['host_memory_gib']} GiB)",
         )
-    for path in ("docs/KNOWN_LIMITATIONS.md", "docs/maintainers/PRODUCTION_READINESS.md"):
+    for path in ("docs/design/CORRECTNESS_MODEL.md", "docs/maintainers/PRODUCTION_READINESS.md"):
         _contains(
             _section(documents[path], "## Measurement environment"),
             f"{context['host']} with {context['host_cores']} cores and "
@@ -348,7 +349,7 @@ def _check_measurements(documents: Mapping[str, str]) -> None:
     for path in (
         "docs/PERFORMANCE.md",
         "CHANGELOG.md",
-        "docs/KNOWN_LIMITATIONS.md",
+        "docs/design/CORRECTNESS_MODEL.md",
         "docs/maintainers/PRODUCTION_READINESS.md",
     ):
         _contains(documents[path], claim)
@@ -433,7 +434,7 @@ def test_documented_measurements_keep_their_platform_resources_and_conditions(
         ("docs/PERFORMANCE.md", "5,660 s", "560 s", _check_measurements),
         ("docs/PERFORMANCE.md", "128 GiB", "8 GiB", _check_measurements),
         ("docs/REQUIREMENTS.md", "128 GiB", "8 GiB", _check_measurements),
-        ("docs/KNOWN_LIMITATIONS.md", "128 GiB", "8 GiB", _check_measurements),
+        ("docs/design/CORRECTNESS_MODEL.md", "128 GiB", "8 GiB", _check_measurements),
         ("docs/PERFORMANCE.md", "18 cores and 8 GB", "18 cores and 128 GB", _check_measurements),
         (
             "docs/PERFORMANCE.md",

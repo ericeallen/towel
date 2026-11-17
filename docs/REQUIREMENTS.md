@@ -51,7 +51,7 @@ See the [publication record](maintainers/PRODUCTION_READINESS.md#1947-published-
 for the observed peak's limits and the review of corpus outcomes.
 
 The historical memory figures below were measured on an Apple M5 Max
-(18 cores, 128 GiB); [the known limitations](KNOWN_LIMITATIONS.md#measurement-environment) record the rest of the environment. Measured in September 2026: a single analysis process holds the parsed modules and its caches: tens of megabytes for one file, about 250 MB for a 140,000-line project.
+(18 cores, 128 GiB); [the known limitations](design/CORRECTNESS_MODEL.md#measurement-environment) record the rest of the environment. Measured in September 2026: a single analysis process holds the parsed modules and its caches: tens of megabytes for one file, about 250 MB for a 140,000-line project.
 
 Forking multiplies that by the worker count, because each worker starts as a copy-on-write fork whose caches then diverge; a 200,000-line project on an 18-core machine peaked near 7.4 GB across 20 processes.
 

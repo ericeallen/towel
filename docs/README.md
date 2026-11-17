@@ -4,7 +4,7 @@ Towel finds repeated Python code and extracts it into shared helpers. Start
 with the [Quick start](QUICKSTART.md) for a first refactoring; use the guides
 below when you need a particular task or a precise rule.
 
-These pages describe Towel **1.949**.
+These pages describe Towel **2.0**.
 
 ## Start and use Towel
 
@@ -12,7 +12,8 @@ These pages describe Towel **1.949**.
 | --- | --- |
 | Install Towel and review my first extraction | [Quick start](QUICKSTART.md) |
 | Run Towel on a real project and review what it changed | [Using Towel on a project](USING_TOWEL.md) |
-| Understand a helper, a lambda or an argument Towel wrote | [Understanding generated code](GENERATED_CODE.md) |
+| Understand a helper, a lambda or an argument Towel wrote | [Reading Towel's output](GENERATED_CODE.md) |
+| Choose between relaxed mode, the default, and `--strict` | [Relaxed and strict](RELAXED_AND_STRICT.md) |
 | Find out why Towel left some code alone | [Why something was left alone](WHY_LEFT_ALONE.md) |
 | Refactor a project checked by mypy or Pyright | [Type checking and helper annotations](TYPING.md) |
 | Share helpers between modules or resolve an import refusal | [Cross-module guide](CROSS_MODULE.md) |
@@ -30,7 +31,7 @@ These pages describe Towel **1.949**.
 | To call Towel from Python | [Python API guide](USAGE_GUIDE.md) |
 | Supported platforms and resource use | [Requirements and resources](REQUIREMENTS.md) |
 | To estimate how long a run takes | [Performance and timing](PERFORMANCE.md) |
-| Everything Towel verifies, declines or does not model | [Known limitations](KNOWN_LIMITATIONS.md) |
+| What Towel cannot see, and what it leaves alone | [Known limitations](KNOWN_LIMITATIONS.md) |
 | The meaning of a term | [Glossary](GLOSSARY.md) |
 
 ## About Towel

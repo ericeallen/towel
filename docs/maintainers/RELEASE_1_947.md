@@ -91,7 +91,7 @@ findings:
    An ordinary `receiver.__builtins__` store/deletion anywhere in the analyzed
    program makes every module uncertain, irrespective of receiver aliases;
    excluded runnable files still contribute to that check.
-   See the [captured-mapping policy](../GENERATED_CODE.md#arguments-and-evaluation).
+   See the [captured-mapping policy](../design/GENERATED_CODE_RULES.md#arguments-and-evaluation).
    A bounded source-only verdict memo avoids repeated large-module lexical
    scans for warning-free inputs while retaining native warning behavior and
    fresh AST/block proofs. Historical root/hazard observations preserve

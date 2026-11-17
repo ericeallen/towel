@@ -82,7 +82,7 @@ Thunk
 :   A zero-argument lambda, such as `lambda: welcome_email(user)`, passed to a
     helper in place of a value. The helper calls it only where the original code
     evaluated that expression, so it runs as often, and as late, as it did
-    before. [Reading Towel's output](GENERATED_CODE.md#why-some-arguments-are-wrapped-in-lambda)
+    before. [Reading Towel's output](design/GENERATED_CODE_RULES.md#why-some-arguments-are-wrapped-in-lambda)
     shows an example.
 
 `# towel: no-extract`

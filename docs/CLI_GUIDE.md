@@ -46,7 +46,7 @@ Exact constant-occurrence substitution, certified leading-thunk ordering and
 fresh IF-local outputs are part of the normal pipeline; they need no extra
 flags. These capabilities still require the ordinary binding, lifetime,
 parameter-budget and checker proofs. See
-[generated code](GENERATED_CODE.md#arguments-and-evaluation) for their boundaries.
+[generated code](design/GENERATED_CODE_RULES.md#arguments-and-evaluation) for their boundaries.
 
 ## Choose the analysis scope
 
@@ -121,7 +121,7 @@ call chain. Its absolute line position can change. Mark the functions whose
 frames must remain intact, even when reflection happens in a callee. When
 refactoring a directory, use `--exclude filename.py` when that file’s entire
 source must remain unchanged. See the
-[reflection boundary](KNOWN_LIMITATIONS.md#observable-differences-that-remain).
+[reflection boundary](design/CORRECTNESS_MODEL.md#observable-differences-that-remain).
 
 ### Analyze a complete readable project
 
@@ -159,7 +159,7 @@ towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-forma
   certified whole-body ownership transfer additionally requires its complete
   positional signature, including the final holder argument, to fit this limit.
 - Increasing these limits does not require Towel to emit every candidate. Its
-  [output-quality policy](GENERATED_CODE.md#choosing-a-worthwhile-helper)
+  [output-quality policy](design/GENERATED_CODE_RULES.md#choosing-a-worthwhile-helper)
   requires the complete helper and every rendered caller to cost less than the
   estimated repeated work, including for larger bodies and control flow.
 - `--max-pairs` caps the candidate pairs considered in one analysis; groups
@@ -177,11 +177,11 @@ towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-forma
   excluded runnable files still count. Explicit locals, parameters and cells remain eligible under the other guards;
   same-spelled locals do not redirect implicit operations. `__debug__` and blocks
   without captured-mapping dependencies retain their ordinary rules. See the
-  [evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation).
+  [evaluation-scope policy](design/GENERATED_CODE_RULES.md#arguments-and-evaluation).
 
 Formatting follows each modified file's effective configuration when the
 relevant tools are installed, including nested configuration and exclusions.
-The [generated-code guide](GENERATED_CODE.md#comments-and-formatting) explains how comments, directives and import order are preserved.
+The [generated-code guide](design/GENERATED_CODE_RULES.md#comments-and-formatting) explains how comments, directives and import order are preserved.
 The [typing guide](TYPING.md) explains checker selection and typed declines.
 
 Progress is written to stderr so stdout can be redirected. Optional `tqdm`
@@ -197,7 +197,7 @@ rollback. It is not a memory limit or a hard process-kill deadline. See
 The Python API separately offers `promote_equal_hof_literals=True`; the CLI
 does not promote equal higher-order factory literals by default. Repeated class
 lookup suppliers and unread ownership holders are explained in
-[the argument guide](GENERATED_CODE.md#equal-looking-and-unused-arguments).
+[the argument guide](design/GENERATED_CODE_RULES.md#equal-looking-and-unused-arguments).
 
 Run `towel dry --help` for all current options and defaults. Options that
 switch a behavior on or off come in pairs, `--x` and `--no-x`: `--interactive`,

@@ -135,10 +135,48 @@ def _body(source: str, function: str) -> str:
 # -- Finding 1: the quick start ------------------------------------------------
 
 
+QUICK_START_1949 = """\
+def checkout_total(amount):
+    base = max(amount, 0)
+    discount = base * 0.1
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    with_shipping = discounted + shipping
+    total = with_shipping + tax
+    return round(total, 2)
+
+
+def quote_total(amount):
+    base = max(amount, 0)
+    discount = base * 0.1
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    with_shipping = discounted + shipping
+    total = with_shipping + tax
+    return round(total, 2)
+
+
+def invoice_total(amount):
+    base = max(amount, 0)
+    discount = base * 0.1
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    with_shipping = discounted + shipping
+    total = with_shipping + tax
+    return round(total, 2)
+"""
+"""The audit's case: ``charges.py`` of the 1.949 quick start, three identical functions.
+
+The 2.0 quick start uses functions that differ in a rate; tests/test_quickstart_workflow.py
+and tests/test_documentation_examples.py follow it.
+"""
+
+
 def _quick_start() -> str:
-    document = (ROOT / "docs" / "QUICKSTART.md").read_text()
-    blocks: list[str] = re.findall(r"(?ms)^```python\n(.*?)^```", document)
-    return blocks[0]
+    return QUICK_START_1949
 
 
 def test_the_quick_start_redirects_two_callers_to_the_existing_function(tmp_path: Path) -> None:

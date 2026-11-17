@@ -161,7 +161,7 @@ import/class lookups under possible mapping replacement, including wildcard
 exports of `__builtins__` and ordinary `receiver.__builtins__` stores/deletions
 anywhere in the analyzed program. A fresh per-analysis boolean records that
 program-wide hazard, including excluded runnable files and conservative
-unknown-input handling. See the [evaluation-scope policy](../GENERATED_CODE.md#arguments-and-evaluation).
+unknown-input handling. See the [evaluation-scope policy](../design/GENERATED_CODE_RULES.md#arguments-and-evaluation).
 Separately, it memoizes only the source-derived
 builtin-mapping predicate, with one warning-free source/configuration fact per
 weakly held analyzer and an 8 MiB source-storage admission limit. Native warning
