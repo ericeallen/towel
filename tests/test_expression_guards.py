@@ -1118,4 +1118,7 @@ def test_a_comprehensions_variable_is_not_the_local_its_function_binds_later(
     """
     generated, same, declined = outcome(tmp_path, SHADOWED_LATER, strict=strict)
     assert str(RejectReason.INCOMPLETE_LIFETIME_BLOCK1) not in declined, declined
-    assert "__extracted_func_0(" in generated and same
+    # second's whole body is the comprehension, so relaxed mode calls second
+    # (shape's redirect); strict mode redirects only with a complete scope.
+    taken = "__extracted_func_0(" if strict else "found = second(items, low)"
+    assert taken in generated and same, generated

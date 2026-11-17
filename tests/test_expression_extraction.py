@@ -412,8 +412,8 @@ def test_a_differing_constant_becomes_a_parameter(tmp_path: Path, strict: bool) 
     generated, same = refactored(tmp_path, DIFFERING, strict=strict)
     assert same
     assert helper_calls(generated) == [
-        "__extracted_func_0(3, member)",
-        "__extracted_func_0(1, member)",
+        "__extracted_func_0(member, 3)",
+        "__extracted_func_0(member, 1)",
     ]
 
 
@@ -441,9 +441,9 @@ def test_two_modules_share_the_helper_only_across_modules(tmp_path: Path, mode: 
     listing = (tmp_path / "shared" / "pkg" / "listing.py").read_text()
     posting = (tmp_path / "shared" / "pkg" / "posting.py").read_text()
     assert "from pkg.posting import __extracted_func_0" in listing
-    assert "for member in members if __extracted_func_0(member, now)]" in listing
-    assert "def __extracted_func_0(member, now):" in posting
-    assert "    if __extracted_func_0(member, now):\n        return True" in posting
+    assert "for member in members if __extracted_func_0(now, member)]" in listing
+    assert "def __extracted_func_0(now, member):" in posting
+    assert "    if __extracted_func_0(now, member):\n        return True" in posting
 
 
 SHARED_PARENTHESIS_LINE = """
@@ -540,7 +540,13 @@ def test_a_comment_after_the_closing_parenthesis_stays(
         tmp_path, CLOSING_LINE_COMMENT.format(comment=comment), strict=strict
     )
     assert same
-    assert helper_calls(generated) == ["__extracted_func_0(x)", "__extracted_func_0(z)"]
+    if strict:
+        assert helper_calls(generated) == ["__extracted_func_0(x)", "__extracted_func_0(z)"]
+    else:
+        # f2's whole body is the expression, so relaxed mode calls f2 (shape,
+        # "Redirect to an existing function only within a clean consumer scope").
+        assert helper_calls(generated) == []
+        assert "        f2(x)\n" in generated, generated
     assert f")  {comment}\n" in generated, generated
 
 
@@ -692,5 +698,5 @@ def test_a_typed_run_annotates_the_helper_from_its_sites(tmp_path: Path, mode: s
     """
     generated, errors = _typed(tmp_path, "--types", mode)
     assert "inference failed" not in errors
-    assert "def __extracted_func_0(floor: int, member: Member) -> bool:" in generated
+    assert "def __extracted_func_0(member: Member, floor: int) -> bool:" in generated
     assert "Any" not in generated
