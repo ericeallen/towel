@@ -229,3 +229,69 @@ def test_unavailable_git_ignore_rules_warn_and_retain_sources(
     assert ignored_by_git(tmp_path, [path]) == frozenset()
     assert "Cannot read Git ignore rules" in caplog.text
     assert "including files Git may ignore" in caplog.text
+
+
+@pytest.mark.parametrize("excluded", ["bad.py", "fixtures"])
+def test_excluded_invalid_source_is_not_reported_as_unavailable(
+    tmp_path: Path, excluded: str
+) -> None:
+    """Integration 3: excluded syntax errors are intentional omissions, not read failures."""
+    from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
+
+    (tmp_path / "pyproject.toml").write_text("")
+    (tmp_path / "good.py").write_text(LITERAL_DUPLICATES)
+    bad = tmp_path / ("bad.py" if excluded == "bad.py" else "fixtures/bad.py")
+    bad.parent.mkdir(exist_ok=True)
+    bad.write_text("def broken(:\n")
+    result = invoke(
+        [
+            "preview",
+            str(tmp_path),
+            "--no-strict",
+            "--no-types",
+            "--no-format",
+            "--exclude",
+            excluded,
+            "--progress",
+            "none",
+        ]
+    )
+    assert result.status == 0, result
+    assert "Would apply 1 refactoring" in result.stdout
+    assert "Skipping " not in result.stderr
+    assert "could not read or parse" not in result.stdout
+    assert bad.read_text() == "def broken(:\n"
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+def test_explicit_file_target_retains_precedence_over_its_excluded_name(
+    tmp_path: Path, invalid: bool
+) -> None:
+    """Integration 3: exclusion during discovery must not bypass an explicit target's policy."""
+    from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
+
+    target = tmp_path / "target.py"
+    original = "def broken(:\n" if invalid else LITERAL_DUPLICATES
+    target.write_text(original)
+    result = invoke(
+        [
+            "preview",
+            str(target),
+            "--no-strict",
+            "--no-types",
+            "--no-format",
+            "--exclude",
+            target.name,
+            "--progress",
+            "none",
+        ]
+    )
+    assert result.status == 0, result
+    if invalid:
+        assert result.stderr.count("Skipping ") == 1
+        assert str(target) in result.stderr
+        assert "Skipped 1 file it could not read or parse" in result.stdout
+    else:
+        assert "Would apply 1 refactoring" in result.stdout
+        assert "Skipping " not in result.stderr
+    assert target.read_text() == original

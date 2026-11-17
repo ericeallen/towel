@@ -434,7 +434,7 @@ class FixedPointDrivers(Materialization):
         self._refuse_an_unreadable_program(Path(file_path))
         analysis_progress: ProgressMode = progress if wants_bar(progress) else "none"
         reporter = _ApplyProgress.detail_only(progress)
-        if skip_nonprogram_file(Path(file_path)):
+        if skip_nonprogram_file(Path(file_path), explicit=True):
             policy = current_source_policy()
             if policy is not None:
                 self._run_census = AnalysisCensus(

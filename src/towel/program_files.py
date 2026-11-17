@@ -111,12 +111,16 @@ def _dangling_link(path: Path) -> bool:
         return False
 
 
-def skip_nonprogram_file(path: Path) -> bool:
+def skip_nonprogram_file(path: Path, *, explicit: bool = False) -> bool:
     """Relaxed runs take unreadable/unparsable source to be no part of the program."""
     policy = current_source_policy()
     if path.name.startswith(".#") or _dangling_link(path):
         return True
     if policy is None or policy.strict:
+        return False
+    if not explicit and policy.excluded_names.intersection(path.parts):
+        # Excluded inputs are left out intentionally. An explicit file target
+        # takes precedence over its filename appearing in --exclude.
         return False
     failure = parse_failure(path, include_decoding_errors=True)
     if failure is None:
@@ -246,7 +250,11 @@ def _unparsed_below(
             candidates[path] = None
     own = [target] if target.is_file() else python_sources(target, excluded=excluded_names)
     candidates.update(dict.fromkeys(own))
-    found = (parse_failure(path) for path in sorted(candidates) if not skip_nonprogram_file(path))
+    found = (
+        parse_failure(path)
+        for path in sorted(candidates)
+        if not skip_nonprogram_file(path, explicit=path == target)
+    )
     return tuple(failure for failure in found if failure is not None)
 
 
