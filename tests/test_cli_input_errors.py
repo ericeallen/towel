@@ -83,7 +83,15 @@ def test_relaxed_single_file_warns_once_and_preserves_invalid_bytes(
     source = tmp_path / "bad.py"
     source.write_bytes(original)
     destination = tmp_path / "out.py"
-    arguments = [command, str(source), "--no-types", "--no-format", "--progress", "none"]
+    arguments = [
+        command,
+        str(source),
+        "--no-strict",
+        "--no-types",
+        "--no-format",
+        "--progress",
+        "none",
+    ]
     if command == "dry":
         arguments.extend([str(destination), "--no-interactive"])
     result = invoke(arguments)
