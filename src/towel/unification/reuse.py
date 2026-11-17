@@ -576,6 +576,10 @@ class ExistingFunctionReuse(EngineState):
         function ends by returning exactly those names, in any order; the
         other sites then unpack the function's result in its order.
         """
+        # Expression sites retain a fresh helper. Reusing a whole ``return E``
+        # function is outside the statement redirect's proof of scope and timing.
+        if any(replacement.expression is not None for replacement in proposal.replacements):
+            return None
         # An unavailable input may rebind the target unseen. Inputs left out on
         # purpose are read by the rebinding scan, as consumers.
         unavailable = any(not item.omitted_on_purpose for item in self._census.skipped)
