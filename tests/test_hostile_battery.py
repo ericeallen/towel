@@ -553,6 +553,11 @@ TRANSFORMED = (
 # explicitly; no known defect or lifetime assertion becomes a skip.
 UNCERTIFIED_OWNERSHIP_REFUSALS = frozenset(
     {
+        "h39_augassign_after_block",
+        "h51_semicolons",
+        "h52_del_after_block",
+        "h53_nested_func_reads_retvar",
+        "r79_list_display_in_loop",
         "h01_side_effect_order",
         "h03_loop_reeval",
         "h10_short_circuit",
@@ -696,7 +701,9 @@ if lifetime_refusal_profile():
     REFLECTION_OWNERSHIP_REFUSALS |= dict.fromkeys(
         UNCERTIFIED_REFLECTION_REFUSALS, "lifetime_order_uncertified"
     )
-    TRANSFORMED -= UNCERTIFIED_OWNERSHIP_REFUSALS
+    # The callback extraction shares id3/id4 while keeping del t in the helper;
+    # id1/id2 still need the uncertified lifetime proof, checked below.
+    TRANSFORMED -= UNCERTIFIED_OWNERSHIP_REFUSALS - {"r131_weakref_and_id_identity"}
 
 KNOWN_DEFECTS: Dict[str, str] = {}
 """Fixtures whose defect is reported and not yet fixed, each with its reason from
