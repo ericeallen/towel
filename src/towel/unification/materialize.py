@@ -344,7 +344,18 @@ class Materialization(
                 )
             if _runtime_star_imports(tree):
                 raise RefactoringError("A star import can overwrite an early shared helper")
-        if proposal.reused_function is not None:
+        if proposal.reused_function is not None and (
+            _shared_module_helper(proposal)
+            or not (
+                is_generated_helper_name(proposal.reused_function.name)
+                and self._helper_introduced_during_run(
+                    proposal.reused_function.name, proposal.reused_function.file_path
+                )
+            )
+        ):
+            # Same-file reuse of a helper created earlier in this run retains
+            # its checked placement. User definitions and cross-module calls
+            # need the stronger proof of availability during import.
             self._require_early_reused_helper(proposal)
         if proposal.helper_type_declarations and (
             proposal.reused_function is not None or proposal.insert_into_function is not None

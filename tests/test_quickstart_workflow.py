@@ -17,6 +17,7 @@ import sys
 
 from tests.test_helpers import lifetime_order_certified
 from tests.test_cli_integration import invoke
+from towel import cli
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -62,32 +63,41 @@ def test_quickstart_extracts_names_tests_and_adopts_one_reviewed_file(tmp_path: 
         assert (project / "charges.py").read_text() == source
         _check_project(output)
         return
-    assert generated != source and "__extracted_func_0" in generated
+    assert generated != source
     assert (project / "charges.py").read_text() == source
 
     inventory = invoke(["rename-helpers", str(output), "--list", "--json"])
     assert inventory.status == 0, inventory.stderr
-    mapping = _blocks("json")[0]
-    requested = json.loads(mapping)
     listed = json.loads(inventory.stdout)
-    assert set(requested) <= {helper["rename_key"] for helper in listed["helpers"]}
-    renames = tmp_path / "renames.json"
-    renames.write_text(mapping)
-    command = [
-        "rename-helpers",
-        str(output),
-        "--complete-scope",
-        "--rename-file",
-        str(renames),
-    ]
-    planned = invoke([*command, "--preview"])
-    assert planned.status == 0, planned.stderr
-    assert (output / "charges.py").read_text() == generated
-    renamed = invoke(command)
-    assert renamed.status == 0, renamed.stderr
-    adopted = (output / "charges.py").read_text()
-    assert "discounted_total_with_shipping" in adopted
-    assert "__extracted_func_0" not in adopted
+    if not cli.DEFAULT_STRICT:
+        # The approved redirect keeps the user's implementation and its name;
+        # there is no generated helper for the tutorial's mapping to rename.
+        assert generated.count("return checkout_total(amount)") == 2
+        assert "__extracted_func_" not in generated
+        assert listed["helpers"] == []
+        adopted = generated
+    else:
+        assert "__extracted_func_0" in generated
+        mapping = _blocks("json")[0]
+        requested = json.loads(mapping)
+        assert set(requested) <= {helper["rename_key"] for helper in listed["helpers"]}
+        renames = tmp_path / "renames.json"
+        renames.write_text(mapping)
+        command = [
+            "rename-helpers",
+            str(output),
+            "--complete-scope",
+            "--rename-file",
+            str(renames),
+        ]
+        planned = invoke([*command, "--preview"])
+        assert planned.status == 0, planned.stderr
+        assert (output / "charges.py").read_text() == generated
+        renamed = invoke(command)
+        assert renamed.status == 0, renamed.stderr
+        adopted = (output / "charges.py").read_text()
+        assert "discounted_total_with_shipping" in adopted
+        assert "__extracted_func_0" not in adopted
     _check_project(output)
     assert (project / "charges.py").read_text() == source
 
