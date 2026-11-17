@@ -10,28 +10,32 @@ Combines multiple challenging patterns to really stress test the unifier:
 """
 
 
-def __extracted_func_5(e, errors, fallback, i, logger, results):
+def __extracted_func_6(e, errors, fallback, i, logger, results):
     logger.error(f'Unexpected error at index {i}: {e}')
     errors['other'].append((i, str(e)))
     results.append(fallback.get_generic_default())
 
 
-def __extracted_func_4(e, errors, fallback, i, logger, results):
+def __extracted_func_5(e, errors, fallback, i, logger, results):
     logger.error(f'RuntimeError at index {i}: {e}')
     errors['runtime'].append((i, str(e)))
     results.append(fallback.get_runtime_default())
 
 
-def __extracted_func_3(e, errors, fallback, i, logger, results):
+def __extracted_func_4(e, errors, fallback, i, logger, results):
     logger.error(f'TypeError at index {i}: {e}')
     errors['type'].append((i, str(e)))
     results.append(fallback.get_type_default())
 
 
-def __extracted_func_2(e, errors, fallback, i, logger, results):
+def __extracted_func_3(e, errors, fallback, i, logger, results):
     logger.error(f'ValueError at index {i}: {e}')
     errors['value'].append((i, str(e)))
     results.append(fallback.get_value_default())
+
+
+def __extracted_func_2(list_comp, mappers):
+    return [[mappers['inner'](y) for y in row if y is not None] for row in [list_comp[i:i + 5] for i in range(0, len(list_comp), 5)] if len(row) > 0]
 
 
 def __extracted_func_1(handlers, transformed):
@@ -158,11 +162,7 @@ def mixed_comprehensions_v1(data, filters, mappers):
     set_comp = {v for v in dict_comp.values() if v < 1000}
 
     # Nested comprehension
-    nested = [
-        [mappers["inner"](y) for y in row if y is not None]
-        for row in [list_comp[i : i + 5] for i in range(0, len(list_comp), 5)]
-        if len(row) > 0
-    ]
+    nested = __extracted_func_2(list_comp, mappers)
 
     return {"list": list_comp, "dict": dict_comp, "set": set_comp, "nested": nested}
 
@@ -175,11 +175,7 @@ def mixed_comprehensions_v2(data, filters, mappers):
     set_comp = {v for v in dict_comp.values() if v < 1000}
 
     # Nested comprehension
-    nested = [
-        [mappers["inner"](y) for y in row if y is not None]
-        for row in [list_comp[i : i + 5] for i in range(0, len(list_comp), 5)]
-        if len(row) > 0
-    ]
+    nested = __extracted_func_2(list_comp, mappers)
 
     return {"list": list_comp, "dict": dict_comp, "set": set_comp, "nested": nested}
 
@@ -200,16 +196,16 @@ def exception_heavy_processing_a(items, processor, logger, fallback):
             results.append(normalized)
 
         except ValueError as e:
-            __extracted_func_2(e, errors, fallback, i, logger, results)
-
-        except TypeError as e:
             __extracted_func_3(e, errors, fallback, i, logger, results)
 
-        except RuntimeError as e:
+        except TypeError as e:
             __extracted_func_4(e, errors, fallback, i, logger, results)
 
-        except Exception as e:
+        except RuntimeError as e:
             __extracted_func_5(e, errors, fallback, i, logger, results)
+
+        except Exception as e:
+            __extracted_func_6(e, errors, fallback, i, logger, results)
 
     return {"results": results, "errors": errors}
 
@@ -230,16 +226,16 @@ def exception_heavy_processing_b(items, processor, logger, fallback):
             results.append(normalized)
 
         except ValueError as e:
-            __extracted_func_2(e, errors, fallback, i, logger, results)
-
-        except TypeError as e:
             __extracted_func_3(e, errors, fallback, i, logger, results)
 
-        except RuntimeError as e:
+        except TypeError as e:
             __extracted_func_4(e, errors, fallback, i, logger, results)
 
-        except Exception as e:
+        except RuntimeError as e:
             __extracted_func_5(e, errors, fallback, i, logger, results)
+
+        except Exception as e:
+            __extracted_func_6(e, errors, fallback, i, logger, results)
 
     return {"results": results, "errors": errors}
 
