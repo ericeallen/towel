@@ -1,0 +1,29 @@
+import os
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.abspath(sys.argv[1]))
+
+import loaders
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.chdir(tmp)
+    with open("users.csv", "w", encoding="utf-8") as fh:
+        fh.write("# name,email\nAda, ADA@example.com\n\nBob,bob-at-example\nCy,cy@example.com,extra\nDee,dee@example.com\n")
+    with open("products.csv", "w", encoding="utf-8") as fh:
+        fh.write("ab-1, 9.50\nzz-9, free\n# comment\nq-2,3\n")
+    with open("broken.csv", "w", encoding="utf-8") as fh:
+        fh.write("only-one-field\n")
+    print(loaders.load_users("users.csv"))
+    print(loaders.load_products("products.csv"))
+    for func in (loaders.load_users, loaders.load_products):
+        try:
+            func("broken.csv")
+        except SystemExit as exc:
+            print(func.__name__, "SystemExit", exc)
+        try:
+            func("missing.csv")
+        except FileNotFoundError as exc:
+            print(func.__name__, "FileNotFoundError", exc.filename)
+    os.chdir("/")
+print("ok")

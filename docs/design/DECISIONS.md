@@ -19,7 +19,7 @@ are finalized, by [Relaxed mode is the default; strict mode keeps exact lifetime
 
 **Contents by topic — selected entries**
 
-- [Relaxed and strict modes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes)
+- [Relaxed and strict modes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes) · [Arguments by value](#2026-11-14-relaxed-mode-passes-arguments-by-value)
 - [Preservation contract](#2026-09-22-what-towel-preserves) · [Binding identity](#2026-09-23-a-name-is-its-binding-not-its-spelling)
 - [Same-class helpers](#2026-09-22-a-method-helper-lives-in-the-class-that-holds-both-duplicates) · [Class design](#2026-09-22-towel-does-not-change-externally-visible-class-design)
 - [Import names](#2026-09-22-import-names-come-from-the-program) · [Cross-module opt-in](#2026-09-23-cross-module-extraction-is-opt-in) · [Import refusals](#2026-09-24-an-import-problem-refuses-only-when-it-leaves-a-name-in-doubt)
@@ -1528,6 +1528,11 @@ Typed thunks preserve their callable result types: for example,
 `Callable[[], Callable[..., int]]` for `lambda: len`. These changes preserve
 ordinary binding behavior without restoring reflection scans.
 
+*Superseded in the default mode, for module-level functions, classes and
+imports, by [Relaxed mode passes arguments by value](#2026-11-14-relaxed-mode-passes-arguments-by-value)
+(2026-11-14). In force as written under `--strict`, and for builtins in both
+modes.*
+
 *Status: implemented with focused rebinding and real-mypy regressions;
 final release validation remains separately required.*
 
@@ -1997,6 +2002,17 @@ here.
    earlier order, and one predicate in `unification/argument_ownership.py`
    answers whether the running interpreter's release order is certified.
    Relaxed mode promises no release order and is the same on every version.
+2. **Plain values.** Reading an attribute, subscripting, comparing and
+   arithmetic on the program's objects have no side effects. They can still
+   fail, and where one fails is preserved.
+3. **Stable module names.** A function, class or module bound at module
+   level is not rebound while a helper runs.
+
+The second and third assumptions came with the owner's rule for arguments,
+given with the first: "relaxed mode should avoid eta expansion of arguments
+except in cases where it is clearly necessary (if there even are such
+cases)." What follows from them is in
+[Relaxed mode passes arguments by value](#2026-11-14-relaxed-mode-passes-arguments-by-value).
 
 2. **Closed lambda metadata.** From 2.0 a lambda whose body reads only its own
    bindings may escape an extracted block when its parameter names are kept.
@@ -2120,3 +2136,146 @@ that shipped with 1.949, which run it unchanged; relaxed mode by its own
 tests, the audit's scenario cases and a relaxed pass over the hostile
 batteries, whose only differences are twelve fixtures that record when a
 `__del__` runs.*
+
+## 2026-11-14: Relaxed mode passes arguments by value
+
+Where two blocks differ in an expression, the helper takes a parameter and
+each call passes its own expression. Through 1.949 the expression was passed
+as itself only if it was a constant, a name the call site was sure to
+resolve, a tuple of those, or a sign on a constant. Anything else was wrapped
+in a zero-argument `lambda:` at every site, and the helper called it where the
+block had evaluated the expression. The audit's reviewers would not merge the
+results: `lambda: parse_user`, `lambda: IsStr`, `lambda: "Point"`,
+`lambda: 'pybabel init …' + lang`. The owner decided: "relaxed mode should
+avoid eta expansion of arguments except in cases where it is clearly necessary
+(if there even are such cases)."
+
+Such cases exist. A thunk is the only way to keep a call inside a loop running
+once per iteration, to keep `box.width` under `if box:` from being read when
+`box` is `None`, and to read `account.balance` after `account.settle()`, not
+before. The rule below passes everything else by value. It rests on the second
+and third assumptions of
+[Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes),
+and strict mode withdraws both.
+
+**Passed by value, in relaxed mode.** A differing expression is passed as
+itself when one of these holds for it at every call site.
+
+1. *It gives the same value wherever it is evaluated, and cannot fail.* A
+   constant; a name the call site is sure to resolve; a module-level function,
+   class or imported module (the third assumption); a tuple of those. A
+   module-level name qualifies when the module's own code agrees with the
+   assumption: every statement binding it is a `def`, a `class` or an import,
+   one of them stands at the top level outside any branch or `try`, nothing
+   deletes it, and no function declares it `global`. Module data (`LIMIT = 3`,
+   or `json = None` in an `except ImportError`) does not qualify. A name
+   defined below the function that reads it qualifies only if nothing stands
+   between them that can run the function before the name exists: no call,
+   and no definition whose decorators, defaults or annotations call
+   something, and no class with decorators, keywords, a base that may define
+   `__init_subclass__`, or an attribute whose value may define
+   `__set_name__`. An import counts as code that runs: through a circular
+   import, the imported module may call the function before the name exists.
+   What stands between them includes the rest of every statement that
+   encloses the function: the statements after it in its class body, `if`
+   branch or `case`, the creation of each enclosing class, and the
+   decorators of the function and of each definition around it. Inside a
+   loop, `try` or `with` only names bound above the enclosing top-level
+   statement qualify.
+2. *The helper evaluates it exactly once on every path, and nothing it does
+   before could change its value or fail.* Passing by value moves the
+   expression to the call, ahead of every step the helper takes before it,
+   so each of those steps must neither run code nor fail: binding a name,
+   reading one that is sure to be bound (a parameter, a name the prefix has
+   bound, or a module function, class, import or builtin every site
+   resolves), building a display of such values, and an `if` whose tests
+   are `is` or `is not` comparisons of such values and which only assigns
+   names. The expression may itself call something, read attributes and
+   subscripts, and fail; it is then evaluated at the call exactly where the
+   block would have evaluated it first, and two such expressions keep the
+   block's order. It must read only names its call site is sure to resolve,
+   and none that the prefix rebinds. Anything that can fail ends the
+   prefix, whatever the second assumption says: a plain value has no side
+   effects, but it can raise, and the exception a program raises, and when,
+   must not change. So an attribute read, a subscript, an operator, a
+   comparison, formatting a value (an f-string field runs `__format__`, and
+   through it `__str__` or `__repr__`), hashing a key that is not a constant
+   (`__hash__`), and iterating (`__iter__`) all end it. So does entering a
+   `try`: raised at the call, what the expression raises (a property raising
+   `OSError`) would escape a handler that caught it in the block. And so does
+   the lookup of the method a call is an argument of: in
+   `db.paginate(current_user.following_posts(), …)` the lookup of
+   `db.paginate` comes first and may fail, so the inner call keeps its
+   lambda.
+3. *It is a list or dict display of constants and the helper evaluates it at
+   most once per call.* `[0.0, 0.0]` makes a new object each time it runs, and
+   so does a call. This rests on the first assumption, and strict mode keeps
+   the lambda: what the block adds to the list (`consume([0])` appending an
+   object with a finalizer) would otherwise live until the helper returns.
+
+A concatenation such as `'pybabel init -l ' + lang` meets the same test as
+any other expression and has no rule of its own: it can fail (`TypeError`
+when `lang` is `None`), so it keeps its lambda where the block evaluates it
+after a call, under `and`, `or` or a condition, or in a loop. The audit's
+microblog example is such a case: the block runs the extract command and
+may raise before it builds the string.
+
+**A lambda is kept** where none of those holds, which is where it is
+necessary: the expression contains a call, `await` or `yield` that would
+otherwise run before something the block does first, more than once, or on a
+path that skipped it; or it can fail (an attribute read, a subscript, a
+division) and would be evaluated on a path that skipped it, a different number
+of times, or outside a handler that could catch the failure; or what the block
+does before reading it could change its value.
+
+A parameter has one kind for all its sites. If one site needs a lambda, the
+others pass lambdas too, and `lambda: "Point"` remains possible beside a site
+that needs `lambda: shape.kind`.
+
+**A differing callee** is an argument like any other. `parse_user` against
+`parse_product` passes the function (`helper(parse_user, path)`);
+`client.get_profile(…)` against `client.get_preferences(…)` passes the bound
+method where rule 2 allows it and `lambda: client.get_profile` otherwise, which
+the helper calls as `__param_0()(user_id)`. Relaxed mode never generates
+`lambda *args, **kwargs: f(*args, **kwargs)` and never declines a pair as
+`forwarded_callee`; strict mode does both as before.
+
+**A function of names the block binds**, in both modes. Where the differing
+expression reads a variable that exists only inside the block (a loop
+variable, a local the block assigns, a comprehension's target), no argument
+evaluated at the call can stand for it. Through 1.949 such blocks were declined
+as `unification_failed`. The parameter is now a function of those names:
+`item.weight_kg` against `item.volume_l` in a loop passes
+`lambda item: item.weight_kg`, and the helper calls `__param_0(item)` where the
+block read the attribute; an argument-less method call is taken whole
+(`lambda value: value.strip()`). The function is called where the expression
+was evaluated and as often, so this is not a matter of the mode; it rests on
+the instantiation check like every other parameter. It is declined when the
+function could not take every block-bound name the expression reads, and
+when the expression does not read those names first and on every path:
+`value if flag else 0` reads `value` only when `flag` is true, and a function
+called as `__param_0(value)` would read it, unbound, when `flag` is false.
+
+**What relaxed mode gives up here, exactly.**
+
+- *A module function replaced while a helper runs.* If the block calls
+  something that rebinds `plain` in its own module (through `sys.modules`,
+  `setattr`, or a patch applied from another module) and then calls `plain`,
+  the original calls the replacement and the helper calls the function it was
+  passed. `tests/test_by_value_arguments.py` pins this by its counterexample.
+
+A program that depends on any of these needs `--strict`.
+
+**What this supersedes in the default mode**, and leaves in force under
+`--strict`:
+["Cross-module callables retain caller-side lookups"](#2026-10-02-cross-module-callables-retain-caller-side-lookups)
+(2026-10-02) for functions, classes and imports (builtins are not affected);
+["Retained proposals need source and lifetime proofs"](#2026-10-08-retained-proposals-need-source-and-lifetime-proofs)
+(2026-10-08), where it lets only a leading thunk be evaluated at the call; and
+the `forwarded_callee` decline of [the dethunking proposal](proposals/dethunking.md),
+item 2.
+
+*Status: implemented for 2.0, with `tests/test_by_value_arguments.py`: the
+audit's cases 06, 07, 21, 24 and 42, the shapes it quoted from microblog,
+csvkit and dirty-equals, and hostile programs run before and after in both
+modes.*

@@ -1202,6 +1202,349 @@ def available_argument_names(
 _AVAILABLE_BUILTINS = frozenset(PYTHON_BUILTINS & vars(builtins).keys())
 
 
+def stable_module_names(module: ast.Module) -> FrozenSet[str]:
+    """The module's functions, classes and imported names that relaxed mode takes as fixed.
+
+    Relaxed mode assumes that a function, class or module bound at module
+    level is not rebound while a helper runs (docs/DECISIONS.md, "Relaxed
+    mode passes arguments by value"). A name qualifies when the module's own
+    code agrees with that: every statement of the module's scope that binds
+    it is a ``def``, a ``class`` or an import, at least one of them stands at
+    the top level outside any branch, loop or ``try``, nothing deletes it,
+    and no function declares it ``global``. A name that is also assigned,
+    such as ``json = None`` in an ``except ImportError``, is module data and
+    keeps strict mode's treatment.
+    """
+    return frozenset(_stable_bindings(module))
+
+
+def _stable_bindings(module: ast.Module) -> Mapping[str, int]:
+    """Each stable module name with the index of the top-level statement that first binds it."""
+    bindings: Mapping[str, int] = memoized_per_node(
+        _STABLE_MODULE_NAMES, module, _stable_bindings_of
+    )
+    return bindings
+
+
+_STABLE_MODULE_NAMES: "WeakKeyDictionary[ast.AST, Mapping[str, int]]" = WeakKeyDictionary()
+
+
+def _stable_bindings_of(node: ast.AST) -> Mapping[str, int]:
+    module = cast(ast.Module, node)
+
+    def defined(statement: ast.AST) -> List[str]:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return [statement.name]
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            return import_binding_names(statement)
+        return []
+
+    certain: Dict[str, int] = {}
+    for index, statement in enumerate(module.body):
+        for name in defined(statement):
+            certain.setdefault(name, index)
+    other: Set[str] = set()
+    for item in walk_own_scope(module):
+        if isinstance(item, ast.Name) and not isinstance(item.ctx, ast.Load):
+            other.add(item.id)
+        elif isinstance(item, ast.ExceptHandler) and item.name:
+            other.add(item.name)
+        elif isinstance(item, (ast.MatchAs, ast.MatchStar)) and item.name:
+            other.add(item.name)
+        elif isinstance(item, ast.MatchMapping) and item.rest:
+            other.add(item.rest)
+        elif isinstance(item, (ast.Global, ast.Nonlocal)):
+            other.update(item.names)
+    # A function at any depth that declares the name ``global`` may rebind it.
+    for item in ast.walk(module):
+        if isinstance(item, ast.Global):
+            other.update(item.names)
+    return {name: index for name, index in certain.items() if name not in other}
+
+
+def _runs_nothing(statement: ast.stmt, quiet_bases: AbstractSet[str]) -> bool:
+    """Whether executing a top-level ``statement`` cannot run a function of this module.
+
+    A ``def`` runs nothing of its own, but its decorators, defaults and
+    annotations are evaluated and applied as it is executed: it qualifies
+    without decorators and with defaults and annotations that run nothing
+    (``_expression_runs_nothing``). A ``class`` runs its body, and creating
+    it runs its bases' ``__init_subclass__`` and its attributes'
+    ``__set_name__``: it qualifies without decorators or keywords, with
+    bases among ``quiet_bases`` (``_quiet_bases``), and with a body of such definitions and of assignments of
+    values built from constants. An assignment to names, an expression and
+    ``pass`` qualify when their expressions run nothing. An import does not:
+    the imported module may import this one while it is still being
+    executed and call its functions (a circular import).
+    """
+    if isinstance(statement, ast.Pass):
+        return True
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        arguments = statement.args
+        evaluated = [
+            *arguments.defaults,
+            *(default for default in arguments.kw_defaults if default is not None),
+            *(
+                argument.annotation
+                for argument in (
+                    *arguments.posonlyargs,
+                    *arguments.args,
+                    *arguments.kwonlyargs,
+                    *(a for a in (arguments.vararg, arguments.kwarg) if a is not None),
+                )
+                if argument.annotation is not None
+            ),
+            *([statement.returns] if statement.returns is not None else []),
+        ]
+        return not statement.decorator_list and all(map(_expression_runs_nothing, evaluated))
+    if isinstance(statement, ast.ClassDef):
+        return (
+            not statement.decorator_list
+            and not statement.keywords
+            and all(
+                isinstance(base, ast.Name) and base.id in quiet_bases for base in statement.bases
+            )
+            and all(_class_statement_runs_nothing(inner, quiet_bases) for inner in statement.body)
+        )
+    if isinstance(statement, ast.Assign):
+        return all(isinstance(target, ast.Name) for target in statement.targets) and (
+            _expression_runs_nothing(statement.value)
+        )
+    if isinstance(statement, ast.AnnAssign):
+        return (
+            isinstance(statement.target, ast.Name)
+            and _expression_runs_nothing(statement.annotation)
+            and (statement.value is None or _expression_runs_nothing(statement.value))
+        )
+    if isinstance(statement, ast.Expr):
+        return _expression_runs_nothing(statement.value)
+    return False
+
+
+def _class_statement_runs_nothing(statement: ast.stmt, quiet_bases: AbstractSet[str]) -> bool:
+    """``_runs_nothing`` for a class body, whose assigned values may define ``__set_name__``."""
+    if isinstance(statement, (ast.Assign, ast.AnnAssign)) and statement.value is not None:
+        if any(isinstance(node, (ast.Name, ast.Attribute)) for node in ast.walk(statement.value)):
+            return False
+    if isinstance(statement, ast.Expr) and not isinstance(statement.value, ast.Constant):
+        return False
+    return _runs_nothing(statement, quiet_bases)
+
+
+def _expression_runs_nothing(expression: ast.expr) -> bool:
+    """Whether evaluating ``expression`` can run no code but what relaxed mode takes as plain.
+
+    Reading names, attributes and subscripts, operators, comparisons and
+    displays of constants' keys (the second assumption). Not a call, an
+    ``await`` or ``yield``, iterating (``*x``, a comprehension), formatting
+    (``__format__``) or hashing a key that is not a constant (``__hash__``).
+    A lambda's body is made, not run; its defaults are evaluated.
+    """
+    pending: List[ast.AST] = [expression]
+    while pending:
+        node = pending.pop()
+        if isinstance(
+            node,
+            (
+                ast.Call,
+                ast.Await,
+                ast.Yield,
+                ast.YieldFrom,
+                ast.Starred,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+                ast.FormattedValue,
+            ),
+        ):
+            return False
+        if isinstance(node, ast.Dict) and not all(
+            isinstance(key, ast.Constant) for key in node.keys
+        ):
+            return False
+        if isinstance(node, ast.Set) and not all(
+            isinstance(element, ast.Constant) for element in node.elts
+        ):
+            return False
+        if isinstance(node, ast.Lambda):
+            pending.extend(node.args.defaults)
+            pending.extend(default for default in node.args.kw_defaults if default is not None)
+            continue
+        pending.extend(ast.iter_child_nodes(node))
+    return True
+
+
+def _quiet_bases(module: ast.Module) -> FrozenSet[str]:
+    """The classes a class of ``module`` may derive from without running code as it is made.
+
+    Builtin classes no code of the module rebinds, and the module's own
+    stable classes made without decorators or keywords, from such bases,
+    that never mention ``__init_subclass__``.
+    """
+    rebound = {
+        node.id
+        for node in ast.walk(module)
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load)
+    }
+    for node in ast.walk(module):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            rebound.add(node.name)
+        elif isinstance(node, ast.alias):
+            rebound.add(node.asname or node.name.split(".")[0])
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            rebound.update(node.names)
+    if "*" in rebound:
+        return frozenset()
+    quiet = {
+        name
+        for name, value in vars(builtins).items()
+        if isinstance(value, type) and name not in rebound
+    }
+    stable = _stable_bindings(module)
+    for statement in module.body:
+        if (
+            isinstance(statement, ast.ClassDef)
+            and statement.name in stable
+            and not statement.decorator_list
+            and not statement.keywords
+            and all(isinstance(base, ast.Name) and base.id in quiet for base in statement.bases)
+            and not any(
+                (isinstance(node, ast.Name) and node.id == "__init_subclass__")
+                or (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "__init_subclass__"
+                )
+                for node in ast.walk(statement)
+            )
+        ):
+            quiet.add(statement.name)
+    return frozenset(quiet)
+
+
+def _stable_names_bound_for(module: ast.Module, function: FunctionNode) -> FrozenSet[str]:
+    """The stable module names bound whenever ``function`` can run.
+
+    Those bound above the top-level statement that holds it, and, when
+    nothing can run ``function`` before that statement completes
+    (``_runs_only_after_its_statement``), those bound below it with nothing
+    between but statements that run nothing (``_runs_nothing``). ``f()`` at
+    the top level followed by ``def helper`` leaves ``helper`` unbound during
+    that call, and a read of it on a path the call does not take must stay
+    where it is.
+    """
+    known = _STABLE_BOUND_FOR.get(function)
+    if known is None:
+        parents = _module_parents(module)
+        quiet_bases = _quiet_bases(module)
+        statement = _top_level_statement(parents, function)
+        index = next(i for i, item in enumerate(module.body) if item is statement)
+        limit = index
+        if _runs_only_after_its_statement(function, parents, quiet_bases):
+            limit = next(
+                (
+                    later
+                    for later in range(index + 1, len(module.body))
+                    if not _runs_nothing(module.body[later], quiet_bases)
+                ),
+                len(module.body),
+            )
+        known = frozenset(
+            name for name, bound_at in _stable_bindings(module).items() if bound_at < limit
+        )
+        _STABLE_BOUND_FOR[function] = known
+    return known
+
+
+_STABLE_BOUND_FOR: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+
+
+def _runs_only_after_its_statement(
+    function: FunctionNode, parents: Mapping[ast.AST, ast.AST], quiet_bases: AbstractSet[str]
+) -> bool:
+    """Whether no code can call ``function`` before its top-level statement has completed.
+
+    Walks outward from ``function``. Each definition on the way may have no
+    decorators: they run once it exists and may call it. The rest of each
+    enclosing block must run nothing: the statements after it in a class
+    body, an ``if`` branch or a ``case``. A class on the way must also be
+    made quietly (``_runs_nothing``, its own body aside), since its
+    decorators, its metaclass, its bases' ``__init_subclass__`` and its
+    attributes' ``__set_name__`` run once its body has. The rest of an
+    enclosing function's body runs only when that function is called,
+    which the walk covers by continuing from it. A loop, ``try`` or
+    ``with`` around the definition runs code after it (another iteration,
+    a handler, ``finally``, ``__exit__``), so the walk gives up there.
+    """
+    child: ast.AST = function
+    while True:
+        if (
+            isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and child.decorator_list
+        ):
+            return False
+        parent = parents.get(child)
+        if parent is None or isinstance(parent, ast.Module):
+            return True
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            child = parent
+            continue
+        if isinstance(parent, ast.ClassDef):
+            if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                return False
+            if not (
+                not parent.keywords
+                and all(
+                    isinstance(base, ast.Name) and base.id in quiet_bases for base in parent.bases
+                )
+                and all(
+                    _class_statement_runs_nothing(statement, quiet_bases)
+                    for statement in parent.body
+                    if statement is not child
+                )
+            ):
+                return False
+            child = parent
+            continue
+        if isinstance(parent, (ast.If, ast.match_case)):
+            block = next(
+                body
+                for body in (
+                    (parent.body, parent.orelse) if isinstance(parent, ast.If) else (parent.body,)
+                )
+                if any(statement is child for statement in body)
+            )
+            position = next(i for i, statement in enumerate(block) if statement is child)
+            if not all(_runs_nothing(later, quiet_bases) for later in block[position + 1 :]):
+                return False
+            child = parents[parent] if isinstance(parent, ast.match_case) else parent
+            continue
+        return False
+
+
+def call_site_names(
+    function: FunctionNode,
+    block: Sequence[ast.stmt],
+    analyzer: "ScopeAnalyzer",
+    *,
+    stable_modules: bool,
+) -> FrozenSet[str]:
+    """The names an argument written where ``block`` stands may read by value.
+
+    ``available_argument_names``, and with ``stable_modules`` (relaxed mode)
+    the module's functions, classes and imports that a read inside
+    ``function`` reaches (``stable_module_names``), including those defined
+    below the function when no module-level code can run it before they
+    are (``_stable_names_bound_for``).
+    """
+    available = available_argument_names(function, block, analyzer)
+    module = analyzer.analyzed_tree
+    if not stable_modules or not isinstance(module, ast.Module):
+        return available
+    stable = _stable_names_bound_for(module, function)
+    return available | module_resolved_names(function, analyzer, stable)
+
+
 @dataclass(frozen=True)
 class _LexicalNameScope:
     node: ast.AST
@@ -1589,14 +1932,14 @@ def has_impure_eager_parameters(
     ``available_argument_names``). Lambda-lifted parameters and forwarded
     callees are evaluated inside the helper at the original position, so any
     expression is acceptable there, and a lambda passed through is made the
-    same way at the call site (``passes_lambdas_through``). Call this after
-    extraction, which is when callee parameters are known.
+    same way at the call site (``passes_lambdas_through``). A callee passed
+    by value (``Substitution.callees_by_value``) is an argument like any
+    other and is checked as one. Call this after extraction, which is when
+    callee parameters are known.
     """
-    deferred = (
-        set(substitution.function_params)
-        | set(substitution.params_used_as_callee)
-        | set(substitution.inlined_parameters)
-    )
+    deferred = set(substitution.function_params) | set(substitution.inlined_parameters)
+    if not substitution.callees_by_value:
+        deferred |= set(substitution.params_used_as_callee)
     return any(
         not is_eagerly_evaluable(expression, available[block_idx])
         for name, expressions in substitution.param_expressions.items()
@@ -1609,23 +1952,35 @@ def defer_impure_parameters(
     substitution: "Substitution",
     template_block: Iterable[ast.AST],
     available: Sequence[AbstractSet[str]],
+    *,
+    callees_by_value: bool = False,
 ) -> None:
     """Turn parameters whose arguments cannot be hoisted into zero-argument thunks.
 
     The helper then evaluates ``__param_n()`` at the original position, as often
     and as conditionally as the block did. ``available`` gives, per block, the
     names its call site can resolve. Parameters already lambda-lifted keep
-    their arguments; parameters used only as callees are forwarded lazily by
-    the extractor and need no thunk, and neither does a lambda passed through
+    their arguments, and a lambda passed through needs no thunk
     (``passes_lambdas_through``).
+
+    A parameter the helper only calls is, in strict mode, forwarded lazily by
+    the extractor and needs no thunk. With ``callees_by_value`` (relaxed
+    mode) a callee is an argument like any other: a name the site is sure to
+    resolve is passed as it is (``helper(parse_user, path)``), and any other
+    expression becomes a thunk the helper calls where the block looked the
+    callee up (``__param_0()(user_id)``), which the inlining pass turns
+    back into a value where it can. The choice is recorded on the
+    substitution for the extractor.
     """
+    substitution.callees_by_value = callees_by_value
     callees: Set[str] = set()
-    for statement in template_block:
-        for node in ast.walk(statement):
-            if isinstance(node, ast.Call):
-                parameter = substitution.get_param_for_expr(0, node.func)
-                if parameter is not None:
-                    callees.add(parameter)
+    if not callees_by_value:
+        for statement in template_block:
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Call):
+                    parameter = substitution.get_param_for_expr(0, node.func)
+                    if parameter is not None:
+                        callees.add(parameter)
     for name, expressions in substitution.param_expressions.items():
         if (
             name in substitution.function_params

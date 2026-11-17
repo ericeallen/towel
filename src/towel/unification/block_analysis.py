@@ -80,12 +80,15 @@ from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import (
     nested_bindings_escape,
     own_scope_locals,
+    module_resolved_names,
     rebound_external_names,
+    stable_module_names,
     walk_own_scope,
 )
+from .thunk_inlining import ValuePolicy
 from .if_binding_transfer import IfBindingTransfer, IfTransferSite, certify_if_binding_transfer
 from .return_source_uses import return_statement_usages
-from .statement_facts import memoized_per_node, statement_facts
+from .statement_facts import loaded_names, memoized_per_node, statement_facts
 from .static_positions import (
     TYPING_FORMS_BY_NAME,
     TranslationKeywords,
@@ -833,6 +836,52 @@ class BlockAnalysis(EngineState):
             helper_ast,
             memo=self._argument_handoff_memo,
             source_digest=self._module_digest(function),
+        )
+
+    def _rebindable_module_names(
+        self, names: AbstractSet[str], analyzer: ScopeAnalyzer
+    ) -> FrozenSet[str]:
+        """Of the module-level ``names`` a site reads, those a callee may rebind between reads.
+
+        Strict mode counts them all, and passes none by value. Relaxed mode
+        takes the module's functions, classes and imports as fixed
+        (``stable_module_names``); module data stays rebindable.
+        """
+        module = analyzer.analyzed_tree
+        if self.strict or not isinstance(module, ast.Module):
+            return frozenset(names)
+        return frozenset(names) - stable_module_names(module)
+
+    def _value_policy(
+        self,
+        sites: Sequence[Tuple[FunctionNode, Sequence[ast.stmt], ScopeAnalyzer, AbstractSet[str]]],
+        renames: Sequence[Mapping[str, str]],
+    ) -> ValuePolicy:
+        """What this mode lets the inlining pass assume about a helper's ``sites``.
+
+        Each site gives its function, block, analyzer and the names its call
+        resolves. A name is passed by value wherever the helper used it only
+        if no callee can rebind it meanwhile (``_rebindable_module_names``).
+        A name every site resolves is one the helper reads without
+        failing, when it stands in the sites' one module.
+        """
+        by_value: List[FrozenSet[str]] = []
+        # The helper of sites in one module stands in that module and reads
+        # its names as they do.
+        one_module = len({id(analyzer.analyzed_tree) for _, _, analyzer, _ in sites}) == 1
+        certain = frozenset.intersection(*(frozenset(site[3]) for site in sites))
+        for function, nodes, analyzer, available in sites:
+            read: Set[str] = set().union(*(loaded_names(node) for node in nodes))
+            rebindable = self._rebindable_module_names(
+                module_resolved_names(function, analyzer, read), analyzer
+            )
+            by_value.append(frozenset(available) - rebindable)
+        return ValuePolicy(
+            any_result=not self.strict,
+            plain_values=not self.strict,
+            available=tuple(by_value),
+            renames=tuple(renames),
+            certain_names=certain if one_module and not self.strict else frozenset(),
         )
 
     def _own_scope_locals(

@@ -192,8 +192,10 @@ def test_unifier_skip_unreachable_variable_at_call_site():
     assert subst is None
 
 
-def test_try_parameterize_rejects_lambda_lifting_of_local_binding():
-    # Comprehension element references the loop variable; lambda lifting must be rejected
+def test_try_parameterize_lifts_an_expression_over_a_comprehension_target():
+    # The element reads the comprehension's own variable, which no argument
+    # evaluated at the call can supply; since 2.0 the parameter is a function
+    # of it (docs/DECISIONS.md, "Relaxed mode passes arguments by value").
     code1 = "result = [value + 1 for value in data]"
     code2 = "result = [value + 2 for value in data]"
     blocks = [parse_block(code1), parse_block(code2)]
@@ -205,6 +207,26 @@ def test_try_parameterize_rejects_lambda_lifting_of_local_binding():
 
     subst = Substitution()
     allowed = u._try_parameterize([expr_a, expr_b], subst, [0, 1])
+    assert allowed is True
+    assert list(subst.function_params.values()) == [["value"]]
+
+
+def test_try_parameterize_rejects_lifting_past_a_name_the_block_binds_later():
+    # ``step`` is rebound after the element reads it; a function of ``row``
+    # alone would read the caller's ``step``, so nothing is parameterized.
+    code1 = "for row in rows:\n    out.append(row.alpha[step])\n    step = step + 1"
+    code2 = "for row in rows:\n    out.append(row.beta)\n    step = step + 1"
+    blocks = [parse_block(code1), parse_block(code2)]
+
+    u = Unifier()
+    u.current_blocks = blocks
+
+    def argument(block: list[ast.stmt]) -> ast.expr:
+        loop = cast(ast.For, block[0])
+        return cast(ast.Call, cast(ast.Expr, loop.body[0]).value).args[0]
+
+    subst = Substitution()
+    allowed = u._try_parameterize([argument(blocks[0]), argument(blocks[1])], subst, [0, 1])
     assert allowed is False
     assert subst.mappings == {}
 

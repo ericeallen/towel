@@ -25,11 +25,11 @@ def __extracted_func_1(items, multiplier):
     return result
 
 
-def __extracted_func_0(items, processor):
+def __extracted_func_0(__param_0, items):
     result = []
     for item in items:
         if item > 0:
-            result.append(processor(item))
+            result.append(__param_0(item))
     return result
 
 
@@ -39,11 +39,7 @@ def with_nested_func_a(items):
     def helper(x):
         return x * 2
 
-    result = []
-    for item in items:
-        if item > 0:
-            result.append(helper(item))
-    return result
+    return __extracted_func_0(helper, items)
 
 
 def with_nested_func_b(items):
@@ -52,19 +48,19 @@ def with_nested_func_b(items):
     def processor(x):
         return x * 2
 
-    return __extracted_func_0(items, processor)
+    return __extracted_func_0(processor, items)
 
 
 def with_lambda_a(items):
     """Lambda expression."""
     processor = lambda x: x * 2
-    return __extracted_func_0(items, processor)
+    return __extracted_func_0(processor, items)
 
 
 def with_lambda_b(items):
     """Lambda expression (duplicate)."""
     processor = lambda y: y * 2
-    return __extracted_func_0(items, processor)
+    return __extracted_func_0(processor, items)
 
 
 def closure_a(multiplier):

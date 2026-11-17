@@ -1,0 +1,37 @@
+"""Column clean-up steps for imported spreadsheets."""
+
+
+def strip_columns(rows, columns):
+    cleaned = []
+    for row in rows:
+        new_row = dict(row)
+        for column in columns:
+            value = new_row.get(column)
+            if isinstance(value, str):
+                new_row[column] = value.strip()
+        cleaned.append(new_row)
+    return cleaned
+
+
+def lowercase_columns(rows, columns):
+    cleaned = []
+    for row in rows:
+        new_row = dict(row)
+        for column in columns:
+            value = new_row.get(column)
+            if isinstance(value, str):
+                new_row[column] = value.lower()
+        cleaned.append(new_row)
+    return cleaned
+
+
+def title_columns(rows, columns):
+    cleaned = []
+    for row in rows:
+        new_row = dict(row)
+        for column in columns:
+            value = new_row.get(column)
+            if isinstance(value, str):
+                new_row[column] = value.title()
+        cleaned.append(new_row)
+    return cleaned

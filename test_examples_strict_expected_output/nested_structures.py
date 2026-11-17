@@ -6,14 +6,14 @@ lists, dicts, comprehensions, and deeply nested expressions.
 """
 
 
-def __extracted_func_2(__param_0, __param_1, __param_2, dict1, dict2, key, merger, result):
+def __extracted_func_3(__param_0, __param_1, __param_2, dict1, dict2, key, merger, result):
     if key in dict2:
         result[key] = {__param_0: dict1[key][__param_2], __param_1: dict2[key][__param_2], 'merged': merger(dict1[key][__param_2], dict2[key][__param_2])}
     else:
         result[key] = dict1[key]
 
 
-def __extracted_func_1(__param_0, data, processor, _towel_owner):
+def __extracted_func_2(__param_0, data, processor, _towel_owner):
     result = []
     for item in data:
         # Chain of nested operations
@@ -24,6 +24,21 @@ def __extracted_func_1(__param_0, data, processor, _towel_owner):
         if stage3:
             result.append({'processed': stage3, 'count': len(stage3)})
     return result
+
+
+def __extracted_func_1(__param_0, __param_1, data, _towel_owner):
+    output = {'strings': [], 'numbers': [], 'lists': [], 'total': 0}
+    for item in data:
+        # Type checking and nested appends
+        # Same type checking, different multiplier
+        if isinstance(item, str):
+            output['strings'].append(__param_0(item))
+        elif isinstance(item, (int, float)):
+            output['numbers'].append(item * __param_1)
+            output['total'] += item * __param_1
+        elif isinstance(item, list):
+            output['lists'].append([x * __param_1 for x in item])
+    return output
 
 
 def __extracted_func_0(__param_0, items, _towel_owner):
@@ -129,7 +144,7 @@ def merge_nested_dicts_v1(dict1, dict2, merger):
 
     for key in dict1.keys():
         # Complex nested merge
-        __extracted_func_2('a', 'b', 'values', dict1, dict2, key, merger, result)
+        __extracted_func_3('a', 'b', 'values', dict1, dict2, key, merger, result)
 
     return result
 
@@ -140,56 +155,38 @@ def merge_nested_dicts_v2(dict1, dict2, merger):
 
     for key in dict1.keys():
         # Same pattern, different keys
-        __extracted_func_2('first', 'second', 'data', dict1, dict2, key, merger, result)
+        __extracted_func_3('first', 'second', 'data', dict1, dict2, key, merger, result)
 
     return result
 
 
 def process_mixed_types_a(data, converter):
     """Version A: Mixed types in nested structure."""
-    output = {"strings": [], "numbers": [], "lists": [], "total": 0}
-
-    for item in data:
-        # Type checking and nested appends
-        if isinstance(item, str):
-            output["strings"].append(item.upper())
-        elif isinstance(item, (int, float)):
-            output["numbers"].append(item * 2)
-            output["total"] += item * 2
-        elif isinstance(item, list):
-            output["lists"].append([x * 2 for x in item])
-
-    return output
+    _towel_arguments_1 = [(converter, data)]
+    del data
+    del converter
+    return __extracted_func_1(lambda item: item.upper(), 2, _towel_arguments_1[0][1], _towel_arguments_1.pop())
 
 
 def process_mixed_types_b(data, converter):
     """Version B: Different multiplier, same type handling."""
-    output = {"strings": [], "numbers": [], "lists": [], "total": 0}
-
-    for item in data:
-        # Same type checking, different multiplier
-        if isinstance(item, str):
-            output["strings"].append(item.lower())
-        elif isinstance(item, (int, float)):
-            output["numbers"].append(item * 3)
-            output["total"] += item * 3
-        elif isinstance(item, list):
-            output["lists"].append([x * 3 for x in item])
-
-    return output
+    _towel_arguments_1 = [(converter, data)]
+    del data
+    del converter
+    return __extracted_func_1(lambda item: item.lower(), 3, _towel_arguments_1[0][1], _towel_arguments_1.pop())
 
 
 def chain_nested_operations_v1(data, processor):
     """Version 1: Chained operations on nested structures."""
-    _towel_arguments_1 = [(processor, data)]
+    _towel_arguments_2 = [(processor, data)]
     del data
     del processor
-    return __extracted_func_1(2, _towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())
+    return __extracted_func_2(2, _towel_arguments_2[0][1], _towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 def chain_nested_operations_v2(data, processor):
     """Version 2: Different multiplier, same chaining."""
-    _towel_arguments_1 = [(processor, data)]
+    _towel_arguments_2 = [(processor, data)]
     del data
     del processor
-    return __extracted_func_1(3, _towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())
+    return __extracted_func_2(3, _towel_arguments_2[0][1], _towel_arguments_2[0][0], _towel_arguments_2.pop())
