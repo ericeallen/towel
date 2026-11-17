@@ -46,8 +46,10 @@ if TYPE_CHECKING:
     from towel.unification.models import AppliedChange
     from towel.unification.models import LeftAlone, ParameterKind
 
-Outcome = Literal["no_python_files", "no_repeated_code", "all_left_alone", "applied"]
-"""How a run ended, for its user: nothing to read, nothing alike, all left alone, or changed."""
+Outcome = Literal[
+    "no_python_files", "no_repeated_code", "not_fully_examined", "all_left_alone", "applied"
+]
+"""How a run ended, including whether unexamined code limits a negative result."""
 
 LARGEST_SHOWN = 5
 """How many of the largest places left alone a run lists without ``--explain``."""
@@ -142,12 +144,21 @@ class SkippedRecord(TypedDict):
     reason: str
 
 
+class NotExaminedRecord(TypedDict):
+    """Unsupported code in one file; counts do not establish that the code repeats."""
+
+    path: str
+    module_statements: int
+    early_return_guards: int
+
+
 class AnalysedRecord(TypedDict):
     """What the run's first analysis read: its files, their functions, the files it skipped."""
 
     files: int
     functions: int
     skipped: List[SkippedRecord]
+    not_examined: List[NotExaminedRecord]
 
 
 class CommandResult(TypedDict):
@@ -249,14 +260,14 @@ def _plural(count: int, singular: str, plural: Optional[str] = None) -> str:
 
 
 def run_outcome(report: "RunReport", applied: int) -> Outcome:
-    """Which of the four ways a run can end this one ended."""
+    """What the run established, without treating unexamined code as repetition-free."""
     if applied:
         return "applied"
     if report.files_analysed == 0:
         return "no_python_files"
     if report.declined_pairs or report.declined_proposals:
         return "all_left_alone"
-    return "no_repeated_code"
+    return "not_fully_examined" if report.not_examined else "no_repeated_code"
 
 
 def _skipped_counts(report: "RunReport") -> tuple[int, int, int]:
@@ -296,6 +307,11 @@ def outcome_line(report: "RunReport", applied: int, target: str) -> Optional[str
                 return f"No selected Python file under {target} could be read."
             return f"No Python file under {target} could be read."
         return f"No Python files found under {target}."
+    if outcome == "not_fully_examined":
+        return (
+            "No repeated code found in the code Towel examined in "
+            f"{_plural(report.files_analysed, 'file')}."
+        )
     if outcome == "no_repeated_code":
         return f"No repeated code found in {_plural(report.files_analysed, 'file')}."
     if outcome == "all_left_alone":
@@ -304,6 +320,26 @@ def outcome_line(report: "RunReport", applied: int, target: str) -> Optional[str
         )
         return f"Found {_plural(places, 'place')} with similar code and extracted none."
     return None
+
+
+def not_examined_lines(report: "RunReport", relative: Callable[[str], str]) -> List[str]:
+    """State each coverage limit and its remedy, without claiming repetition was found."""
+    lines: List[str] = []
+    for entry in report.not_examined:
+        path = relative(entry.path)
+        if entry.module_statements:
+            lines.append(
+                f"Module-level code is not examined: {path} has "
+                f"{_plural(entry.module_statements, 'executable statement')}. "
+                "Move code you want Towel to compare into a function."
+            )
+        if entry.early_return_guards:
+            lines.append(
+                f"Early-return guards are not examined on their own: {path} has "
+                f"{_plural(entry.early_return_guards, 'guard')}. "
+                "Extract the shared condition into a function, keeping each return in its caller."
+            )
+    return lines
 
 
 def stopped_at_limit(termination: str, limit: int) -> Optional[str]:
@@ -493,5 +529,13 @@ def analysed_record(report: "RunReport", relative: Callable[[str], str]) -> Anal
         "skipped": [
             {"path": relative(skipped.path), "reason": skipped.reason}
             for skipped in report.skipped_files
+        ],
+        "not_examined": [
+            {
+                "path": relative(entry.path),
+                "module_statements": entry.module_statements,
+                "early_return_guards": entry.early_return_guards,
+            }
+            for entry in report.not_examined
         ],
     }

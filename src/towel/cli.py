@@ -82,6 +82,7 @@ from towel.cli_reporting import (
     left_alone_count,
     cross_module_lines,
     left_alone_lines,
+    not_examined_lines,
     outcome_line,
     reason_lines,
     shared_across_modules,
@@ -1940,6 +1941,7 @@ def _left_alone_report(
         reason_lines(report, pairs=pairs, first_unverifiable=problem)
         + left_alone_lines(report, relative, every=options.explain, pairs=pairs)
         + (cross_module_lines(report, relative) if options.cross_module and not shared else [])
+        + not_examined_lines(report, relative)
     )
 
 
@@ -2529,6 +2531,7 @@ def _quick_report(engine: "UnificationRefactorEngine") -> "RunReport":
         functions_analysed=census.functions,
         skipped_files=census.skipped,
         left_alone=engine.last_left_alone,
+        not_examined=census.not_examined,
     )
 
 
@@ -2601,6 +2604,8 @@ def _run_quick_preview_with_policy(options: PreviewOptions) -> None:
     relative = _relative_to_run(options.dry_options(target))
     print()
     print(census_line(report))
+    for line in not_examined_lines(report, relative):
+        print(line)
     outcome = outcome_line(report, 0, target) if not all_proposals else None
     if outcome is not None:
         print(outcome)

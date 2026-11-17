@@ -345,6 +345,10 @@ class FixedPointDrivers(Materialization):
                     dataclasses.replace(skipped, path=public(skipped.path))
                     for skipped in self._run_census.skipped
                 ),
+                not_examined=tuple(
+                    dataclasses.replace(entry, path=public(entry.path))
+                    for entry in self._run_census.not_examined
+                ),
             )
 
     def _applied(self, proposal: RefactoringProposal) -> None:
