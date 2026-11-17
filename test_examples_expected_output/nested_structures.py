@@ -6,14 +6,14 @@ lists, dicts, comprehensions, and deeply nested expressions.
 """
 
 
-def __extracted_func_4(__param_0, data, filter_func):
+def __extracted_func_5(__param_0, data, filter_func):
     processed = [x * __param_0 for x in data if x > 0]
     filtered = [item for item in processed if filter_func(item)]
     result = {'values': filtered, 'count': len(filtered), 'sum': sum(filtered)}
     return result
 
 
-def __extracted_func_3(__param_0, __param_1, __param_2, __param_3, config, data):
+def __extracted_func_4(__param_0, __param_1, __param_2, __param_3, config, data):
     results = []
     for item in data:
         # Complex nested structure access
@@ -26,7 +26,7 @@ def __extracted_func_3(__param_0, __param_1, __param_2, __param_3, config, data)
     return results
 
 
-def __extracted_func_2(__param_0, data, processor):
+def __extracted_func_3(__param_0, data, processor):
     result = []
     for item in data:
         # Chain of nested operations
@@ -37,6 +37,21 @@ def __extracted_func_2(__param_0, data, processor):
         if stage3:
             result.append({'processed': stage3, 'count': len(stage3)})
     return result
+
+
+def __extracted_func_2(__param_0, __param_1, data):
+    output = {'strings': [], 'numbers': [], 'lists': [], 'total': 0}
+    for item in data:
+        # Type checking and nested appends
+        # Same type checking, different multiplier
+        if isinstance(item, str):
+            output['strings'].append(__param_0(item))
+        elif isinstance(item, (int, float)):
+            output['numbers'].append(item * __param_1)
+            output['total'] += item * __param_1
+        elif isinstance(item, list):
+            output['lists'].append([x * __param_1 for x in item])
+    return output
 
 
 def __extracted_func_1(__param_0, items):
@@ -68,22 +83,22 @@ def __extracted_func_0(__param_0, __param_1, __param_2, dict1, dict2, merger):
 
 def process_nested_dict_v1(data, config):
     """Version 1: Nested dictionary access."""
-    return __extracted_func_3('user', 'profile', 'settings', 'threshold', config, data)
+    return __extracted_func_4('user', 'profile', 'settings', 'threshold', config, data)
 
 
 def process_nested_dict_v2(data, config):
     """Version 2: Different nested path, same pattern."""
-    return __extracted_func_3('customer', 'account', 'preferences', 'limit', config, data)
+    return __extracted_func_4('customer', 'account', 'preferences', 'limit', config, data)
 
 
 def transform_with_comprehension_a(data, filter_func):
     """Version A: List comprehension as expression."""
-    return __extracted_func_4(2, data, filter_func)
+    return __extracted_func_5(2, data, filter_func)
 
 
 def transform_with_comprehension_b(data, filter_func):
     """Version B: Different multiplier in comprehension."""
-    return __extracted_func_4(3, data, filter_func)
+    return __extracted_func_5(3, data, filter_func)
 
 
 def build_complex_structure_v1(items, metadata):
@@ -132,43 +147,19 @@ def merge_nested_dicts_v2(dict1, dict2, merger):
 
 def process_mixed_types_a(data, converter):
     """Version A: Mixed types in nested structure."""
-    output = {"strings": [], "numbers": [], "lists": [], "total": 0}
-
-    for item in data:
-        # Type checking and nested appends
-        if isinstance(item, str):
-            output["strings"].append(item.upper())
-        elif isinstance(item, (int, float)):
-            output["numbers"].append(item * 2)
-            output["total"] += item * 2
-        elif isinstance(item, list):
-            output["lists"].append([x * 2 for x in item])
-
-    return output
+    return __extracted_func_2(lambda item: item.upper(), 2, data)
 
 
 def process_mixed_types_b(data, converter):
     """Version B: Different multiplier, same type handling."""
-    output = {"strings": [], "numbers": [], "lists": [], "total": 0}
-
-    for item in data:
-        # Same type checking, different multiplier
-        if isinstance(item, str):
-            output["strings"].append(item.lower())
-        elif isinstance(item, (int, float)):
-            output["numbers"].append(item * 3)
-            output["total"] += item * 3
-        elif isinstance(item, list):
-            output["lists"].append([x * 3 for x in item])
-
-    return output
+    return __extracted_func_2(lambda item: item.lower(), 3, data)
 
 
 def chain_nested_operations_v1(data, processor):
     """Version 1: Chained operations on nested structures."""
-    return __extracted_func_2(2, data, processor)
+    return __extracted_func_3(2, data, processor)
 
 
 def chain_nested_operations_v2(data, processor):
     """Version 2: Different multiplier, same chaining."""
-    return __extracted_func_2(3, data, processor)
+    return __extracted_func_3(3, data, processor)

@@ -6,14 +6,7 @@ and don't accidentally capture or modify variables incorrectly.
 """
 
 
-def __extracted_func_3(__param_0, counter):
-    counter['total'] += __param_0()
-    counter['processed'] += 1
-    result = counter['total'] / counter['processed']
-    print(f'Current average: {result}')
-
-
-def __extracted_func_2(accumulator, multiplier, value):
+def __extracted_func_5(accumulator, multiplier, value):
     processed = value * multiplier
     validated = processed > 0
     if validated:
@@ -21,7 +14,18 @@ def __extracted_func_2(accumulator, multiplier, value):
     return processed
 
 
-def __extracted_func_1(data, outer_var, processor):
+def __extracted_func_4(__param_0, counter, items):
+    for item in items:
+        # This block modifies mutable state
+        # Same pattern of mutation
+        counter['total'] += __param_0(item)
+        counter['processed'] += 1
+        result = counter['total'] / counter['processed']
+        print(f'Current average: {result}')
+    return counter
+
+
+def __extracted_func_3(data, outer_var, processor):
     inner_var = 50
     for item in data:
         # This block uses both outer_var and inner_var
@@ -31,7 +35,7 @@ def __extracted_func_1(data, outer_var, processor):
         processor.add(step3)
 
 
-def __extracted_func_0(__param_0, cache, data, metrics):
+def __extracted_func_2(__param_0, cache, data, metrics):
     for key, value in data.items():
         # Modifies both cache and metrics
         # Same pattern, different multiplier
@@ -44,54 +48,55 @@ def __extracted_func_0(__param_0, cache, data, metrics):
     return (cache, metrics)
 
 
+def __extracted_func_1(__param_0, data, logger):
+    total = 0
+    for value in data:
+        # Block with side effects
+        # Different normalization, same structure
+        normalized = __param_0(value)
+        total += len(normalized)
+        logger.info(f'Processed: {normalized}')
+        logger.debug(f'Total so far: {total}')
+    return total
+
+
+def __extracted_func_0(__param_0, data, validator):
+    for item in data:
+        # Block with early returns
+        # Same structure, different processing
+        cleaned = item.strip()
+        if not cleaned:
+            return None
+        validated = validator.check(cleaned)
+        if not validated:
+            return None
+        processed = __param_0(cleaned)
+        return processed
+    return 'default'
+
+
 def update_mutable_state_v1(items, counter):
     """Version 1: Modifies mutable state within block."""
     counter = {"total": 0, "processed": 0}
 
-    for item in items:
-        # This block modifies mutable state
-        __extracted_func_3(lambda: item, counter)
-
-    return counter
+    return __extracted_func_4(lambda item: item, counter, items)
 
 
 def update_mutable_state_v2(items, counter):
     """Version 2: Same mutable modifications, different initialization."""
     counter = {"total": 0, "processed": 0}
 
-    for item in items:
-        # Same pattern of mutation
-        __extracted_func_3(lambda: item * 2, counter)
-
-    return counter
+    return __extracted_func_4(lambda item: item * 2, counter, items)
 
 
 def process_with_side_effects_a(data, logger):
     """Version A: Side effects in duplicate block."""
-    total = 0
-
-    for value in data:
-        # Block with side effects
-        normalized = value.strip().lower()
-        total += len(normalized)
-        logger.info(f"Processed: {normalized}")
-        logger.debug(f"Total so far: {total}")
-
-    return total
+    return __extracted_func_1(lambda value: value.strip().lower(), data, logger)
 
 
 def process_with_side_effects_b(data, logger):
     """Version B: Different normalization, same logging pattern."""
-    total = 0
-
-    for value in data:
-        # Different normalization, same structure
-        normalized = value.strip().upper()
-        total += len(normalized)
-        logger.info(f"Processed: {normalized}")
-        logger.debug(f"Total so far: {total}")
-
-    return total
+    return __extracted_func_1(lambda value: value.strip().upper(), data, logger)
 
 
 def accumulate_with_closure_v1(items, accumulator):
@@ -100,7 +105,7 @@ def accumulate_with_closure_v1(items, accumulator):
 
     def add_processed(value, multiplier):
         # Closure captures 'accumulator'
-        return __extracted_func_2(accumulator, multiplier, value)
+        return __extracted_func_5(accumulator, multiplier, value)
 
     results = [add_processed(item, 2) for item in items]
     return accumulator, results
@@ -112,7 +117,7 @@ def accumulate_with_closure_v2(items, accumulator):
 
     def add_processed(value, multiplier):
         # Same closure pattern
-        return __extracted_func_2(accumulator, multiplier, value)
+        return __extracted_func_5(accumulator, multiplier, value)
 
     results = [add_processed(item, 3) for item in items]
     return accumulator, results
@@ -120,38 +125,12 @@ def accumulate_with_closure_v2(items, accumulator):
 
 def transform_with_early_return_a(data, validator):
     """Version A: Early returns in duplicate block."""
-    for item in data:
-        # Block with early returns
-        cleaned = item.strip()
-        if not cleaned:
-            return None
-
-        validated = validator.check(cleaned)
-        if not validated:
-            return None
-
-        processed = cleaned.upper()
-        return processed
-
-    return "default"
+    return __extracted_func_0(lambda cleaned: cleaned.upper(), data, validator)
 
 
 def transform_with_early_return_b(data, validator):
     """Version B: Same early return pattern, different processing."""
-    for item in data:
-        # Same structure, different processing
-        cleaned = item.strip()
-        if not cleaned:
-            return None
-
-        validated = validator.check(cleaned)
-        if not validated:
-            return None
-
-        processed = cleaned.lower()
-        return processed
-
-    return "default"
+    return __extracted_func_0(lambda cleaned: cleaned.lower(), data, validator)
 
 
 def nested_scope_capture_v1(outer_data, processor):
@@ -172,7 +151,7 @@ def nested_scope_capture_v1(outer_data, processor):
 
     def inner_process(data):
         # Captures outer_var
-        __extracted_func_1(data, outer_var, processor)
+        __extracted_func_3(data, outer_var, processor)
 
     inner_process(outer_data)
     return processor.get_results()
@@ -215,7 +194,7 @@ def nested_scope_capture_valid_v1(outer_data, processor):
 
     def inner_process(data):
         # Captures outer_var
-        __extracted_func_1(data, outer_var, processor)
+        __extracted_func_3(data, outer_var, processor)
 
     inner_process(outer_data)
     return processor.get_results()
@@ -232,7 +211,7 @@ def nested_scope_capture_valid_v2(outer_data, processor):
 
     def inner_process(data):
         # Captures different outer_var
-        __extracted_func_1(data, outer_var, processor)
+        __extracted_func_3(data, outer_var, processor)
 
     inner_process(outer_data)
     return processor.get_results()
@@ -240,9 +219,9 @@ def nested_scope_capture_valid_v2(outer_data, processor):
 
 def modify_external_state_a(data, cache, metrics):
     """Version A: Modifies multiple external objects."""
-    return __extracted_func_0(2, cache, data, metrics)
+    return __extracted_func_2(2, cache, data, metrics)
 
 
 def modify_external_state_b(data, cache, metrics):
     """Version B: Different multiplier, same modification pattern."""
-    return __extracted_func_0(3, cache, data, metrics)
+    return __extracted_func_2(3, cache, data, metrics)

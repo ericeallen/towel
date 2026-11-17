@@ -94,6 +94,9 @@ class Substitution:
     # within the extracted function body. These should be passed as thunks (lambdas)
     # that perform the call to avoid eager evaluation at the call site.
     params_used_as_callee: Set[str] = field(default_factory=set)
+    # Relaxed mode: a callee is passed as its value, or as a zero-argument
+    # thunk of it, never as a forwarding lambda (``defer_impure_parameters``).
+    callees_by_value: bool = False
     # Thunk parameters the helper evaluates first, once and unconditionally;
     # their expressions are passed eagerly by the inlining pass.
     inlined_parameters: Set[str] = field(default_factory=set)

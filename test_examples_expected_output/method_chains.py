@@ -6,7 +6,7 @@ and object-oriented code patterns correctly.
 """
 
 
-def __extracted_func_5(model, validator):
+def __extracted_func_6(model, validator):
     if validator.is_valid(model):
         model.save()
         model.notify_observers()
@@ -14,7 +14,7 @@ def __extracted_func_5(model, validator):
     return False
 
 
-def __extracted_func_4(__param_0, __param_1, response, transformer, validator):
+def __extracted_func_5(__param_0, __param_1, response, transformer, validator):
     data = response.json().get(__param_0, {}).get(__param_1, [])
     cleaned = [item.strip().lower() for item in data]
     validated = [validator.check(item) for item in cleaned]
@@ -25,7 +25,7 @@ def __extracted_func_4(__param_0, __param_1, response, transformer, validator):
     return []
 
 
-def __extracted_func_3(__param_0, cache, data, serializer):
+def __extracted_func_4(__param_0, cache, data, serializer):
     response = serializer.create_response()
     response.set_data(data)
     response.set_status(200)
@@ -37,7 +37,7 @@ def __extracted_func_3(__param_0, cache, data, serializer):
     return response.build()
 
 
-def __extracted_func_2(__param_0, entity, transformer, validator):
+def __extracted_func_3(__param_0, entity, transformer, validator):
     entity.set_field(__param_0, True)
     entity.increment_version()
     transformed_data = transformer.apply(entity.get_data())
@@ -49,6 +49,14 @@ def __extracted_func_2(__param_0, entity, transformer, validator):
         entity.save_to_store()
         return entity
     return None
+
+
+def __extracted_func_2(__param_0, __param_1, __param_2, __param_3, aggregator, formatter, results):
+    total = aggregator.sum([__param_0(r) for r in results])
+    average = aggregator.average([__param_0(r) for r in results])
+    maximum = aggregator.max([__param_0(r) for r in results])
+    formatted = formatter.create_summary().add_metric(__param_1, total).add_metric(__param_2, average).add_metric(__param_3, maximum).finalize()
+    return formatted
 
 
 def __extracted_func_1(__param_0, handler, parser, stream):
@@ -72,13 +80,13 @@ def __extracted_func_0(__param_0, db, mapper):
 def process_api_response_v1(response, validator, transformer):
     """Version 1: Method chaining on API response."""
     # Complex method chain
-    return __extracted_func_4('data', 'items', response, transformer, validator)
+    return __extracted_func_5('data', 'items', response, transformer, validator)
 
 
 def process_api_response_v2(response, validator, transformer):
     """Version 2: Different key path, same chaining pattern."""
     # Different keys, same chain
-    return __extracted_func_4('payload', 'records', response, transformer, validator)
+    return __extracted_func_5('payload', 'records', response, transformer, validator)
 
 
 def update_model_fields_a(model, updates, validator):
@@ -88,7 +96,7 @@ def update_model_fields_a(model, updates, validator):
         "active"
     ).validate()
 
-    return __extracted_func_5(model, validator)
+    return __extracted_func_6(model, validator)
 
 
 def update_model_fields_b(model, updates, validator):
@@ -98,7 +106,7 @@ def update_model_fields_b(model, updates, validator):
         "active"
     ).validate()
 
-    return __extracted_func_5(model, validator)
+    return __extracted_func_6(model, validator)
 
 
 def query_database_v1(db, filters, mapper):
@@ -128,58 +136,34 @@ def process_stream_v2(stream, parser, handler):
 def build_response_a(data, serializer, cache):
     """Version A: Response builder with multiple method calls."""
     # Building response
-    return __extracted_func_3('max-age=3600', cache, data, serializer)
+    return __extracted_func_4('max-age=3600', cache, data, serializer)
 
 
 def build_response_b(data, serializer, cache):
     """Version B: Different cache duration, same pattern."""
     # Same building pattern
-    return __extracted_func_3('max-age=7200', cache, data, serializer)
+    return __extracted_func_4('max-age=7200', cache, data, serializer)
 
 
 def transform_entity_v1(entity, transformer, validator):
     """Version 1: Entity transformation with validation."""
     # Transform entity
-    return __extracted_func_2('processed', entity, transformer, validator)
+    return __extracted_func_3('processed', entity, transformer, validator)
 
 
 def transform_entity_v2(entity, transformer, validator):
     """Version 2: Different field name, same pattern."""
     # Same transformation pattern
-    return __extracted_func_2('completed', entity, transformer, validator)
+    return __extracted_func_3('completed', entity, transformer, validator)
 
 
 def aggregate_results_a(results, aggregator, formatter):
     """Version A: Aggregation with multiple method calls."""
     # Aggregate and format
-    total = aggregator.sum([r.get_value() for r in results])
-    average = aggregator.average([r.get_value() for r in results])
-    maximum = aggregator.max([r.get_value() for r in results])
-
-    formatted = (
-        formatter.create_summary()
-        .add_metric("total", total)
-        .add_metric("average", average)
-        .add_metric("maximum", maximum)
-        .finalize()
-    )
-
-    return formatted
+    return __extracted_func_2(lambda r: r.get_value(), 'total', 'average', 'maximum', aggregator, formatter, results)
 
 
 def aggregate_results_b(results, aggregator, formatter):
     """Version B: Different metric names, same pattern."""
     # Same aggregation pattern
-    total = aggregator.sum([r.get_amount() for r in results])
-    average = aggregator.average([r.get_amount() for r in results])
-    maximum = aggregator.max([r.get_amount() for r in results])
-
-    formatted = (
-        formatter.create_summary()
-        .add_metric("sum", total)
-        .add_metric("mean", average)
-        .add_metric("max", maximum)
-        .finalize()
-    )
-
-    return formatted
+    return __extracted_func_2(lambda r: r.get_amount(), 'sum', 'mean', 'max', aggregator, formatter, results)

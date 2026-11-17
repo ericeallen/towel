@@ -1,0 +1,19 @@
+import sys
+import typing
+
+sys.path.insert(0, sys.argv[1])
+
+import cargo
+
+items = [
+    cargo.Item("towel", 0.4, 2.5, 10),
+    cargo.Item("soap", 0.125, 0.2, 48),
+    cargo.Item("returned", 3.0, 9.0, 0),
+    cargo.Item("error", 3.0, 9.0, -2),
+]
+print(cargo.total_weight(items), cargo.total_volume(items))
+print(cargo.total_weight([]), cargo.total_volume(()))
+print(cargo.fits(items, 10, 40), cargo.fits(items, 10, 30), cargo.fits(items, 9, 40))
+for func in (cargo.total_weight, cargo.total_volume, cargo.fits):
+    print(func.__name__, typing.get_type_hints(func))
+print("ok")
