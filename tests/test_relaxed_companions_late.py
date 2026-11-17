@@ -396,16 +396,16 @@ def test_relaxed_suppressing_context(tmp_path: Path, opaque: bool, typed: bool) 
     result = invoke(arguments)
     assert result.status == 0, result.stderr
     transformed = output.read_text()
-    if typed:
-        # The unsafe candidate reads a possibly unbound local; the safe
-        # arithmetic suffix does not repay its annotated helper's overhead.
-        assert "thunk_of_possibly_unbound_local" in result.stdout
-        assert "unprofitable_helper" in result.stdout
-        assert "with similar code and extracted none." in result.stdout
-        assert ast.dump(ast.parse(transformed)) == ast.dump(ast.parse(source))
-    else:
-        assert "Applied 1 refactoring(s)" in result.stdout
-        assert "def __extracted_func_" in transformed
+    # Every candidate reads ``first``/``second``, which the suppressed
+    # division may leave unbound. Since byvalue's second round relaxed mode
+    # passes a name by value only where the call site is sure to resolve it,
+    # so each candidate would need a lambda over a possibly unbound local and
+    # is declined, typed or not. (Until then the untyped run passed ``first``
+    # by value into a helper of the arithmetic suffix, and the typed run
+    # declined that suffix as unprofitable_helper.)
+    assert "thunk_of_possibly_unbound_local" in result.stdout
+    assert "with similar code and extracted none." in result.stdout
+    assert ast.dump(ast.parse(transformed)) == ast.dump(ast.parse(source))
     assert _observe(transformed, "") == before
 
 
@@ -496,7 +496,28 @@ def test_relaxed_occurrence_vectors(tmp_path: Path, memo: bool, cross_module: bo
     before = _run_project(root, driver)
     with nullcontext() if memo else memoization_disabled():
         assert _transform_project(root, typed=True) > 0
-    assert _run_project(root, driver) == before
+    expected = _moved_literal_identity(before) if cross_module else before
+    assert _run_project(root, driver) == expected
+
+
+def _moved_literal_identity(output: str) -> str:
+    """The one change "Relaxed mode moves equal literals into a shared helper" permits here.
+
+    With the helper in a.py, f1's ``x * 1000000`` multiplies by a.py's
+    constant, which is not b.py's ``COMMON`` (docs/design/DECISIONS.md: a
+    program comparing such literals with ``is`` needs ``--strict``). Only
+    that identity flag of f1's traces changes; every other event, its order
+    and every result stay as they were.
+    """
+    same, moved = (f"('input-mul', ('int', '1000000'), {flag})" for flag in ("True", "False"))
+    lines, owner = [], ""
+    for line in output.splitlines(keepends=True):
+        if not line.startswith("["):
+            owner = line.split(" ", 1)[0]
+        lines.append(line.replace(same, moved) if owner == "f1" and line.startswith("[") else line)
+    changed = "".join(lines)
+    assert changed != output, "f1 multiplies by the shared literal"
+    return changed
 
 
 @pytest.mark.parametrize("expression", ["OFFSET", "supply()"])
