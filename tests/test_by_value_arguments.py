@@ -63,6 +63,11 @@ from tests.test_program_type_names import _class_and_list_helper_annotations
 pytestmark = pytest.mark.relaxed_mode
 
 
+def _passes_alpha_by_value(generated: str) -> bool:
+    """Whether a helper call passes ``alpha`` itself, in any position (not ``lambda: alpha``)."""
+    return re.search(r"_extracted_func_0\((?:[^()]*, )?alpha[,)]", generated) is not None
+
+
 # -- The audit's material ------------------------------------------------------
 
 
@@ -71,11 +76,11 @@ pytestmark = pytest.mark.relaxed_mode
     [
         (
             "relaxed_scenarios/callee_user",
-            ["__extracted_func_0(net_price, items)", "__extracted_func_0(gross_price, items)"],
+            ["__extracted_func_0(items, net_price)", "__extracted_func_0(items, gross_price)"],
         ),
         (
             "by_value/callee_parsers",
-            ["__extracted_func_0(parse_user, path)", "__extracted_func_0(parse_product, path)"],
+            ["__extracted_func_0(path, parse_user)", "__extracted_func_0(path, parse_product)"],
         ),
     ],
 )
@@ -86,7 +91,7 @@ def test_a_module_level_function_is_passed_as_it_is(
     generated, same = refactored_scenario(tmp_path, fixture)
     assert helper_calls(generated) == calls
     assert "lambda" not in generated
-    assert "__param_0(" in generated and "__param_0()" not in generated
+    assert "_param_0(" in generated and "_param_0()" not in generated
     assert same
 
 
@@ -110,7 +115,7 @@ def test_a_differing_method_of_an_argument_is_passed_as_a_function_of_nothing(
     generated, same = refactored_scenario(tmp_path, "by_value/try_log_callee")
     assert "lambda: client.get_profile" in generated
     assert "lambda: client.get_preferences" in generated
-    assert "response = __param_0()(user_id)" in generated
+    assert "response = _param_0()(user_id)" in generated
     assert "**kwargs" not in generated
     assert same
 
@@ -242,7 +247,7 @@ def test_a_short_circuited_concatenation_stays_a_lambda(tmp_path: Path, strict: 
     ``"tag:" + None`` raises ``TypeError``.
     """
     generated, same = refactored(tmp_path, SHORT_CIRCUITED_CONCATENATION, strict=strict)
-    assert "lambda: 'tag:' + label" in generated
+    assert 'lambda: "tag:" + label' in generated
     assert same
 
 
@@ -466,7 +471,7 @@ def test_a_differing_call_in_a_loop_body_stays_a_lambda(tmp_path: Path, strict: 
     """The call runs once per item, after that item's ``print``, and not at all for no items."""
     generated, same = refactored(tmp_path, CALL_IN_A_LOOP, strict=strict)
     assert "lambda: tick()" in generated and "lambda: -tock(100)" in generated
-    assert "seen.append((item, __param_0()))" in generated
+    assert "seen.append((item, _param_0()))" in generated
     assert same
 
 
@@ -509,7 +514,7 @@ print(depth_of(None, "d"))
 def test_a_guarded_attribute_read_stays_a_lambda(tmp_path: Path, strict: bool) -> None:
     """``if box: use(box.width)``: read at the call, ``None.width`` would raise where nothing did."""
     generated, same = refactored(tmp_path, GUARDED_ATTRIBUTE, strict=strict)
-    assert "result = show(label, __param_0())" in generated
+    assert "result = show(label, _param_0())" in generated
     assert same
     if not strict:
         assert "lambda: box.width" in generated and "lambda: box.depth" in generated
@@ -558,7 +563,7 @@ settled_pending(Account())
 def test_an_attribute_read_after_a_call_stays_a_lambda(tmp_path: Path, strict: bool) -> None:
     """``account.settle()`` changes what ``account.balance`` gives; by value it would print 10, not 15."""
     generated, same = refactored(tmp_path, ATTRIBUTE_AFTER_A_MUTATING_CALL, strict=strict)
-    assert "report('after settling', __param_0())" in generated
+    assert 'report("after settling", _param_0())' in generated
     assert same
     if not strict:
         assert "lambda: account.balance" in generated
@@ -598,8 +603,8 @@ def test_an_attribute_read_before_any_call_is_passed_by_value(tmp_path: Path) ->
     """Evaluated once on every path, with only an assignment of a name before it."""
     generated, same = refactored(tmp_path, ATTRIBUTE_AFTER_PLAIN_STEPS)
     assert helper_calls(generated) == [
-        "__extracted_func_0(stats.total, label)",
-        "__extracted_func_0(stats.count, label)",
+        "__extracted_func_0(label, stats.total)",
+        "__extracted_func_0(label, stats.count)",
     ]
     assert same
 
@@ -607,7 +612,7 @@ def test_an_attribute_read_before_any_call_is_passed_by_value(tmp_path: Path) ->
 def test_strict_mode_defers_the_attribute_read_before_any_call(tmp_path: Path) -> None:
     """Strict mode assumes nothing of an attribute read: a property may run code."""
     generated, same = refactored(tmp_path, ATTRIBUTE_AFTER_PLAIN_STEPS, strict=True)
-    assert "shown = report(title, __param_0())" in generated
+    assert "shown = report(title, _param_0())" in generated
     assert same
 
 
@@ -670,7 +675,7 @@ def test_a_read_is_not_moved_ahead_of_formatting_or_hashing(
     """
     source = PROTOCOL_BEFORE_A_READ.replace("TITLE", title)
     generated, same = refactored(tmp_path, source, strict=strict)
-    assert re.search(r"report\(title, __param_\d+\(\)", generated), generated
+    assert re.search(r"report\(title, _param_\d+\(\)", generated), generated
     assert same
 
 
@@ -771,7 +776,7 @@ def test_a_plain_read_is_not_moved_ahead_of_a_step_that_can_fail(
     instead. A plain value has no side effects; it can still fail.
     """
     generated, same = refactored(tmp_path, PLAIN_READ_AFTER_A_FAILING_STEP, strict=strict)
-    assert re.search(r"report\(title, __param_\d+\(\)\)", generated), generated
+    assert re.search(r"report\(title, _param_\d+\(\)\)", generated), generated
     assert same
 
 
@@ -825,7 +830,10 @@ def test_a_call_is_not_moved_ahead_of_an_earlier_statement_that_can_fail(
     """``base = …`` raises, or prints, before ``o.alpha()`` runs; at the call, ``alpha`` would run first."""
     source = CALL_AFTER_AN_EARLIER_STATEMENT.replace("FIRST", first)
     generated, same = refactored(tmp_path, source)
-    assert "lambda: o.alpha()" in generated and "y = __param_0()" in generated
+    # The generated parameter is spelled __param_0 when it comes first and
+    # _param_0 after an ordinary one (shape, for a project with no declared floor).
+    assert "lambda: o.alpha()" in generated
+    assert re.search(r"y = _{1,2}param_0\(\)", generated), generated
     assert same
 
 
@@ -916,7 +924,7 @@ print(render_quiet("Hello", swap))
 def test_strict_mode_reads_a_rebound_module_function_where_the_block_did(tmp_path: Path) -> None:
     """``hook()`` replaces ``plain`` before the block calls it; strict mode's thunk sees the new one."""
     generated, same = refactored(tmp_path, REBOUND_MODULE_FUNCTION, strict=True)
-    assert "lambda: plain" in generated and "return __param_0()(text)" in generated
+    assert "lambda: plain" in generated and "return _param_0()(text)" in generated
     assert same
 
 
@@ -930,8 +938,8 @@ def test_relaxed_mode_assumes_module_functions_are_not_rebound(tmp_path: Path) -
     """
     generated, same = refactored(tmp_path, REBOUND_MODULE_FUNCTION)
     assert helper_calls(generated) == [
-        "__extracted_func_0(plain, hook, text)",
-        "__extracted_func_0(quiet, hook, text)",
+        "__extracted_func_0(text, hook, plain)",
+        "__extracted_func_0(text, hook, quiet)",
     ]
     assert not same
     directory = tmp_path / "relaxed"
@@ -1027,7 +1035,7 @@ def test_an_import_may_call_back_into_the_module_before_its_later_names_exist(
         engine.refactor_to_fixed_point(str(directories["changed"] / "case.py"))
     generated = (directories["changed"] / "case.py").read_text()
     assert "_extracted_func_0" in generated
-    assert "(alpha" not in generated
+    assert not _passes_alpha_by_value(generated), generated
     before = run_script(directories["original"] / "driver.py")
     assert before[0] == 0 and "during import 0" in before[1]
     assert run_script(directories["changed"] / "driver.py") == before
@@ -1143,7 +1151,7 @@ def test_a_module_name_is_not_read_early_where_the_enclosing_statement_runs_the_
     source = DEFINED_INSIDE.replace("OUTER", outer).replace("RUNNER", runner)
     generated, same = refactored(tmp_path, source, strict=strict)
     assert "_extracted_func_0" in generated
-    assert "(alpha" not in generated
+    assert not _passes_alpha_by_value(generated), generated
     assert same
 
 
@@ -1153,7 +1161,7 @@ def test_a_method_of_a_class_that_runs_nothing_takes_a_later_module_function_by_
     """The control for the test above: with nothing in the class to call it, ``alpha`` is passed."""
     source = DEFINED_INSIDE.replace("OUTER", "class Runner:\n" + _indented(DUPLICATES, 1))
     generated, same = refactored(tmp_path, source.replace("RUNNER", "Runner."))
-    assert "(alpha" in generated
+    assert _passes_alpha_by_value(generated), generated
     assert same
 
 
@@ -1204,7 +1212,7 @@ def test_a_lookup_never_leaves_its_try(tmp_path: Path, handled: str) -> None:
     """Raised at the call, what the lookup raises would escape the handler that caught it before."""
     generated, same = refactored(tmp_path, LOOKUP_IN_A_TRY.replace("HANDLED", handled))
     assert "lambda: client.get_profile" in generated
-    assert "response = __param_0()(user_id)" in generated
+    assert "response = _param_0()(user_id)" in generated
     assert same
 
 
@@ -1292,7 +1300,7 @@ print(init("de", []), update("de", []), init(None, []), update(None, []))
 def test_a_concatenation_the_block_guards_stays_a_lambda(tmp_path: Path) -> None:
     """``if lang: run("init -l " + lang)``: at the call, ``"init -l " + None`` raises."""
     generated, same = refactored(tmp_path, GUARDED_CONCATENATION)
-    assert "lambda: 'init -l ' + lang" in generated
+    assert 'lambda: "init -l " + lang' in generated
     assert same
 
 
@@ -1323,7 +1331,7 @@ print(grid, empty_rows(2))
 def test_a_list_made_once_per_iteration_stays_a_lambda(tmp_path: Path, strict: bool) -> None:
     """By value, every row would be the same list and ``grid[0][0] = 9`` would change them all."""
     generated, same = refactored(tmp_path, DISPLAY_IN_A_LOOP, strict=strict)
-    assert "lambda: [0, 0]" in generated and "rows.append(__param_0())" in generated
+    assert "lambda: [0, 0]" in generated and "rows.append(_param_0())" in generated
     assert same
 
 
@@ -1357,7 +1365,7 @@ print(point(Shape(), []), line(Shape(), []))
 def test_a_parameter_has_one_kind_for_all_its_sites(tmp_path: Path) -> None:
     """``shape.kind`` follows a call, so it is deferred, and the literal at the other site with it."""
     generated, same = refactored(tmp_path, ONE_KIND_FOR_ALL_SITES)
-    assert "lambda: 'Point'" in generated and "lambda: shape.kind" in generated
+    assert 'lambda: "Point"' in generated and "lambda: shape.kind" in generated
     assert same
 
 
@@ -1396,7 +1404,8 @@ def test_a_class_passed_by_value_shares_its_variable_with_the_list_end_to_end(
 
     One type variable still relates the class to the list it fills.
     """
-    assert _class_and_list_helper_annotations(tmp_path)[:2] == [
+    assert _class_and_list_helper_annotations(tmp_path) == [
+        "Element",
         "type[_TowelT0]",
         "_typing.Callable[[], list[_TowelT0]]",
     ]

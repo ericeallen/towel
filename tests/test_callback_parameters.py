@@ -118,11 +118,11 @@ def test_a_method_of_a_loop_variable_becomes_a_callback(tmp_path: Path) -> None:
     """
     generated, same = refactored_scenario(tmp_path, "by_value/loop_method")
     assert helper_calls(generated) == [
-        "__extracted_func_0(lambda value: value.strip(), columns, rows)",
-        "__extracted_func_0(lambda value: value.lower(), columns, rows)",
-        "__extracted_func_0(lambda value: value.title(), columns, rows)",
+        "__extracted_func_0(rows, columns, lambda value: value.strip())",
+        "__extracted_func_0(rows, columns, lambda value: value.lower())",
+        "__extracted_func_0(rows, columns, lambda value: value.title())",
     ]
-    assert "new_row[column] = __param_0(value)" in generated
+    assert "new_row[column] = _param_0(value)" in generated
     assert same
 
 
@@ -130,10 +130,10 @@ def test_an_attribute_of_a_loop_variable_becomes_a_callback(tmp_path: Path) -> N
     """Audit case 42 (engine map D2): ``item.weight_kg`` against ``item.volume_l`` in a loop."""
     generated, same = refactored_scenario(tmp_path, "by_value/typed_attr")
     assert helper_calls(generated) == [
-        "__extracted_func_0(lambda item: item.weight_kg, items)",
-        "__extracted_func_0(lambda item: item.volume_l, items)",
+        "__extracted_func_0(items, lambda item: item.weight_kg)",
+        "__extracted_func_0(items, lambda item: item.volume_l)",
     ]
-    assert "total += __param_0(item) * item.quantity" in generated
+    assert "total += _param_0(item) * item.quantity" in generated
     assert same
 
 
@@ -216,7 +216,7 @@ def test_an_attribute_of_a_comprehension_target_becomes_a_callback(
     """Sound in both modes: the callback is called where the block read the attribute."""
     generated, same = refactored(tmp_path, COMPREHENSION_TARGET, strict=strict)
     assert "lambda item: item.name" in generated and "lambda item: item.price" in generated
-    assert "[__param_0(item) for item in items if item.price]" in generated
+    assert "[_param_0(item) for item in items if item.price]" in generated
     assert same
 
 

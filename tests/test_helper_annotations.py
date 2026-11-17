@@ -608,4 +608,4 @@ def test_original_owned_annotated_local_partial_stays_refused(
     (proposal,) = proposals
     changed = engine.apply_refactoring(str(path), proposal)
     assert "lambda label: label.upper()" in changed and "_towel_owner" in changed
-    assert "return __param_0(label) + str(total)" in changed
+    assert "return _param_0(label) + str(total)" in changed
