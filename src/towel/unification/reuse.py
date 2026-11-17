@@ -50,6 +50,7 @@ from .import_graph import imported_alias_sites
 from .module_bindings import global_bindings
 from .import_graph import import_runs_new_code, would_create_import_cycle
 from .rebinding import rebinding_reason
+from .redirect_scope import redirect_resolves_at_module
 
 
 @dataclass(frozen=True)
@@ -501,14 +502,21 @@ class ExistingFunctionReuse(EngineState):
         site = functions.innermost_at(file_path, replacement.line_range)
         if site is None:
             return False
-        scope = site.scope_analyzer.node_scopes.get(site.node)
-        if scope is None:
+        tree = site.scope_analyzer.analyzed_tree
+        if not isinstance(tree, ast.Module) or not redirect_resolves_at_module(
+            tree, replacement, name
+        ):
             return False
-        binding = scope.lookup(name)
+        binding = site.root_scope.lookup(name)
         if file_path == target.file_path:
             return binding is not None and binding.node is target.node
+        bindings = global_bindings(site.source)
+        if bindings is None or bindings.star_imports or name in bindings.rebound_by_global:
+            return False
         if binding is None:
-            return True
+            # The placement analyzer omits starred targets and deletion
+            # bindings. An added import must not replace such a module name.
+            return name not in bindings.bindings
         statement = binding.node
         if binding.scope_id != site.root_scope.scope_id or not isinstance(
             statement, ast.ImportFrom
