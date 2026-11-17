@@ -1,8 +1,7 @@
 # Compatibility and automation
 
-[Documentation index](README.md)
-
-This contract applies to **1.949 and later releases**. Towel remains beta.
+This contract has applied since **1.949**; what 2.0 added is marked "Added
+in 2.0". Towel remains beta.
 Correctness repairs may decline previously accepted extractions or change
 the generated code; the contract does not freeze extraction counts, helper
 names, formatting, timing, diagnostic wording or human-readable console output.
@@ -49,7 +48,7 @@ or a declined confirmation is cancellation, not completed work.
 success with `iteration_cap`; it does not assert that all opportunities were
 exhausted. A time limit stops an incomplete attempt with status 124 and no
 published output. Final publication and cleanup may extend beyond the elapsed
-limit so they can finish safely. See [bounded runs](CLI_GUIDE.md#control-tools-and-work).
+limit so they can finish safely. See [bounded runs](CLI_GUIDE.md#limits).
 
 Human-readable output is intended for people. Errors, warnings and progress go
 to stderr. Use explicit structured output for automation and check the process
@@ -73,7 +72,7 @@ The preview/dry result schema is version 1:
 | --- | --- |
 | `schema_version` | Integer `1`. |
 | `command` | `"preview"` or `"dry"`. |
-| `mode` | `"relaxed"`, the default, or `"strict"` when the run was given `--strict`. Added in 2.0; a result without it came from an earlier release, which had only strict behaviour. |
+| `mode` | `"relaxed"`, the default, or `"strict"` when the run was given `--strict`. Added in 2.0; a result without it came from an earlier release, which had only strict behavior. |
 | `status` | `"complete"`, `"incomplete"` or `"error"`. |
 | `types` | On completed runs, `"verified"` means a checker ran and verified the accepted changes, `"unverified"` means no checker was available (including a missing configured checker in relaxed mode), and `"off"` means `--no-types`; absent when an available checker had no readable source to check, or on failed or interrupted runs (see `status` and `error`). |
 | `input` | Absolute input path. |
@@ -84,6 +83,12 @@ The preview/dry result schema is version 1:
 | `diff` | Unified diff for a completed preview; otherwise an empty string. |
 | `helpers` | Helper inventory object, or `null` if unavailable. An optional inventory-read failure does not undo successful publication. |
 | `error` | Human-readable failure explanation, or `null`. |
+| `config_path` | Absolute path of the `pyproject.toml` whose `[tool.towel]` table the run used, or `null`. Added in 2.0. |
+| `outcome` | On a completed run, `"applied"`, `"all_left_alone"` (similar code found, none extracted), `"no_repeated_code"` or `"no_python_files"`; `null` on failure. Added in 2.0. |
+| `analysed` | `{"files": N, "functions": M, "skipped": [...]}`: what the run read, and each file it skipped with the reason; `null` on failure. Added in 2.0. |
+| `left_alone` | How many places with similar code the run lists as left alone by default; `0` on failure. Added in 2.0. |
+| `relaxed_findings` | In relaxed mode, code that may depend on what strict mode keeps: a list of `{"kind", "path", "line", "detail"}`, where `kind` is `"finalizer"`, `"weakref_callback"`, `"gc_callback"` or `"function_rebinding"`. Added in 2.0. |
+| `partial_diff`, `finally_confirmed` | Only on a preview stopped before it finished (`status` `"incomplete"`): the diff of what it had done, which was not checked as a whole, and `false`. Added in 2.0. |
 
 When `published` is `null`, inspect the destination and any recovery journal
 before retrying. An explicit interrupt or error can happen after source
@@ -125,7 +130,8 @@ The supported surface consists of:
 - `UnificationRefactorEngine` with the documented basic constructor options
   `min_lines`, `max_parameters`, `parameterize_constants`,
   `parameterize_builtins`, `excluded_directories`, `cross_module_helpers`,
-  `skip_trivial_helpers`, `annotate_helpers` and `max_candidate_pairs`.
+  `skip_trivial_helpers`, `annotate_helpers`, `max_candidate_pairs` and
+  `strict` (added in 2.0).
 - Its `analyze_file`, `analyze_files`, `plan_refactoring`,
   `refactor_to_fixed_point` and `refactor_directory_to_fixed_point` methods,
   with their documented argument and return shapes.
@@ -156,3 +162,5 @@ update those pins deliberately.
 Security fixes are provided for the latest released version under the
 [security policy](https://github.com/ericeallen/towel/blob/main/SECURITY.md). This is a solo-maintained project with
 best-effort support and no response-time commitment.
+
+[Documentation index](README.md)

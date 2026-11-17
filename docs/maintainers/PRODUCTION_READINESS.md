@@ -196,7 +196,7 @@ that this campaign finished without an OOM termination. The interrupted host
 collector's records were recovered from the completed container without
 rerunning the workload.
 
-The [controlled full-CLI comparison](../PERFORMANCE.md#1947-published-release-comparison)
+The [controlled full-CLI comparison](PERFORMANCE_HISTORY.md#1947-published-release-comparison)
 with 1.946 observed mean increases of 2.58% for Click, 8.84% for Rich and 1.25%
 for Voluptuous. All distinct generated outputs matched their original consumer
 test outcomes. Two samples per version on a shared host do not establish
@@ -233,7 +233,7 @@ and one `TIMEOUT`. PrettyTable's baseline passed 338 tests; no transformed-suite
 result was available from the timed-out run. The corpus is incomplete and does
 not clear release acceptance.
 
-The [bounded investigation](../PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+The [bounded investigation](PERFORMANCE_HISTORY.md#1947-prettytable-warning-classifier-repair)
 identified repeated parsing caused by an overly conservative warning classifier.
 Its narrow runtime correction requires a fresh candidate and complete release
 gates. The isolated completed diagnostic does not transfer earlier gate results
@@ -304,7 +304,7 @@ to the definition-time builtin-mapping guard: 2,988 calls over five exact
 source strings, 99.8327% repeated. The independently verified published 1.946
 wheel completed the same case with byte-identical Python output. Partial
 profiles identify the cause but do not establish a production speed ratio.
-See the [performance investigation](../PERFORMANCE.md#1947-large-module-builtin-guard-repair).
+See the [performance investigation](PERFORMANCE_HISTORY.md#1947-large-module-builtin-guard-repair).
 
 The repaired guard conservatively covers all explicit module/global fallback
 reads and implicit import/class lookups under possible mapping replacement,
@@ -312,7 +312,7 @@ including wildcard imports exporting `__builtins__` through `__all__` and
 ordinary `receiver.__builtins__` stores/deletions anywhere in the analyzed
 program. One fresh analysis-owned boolean carries the program-wide hazard;
 excluded runnable files count, and unknown input cannot establish absence.
-See the [evaluation-scope policy](../GENERATED_CODE.md#arguments-and-evaluation).
+See the [evaluation-scope policy](../design/GENERATED_CODE_RULES.md#arguments-and-evaluation).
 A separate source-local memo reuses only the immutable source/parser-dependent
 builtin-mapping verdict within a weakly owned scope analyzer, with one source and an 8 MiB source-storage budget per
 analyzer. Warning-capable sources and disabled
@@ -504,7 +504,7 @@ again: complete paired backslashes no longer cause the guard refusal, while
 native diagnostic and cache boundaries remain fixed. Its scoped checks do not
 inherit the `a6dc6ed` timings or certify a release. A new final freeze, fresh
 complete gates and new source-bound timing evidence remain pending. See the
-[parity addendum](../PERFORMANCE.md#october-10-backslash-parity-repair) and the [investigation](../PERFORMANCE.md#october-10-voluptuous-regression-investigation).
+[parity addendum](PERFORMANCE_HISTORY.md#october-10-backslash-parity-repair) and the [investigation](PERFORMANCE_HISTORY.md#october-10-voluptuous-regression-investigation).
 
 At that audit freeze, the complete canonical suite passed **10,583 tests and
 45 subtests**, with 32 skips and eight warnings. Coverage was **93.478046%**
@@ -552,7 +552,7 @@ pairs, visible payloads and output references matched, with every runtime
 CPU shortfall retained. This is shared-host evidence, not isolated-host
 certification; the performance-restoration target remains unmet. All eight
 owned containers and measurement workers closed, and source and frozen
-instrument bytes stayed unchanged. See [performance details](../PERFORMANCE.md#october-10-click-and-rich-assessment),
+instrument bytes stayed unchanged. See [performance details](PERFORMANCE_HISTORY.md#october-10-click-and-rich-assessment),
 the [source-bound evidence guide](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-preparation/README.md)
 and [eight-sample record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-preparation/measurements.json).
 
@@ -680,14 +680,14 @@ change from the preceding candidate's corpus was python-dotenv, PASS to
 NO_CHANGE. No new runtime regression outside the pinned reflection
 expectations was found in this completed corpus.
 
-The [October 5 complete CLI comparison](../PERFORMANCE.md#october-5-repaired-candidate-comparison)
+The [October 5 complete CLI comparison](PERFORMANCE_HISTORY.md#october-5-repaired-candidate-comparison)
 measured the repaired runtime at **43.43 seconds versus 38.80 seconds** for
 published 1.772, **11.9% slower**, on the controlled typed, formatted Packaging
 fixture. Four fresh-process observations per arm were repeatable under the
 recorded background activity. The candidate applied 20 refactorings versus
 18; this is not an identical-transformation comparison or a whole-corpus
 speedup. The measured runtime was unchanged since `c5311b4`; the October 6
-repairs and optimizations have separate [paired installed CLI measurements](../PERFORMANCE.md#october-6-optimization-experiments).
+repairs and optimizations have separate [paired installed CLI measurements](PERFORMANCE_HISTORY.md#october-6-optimization-experiments).
 All three bounded optimization comparisons produced identical outputs and
 established no complete-command speedup. They do not compare the changed
 October 6 source with published 1.772 or clear a release gate.
@@ -711,7 +711,7 @@ including through their callees. Ordinary behavior within that scope must be
 preserved or the transformation refused; reflection is not detected to refuse
 programs.
 
-The [October 2 complete CLI comparison](../PERFORMANCE.md#october-2-complete-cli-comparison)
+The [October 2 complete CLI comparison](PERFORMANCE_HISTORY.md#october-2-complete-cli-comparison)
 measured the controlled typed, formatted Packaging fixture at 36.24 seconds
 versus 41.59 seconds for published 1.772, about 13% faster. It used runtime
 commit `000d751`, applied one more refactoring than 1.772 and preserved the

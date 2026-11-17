@@ -280,7 +280,7 @@ def test_preparation_performance_summaries_match_all_retained_samples() -> None:
             "docs/maintainers/RELEASE_HISTORY.md",
             "CHANGELOG.md",
             "docs/maintainers/RELEASE_1_946.md",
-            "docs/PERFORMANCE.md",
+            "docs/maintainers/PERFORMANCE_HISTORY.md",
         )
     }
     for project in ("click", "rich"):
@@ -363,12 +363,13 @@ def test_directory_guide_example_reanalyzes_and_preserves_input(
     elif engine.strict:
         assert "__extracted_func_" in output
     else:
-        assert output.count("return checkout_total(amount)") == 2
-        assert "__extracted_func_" not in output
+        # The quick start's three functions differ in a rate: one helper, one-line callers.
+        assert output.count("return __extracted_func_0(amount, ") == 3
+        assert "_towel_" not in output
     before: dict[str, object] = {}
     after: dict[str, object] = {}
     observe = (
-        "\nobservations = [(checkout_total(n), quote_total(n), invoice_total(n)) "
+        "\nobservations = [(checkout_total(n), member_total(n), wholesale_total(n)) "
         "for n in range(-5, 151)]"
     )
     exec(code + observe, before)

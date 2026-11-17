@@ -1,0 +1,16 @@
+import unittest
+
+from shop.pricing import checkout_total, member_total, wholesale_total
+
+
+class PricingTests(unittest.TestCase):
+    def test_prices(self):
+        expected = {
+            checkout_total: (5.0, 53.6, 194.4),
+            member_total: (5.0, 45.5, 162.0),
+            wholesale_total: (5.0, 37.4, 129.6),
+        }
+        for calculate, prices in expected.items():
+            for amount, price in zip((0, 50, 200), prices):
+                with self.subTest(function=calculate.__name__, amount=amount):
+                    self.assertEqual(calculate(amount), price)

@@ -585,37 +585,22 @@ def test_naming_guide_example_works_on_quickstart_and_omits_private_skill(tmp_pa
     )
     assert dry_res.status == 0, dry_res.stderr
 
-    json_blocks = re.findall(r"(?ms)^```json\n(.*?)^```", naming_doc)
+    json_blocks = re.findall(
+        r"(?ms)Save\s+this\s+as\s+`renames.json`:\n\n```json\n(.*?)^```", naming_doc
+    )
     assert json_blocks, "expected a JSON mapping example in docs/NAMING.md"
     renames_file = tmp_path / "renames.json"
     renames_file.write_text(json_blocks[0], encoding="utf-8")
 
     applied = invoke(
-        [
-            "rename-helpers",
-            str(cleaned),
-            "--complete-scope",
-            "--rename-file",
-            str(renames_file),
-        ]
-    )
-    # Approved reuse retains checkout_total; the historical generated-helper
-    # key must fail atomically. Rename the implementation that actually exists.
-    generated = (cleaned / "charges.py").read_text(encoding="utf-8")
-    assert generated.count("return checkout_total(amount)") == 2
-    assert "__extracted_func_" not in generated
-    assert applied.status == 2
-    assert "Unknown rename key 'charges.py:__extracted_func_0'" in applied.stderr
-    assert (cleaned / "charges.py").read_text(encoding="utf-8") == generated
-    renames_file.write_text(
-        json_blocks[0].replace("charges.py:__extracted_func_0", "charges.py:checkout_total"),
-        encoding="utf-8",
-    )
-    renamed = invoke(
         ["rename-helpers", str(cleaned), "--complete-scope", "--rename-file", str(renames_file)]
     )
-    assert renamed.status == 0, renamed.stderr
-    assert "discounted_total_with_shipping" in (cleaned / "charges.py").read_text(encoding="utf-8")
+    # The 2.0 quick start's three functions differ in a rate: one generated helper,
+    # with a generated parameter, both renamed by the guide's path-qualified keys.
+    assert applied.status == 0, applied.stderr
+    renamed = (cleaned / "charges.py").read_text(encoding="utf-8")
+    assert "def discounted_total(amount, discount_rate" in renamed
+    assert "__extracted_func_" not in renamed and "_param_0" not in renamed
 
     check = subprocess.run(
         [sys.executable, "-m", "unittest", "discover", "-s", str(cleaned)],

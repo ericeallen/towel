@@ -1,105 +1,111 @@
 # Sharing helpers across modules
 
-[Documentation index](README.md)
+By default Towel shares a helper only within one module. With `--cross-module`
+it also shares one between modules: the helper goes into one of them and the
+others import it. In this project, `shop/invoices.py` imports `shop.orders`
+and repeats the calculation in `order_total`:
 
-Cross-module sharing adds imports between project modules. It is opt-in: pass `--cross-module` on the command line or `cross_module_helpers=True` to the engine.
+```bash
+towel preview shop/ --cross-module
+```
 
-On this page:
+```diff
+Would apply 2 refactoring(s).
+Analysed 3 Python files (3 functions).
+Would change 2 file(s):
+  invoices.py: 1 refactoring(s)
+    - Extract common code from invoice_total (invoices.py) and order_total (orders.py)
+  orders.py: 1 refactoring(s)
+    - Extract common code from invoice_total (invoices.py) and order_total (orders.py)
+--- before/invoices.py
++++ after/invoices.py
+@@ -1,11 +1,9 @@
+ import shop.orders
++from shop.orders import __extracted_func_0
 
-- [How a cross-module import is spelled](#how-a-cross-module-import-is-spelled)
-- [When a host is available](#when-a-host-is-available)
-- [Resolving import refusals](#resolving-import-refusals)
-- [Dependency metadata](#dependency-metadata)
-- [What the preflight reports](#what-the-preflight-reports)
-- [Missing and optional modules](#missing-and-optional-modules)
-- [Annotation-only imports](#annotation-only-imports)
 
-## How a cross-module import is spelled
+ def invoice_total(invoice):
+-    subtotal = invoice.amount_due
+-    tax = round(subtotal * 0.08, 2)
+-    shipping = 0 if subtotal >= 100 else 5
+-    return round(subtotal + tax + shipping, 2)
++    return __extracted_func_0(invoice.amount_due)
 
-With `cross_module_helpers` (`--cross-module`), a helper shared by several
-modules lives in one of them and the others import it. Towel reads the
-imports every Python file of the project already makes, and writes only an
-import those show to work wherever the program runs
-([Design decisions](design/DECISIONS.md), *Import names come from the program*):
 
-- between two modules of one package, the relative import, or the absolute
-  one when the importing module already spells its own package absolutely
-  and never relatively;
-- across top-level packages, an absolute import only when the importing
-  package already imports the other one, spelled as it already does;
-- into a directory only where the importing side already imports from it,
-  with an import that runs whenever its module is imported, not one inside a
-  function, so a library never borrows from the test package inside it;
-- never from a module the build configuration leaves out of what ships into
-  one it keeps, read in each distribution's own configuration:
-  - hatch's `exclude`, `include`, `only-include`, `packages`,
-    `only-packages` and its default wheel selection;
-  - setuptools' `packages.find` (`where`, `include`, `exclude`), an explicit
-    `packages` list, `package-dir` and `py-modules`;
-  - MANIFEST.in's `exclude`, `recursive-exclude`, `global-exclude` and
-    `prune` (a wheel built from the sdist lacks what the sdist does);
-  - Poetry's `packages` (`include`, `from`, `format`), `include`, `exclude`
-    and its default package;
-  - PDM's `includes`, `excludes`, `source-includes`, `package-dir` and its
-    default;
-  - uv's `module-name`, `module-root`, `source-include`, `source-exclude`
-    and `wheel-exclude`;
-  - flit's module and sdist `exclude`;
-  - scikit-build-core's `wheel.packages` and excludes;
-  - what a `.gitignore` covers.
+ def reorder(invoice):
+--- before/orders.py
++++ after/orders.py
+@@ -1,5 +1,8 @@
+-def order_total(order):
+-    subtotal = order.subtotal
++def __extracted_func_0(__param_0):
++    subtotal = __param_0
+     tax = round(subtotal * 0.08, 2)
+     shipping = 0 if subtotal >= 100 else 5
+     return round(subtotal + tax + shipping, 2)
++
++def order_total(order):
++    return __extracted_func_0(order.subtotal)
+Input files were not changed.
+```
 
-  The module left out may still borrow from the one that ships. What a
-  setup.py or a build hook leaves out is not known, and a setting Towel
-  cannot interpret puts the host in doubt;
-- never from a module some supported platform or Python cannot import: one
-  whose module-level code imports what CPython's documentation marks as
-  available on some platforms only (`msvcrt`, `fcntl`, `os.startfile`,
-  `signal.SIGALRM`), a module a supported Python removed, or a dependency a
-  marker limits. A `try` that catches `ImportError` keeps its imports
-  optional;
-- never from a module the program imports only under a condition (an `if`,
-  a `try`, a function body), for a borrower that does not already load it
-  (`conditionally_imported_host`);
-- never across distributions: a borrower in a distribution, the nearest
-  directory with a `setup.py`, a `setup.cfg` with `[metadata]` or
-  `[options]`, or a `pyproject.toml` with `[project]`, `[build-system]` or
-  `[tool.poetry]`, borrows only from a host in the same one, since it may be
-  installed against the other's released version (`other_distribution`). A
-  module in no distribution, such as a root test or script, is exempt.
+The helper went into `shop/orders.py`, which `invoices.py` already imports, so
+the new import loads nothing that was not loaded before. The run counts one
+refactoring for each file it changes, so one shared helper is two here.
 
-## When a host is available
+## When modules share nothing
 
-The new import must preserve what runs and when. Towel counts a host as
-already present from the borrower's enclosing packages and explicit module
-imports before its first definition, including those imports' parent packages.
-For example, `import pkg.host` and `from pkg.host import value` load `pkg.host`;
-`from pkg import host` may read an ordinary attribute instead. An imported
-module may still be initializing, so its own later imports do not prove that
-another host is ready.
+Towel adds an import between two modules only when one of them already
+imports the other, unconditionally, at its top. Otherwise an import could run
+code earlier, or in a different order, than before. Save this as
+`shop/invoices.py`, which no longer imports `shop.orders`:
 
-Towel does not advance an original module load past definitions. It also
-refuses a new submodule load: importing `pkg.host` can replace an ordinary
-value already bound to `pkg.host`, even when the module's body has no effects.
-A fresh top-level host must contain only literal bindings and inert function
-definitions, apart from standard future directives, and still pass the other
-import checks. These restrictions can decline otherwise similar duplicates;
-changing the program's imports to enable sharing requires its own behavioral
-review.
+```python
+def invoice_total(invoice):
+    subtotal = invoice.amount_due
+    tax = round(subtotal * 0.08, 2)
+    shipping = 0 if subtotal >= 100 else 5
+    return round(subtotal + tax + shipping, 2)
+```
 
-A fresh shared helper is defined before ordinary imports and effects, after
-the module header, docstring and future directives. Annotations that need
-bindings are quoted, so defining it needs no later bindings. This lets a
-partially initialized host supply the helper. Reusing a generated helper
-requires its existing definition to be available before operations that could
-reenter the module.
+```bash
+towel preview shop/ --cross-module --summary
+```
+
+```text
+Would apply 0 refactoring(s).
+...
+--cross-module shared nothing between modules. What each pair of modules lacked:
+  invoices.py and orders.py: shop.orders does not import shop.invoices at its top, and loading shop.invoices there would replace the attribute invoices of package shop.
+A module can share a helper with another only if one of them already imports the other, unconditionally, at its top, before its first definition; the helper then goes into the module imported. Adding that import is the one change that lets Towel share such code.
+Input files were not changed.
+```
+
+Add the import if the modules belong together, and run Towel again. Towel
+also shares nothing between modules of different distributions (directories
+with their own `pyproject.toml`, `setup.cfg` or `setup.py`). A module the
+build ships never borrows a helper from one the build leaves out, or from one
+that only some platforms or Python versions can import.
+
+## After a cross-module run
+
+- **Imports below the helper.** A helper goes before the host module's other
+  imports, so that it exists even while the module is still being imported.
+  Ruff and flake8 then report those imports as E402, "module level import not
+  at top of file". If no module imports the host back while it loads, move the
+  helper below the imports; otherwise add `# noqa: E402` to them.
+- **Builtins and modules read directly.** In relaxed mode, the default, a
+  shared helper reads a builtin such as `len`, or a module both sides import
+  the same way, directly, unless the project could rebind that name.
+  `--strict` passes them in as arguments.
+- **Python API.** `cross_module_helpers=True` turns the feature on for an
+  engine ([Python API](USAGE_GUIDE.md)).
 
 ## Resolving import refusals
 
-A host that no participating module can import that way is not taken, and a
-pair with no such host is declined (`unproven_import`). The costs: sibling
-packages that never import each other share nothing; a directory of scripts
-that import nothing local gets no cross-file helpers; and a name in doubt
-gets none. Each kind of doubt has its own remedy:
+A run that cannot tell which file an import names, or which copy of a module
+the program runs, refuses to share that module's code (`unproven_import`), and
+before it starts it names each such problem with its remedy:
 
 - a second copy in the tree, such as a stale `build/lib/alpha` beside
   `src/alpha`, or an import that names a module two ways or climbs out of
@@ -129,62 +135,7 @@ gets none. Each kind of doubt has its own remedy:
   is no such sign, and nor is any when the project's metadata names the
   project as the name's distribution, as sphinx's names `Sphinx`.
 
-## Dependency metadata
+Every rule Towel follows, including the build tools and dependency files it
+reads, is in [cross-module sharing, in full](design/CROSS_MODULE_RULES.md).
 
-The requirements read are PEP 621's dependencies and extras, PEP 735's
-dependency groups, Poetry's dependency tables and groups, the development
-dependencies of `[tool.uv]` and `[tool.pdm]`, every hatch environment's
-`dependencies` and `extra-dependencies` (pyproject.toml or hatch.toml),
-setup.cfg's `install_requires` and `extras_require`, a Pipfile, the
-lockfiles uv, Poetry, PDM and Pipenv write, and the requirements files at
-the project root: `requirements*.txt`, `*-requirements.txt` and
-`*_requirements.txt`, the same with pip-tools' `.in`, and every `.txt` or
-`.in` in `requirements/`, with the files they include. tox.ini, a noxfile
-and CI recipes are not read. A distribution is
-matched to a name by its own normalized name, so one whose import name
-differs (`PyYAML` provides `yaml`) is recognized only where the interpreter
-running Towel can import it: run Towel in the project's own environment.
-
-## What the preflight reports
-
-On the command line, a `--cross-module` run names each such problem before
-it starts, with the remedy for its kind, and refuses when one leaves a name
-of the package it refactors in doubt: an ambiguous name, a file reachable
-under two names, a relative import that climbs out of its package, or a
-top-level name found only inside a package the program also imports as one,
-as `pkg/c.py`'s `import helpers` finds only `pkg/helpers.py`. The report
-names the import that treats it as top-level. Only an import that attests
-locates a name, makes it ambiguous, or finds it inside a package: one
-inside `try`/`except ImportError`, under a runtime condition, or in a file
-that changes `sys.path` (a setup.py that appends its package to `sys.path`
-to read its own version) does none of these. One that runs can still load a
-file under a second name, so it still counts for that. An imported
-`TYPE_CHECKING` flag is mutable: its guarded imports may run, even though they
-do not establish an unconditional dependency.
-
-## Missing and optional modules
-
-An import of a module the tree lacks refuses nothing, wherever it lies,
-however it is spelled: `from .gone import x`, `from . import gone` or
-`from pkg import gone`, where `pkg`'s initializer binds no `gone`. One
-under a proved immutable false guard, such as `if 0 > 1:`, never runs and is
-excluded. `if TYPE_CHECKING:` does not provide that runtime proof. The
-run leaves the file making it exactly as it was, neither hosting nor
-borrowing a helper and getting none of its own, and says so, naming the
-file: test data such as sphinx's `need_mocks.py`, which imports a module its
-tests mock, or an example importing a module that no longer exists, can be
-left out with `--exclude`; a package's own import of the `_version.py` its
-build generates, missing from a fresh clone, is resolved by installing the
-project (`pip install -e .`). When that file is a package's `__init__.py`,
-which importing any module below it runs, those modules host a helper only
-for modules imported through the package, and the run says so in one line.
-
-## Annotation-only imports
-
-Without `cross_module_helpers` no import between the project's modules that
-runs is ever written. A helper's annotation may still need a type from
-another module; that import is written under `if 0 > 1:`, an immutable false
-comparison that mypy and pyright still read for types. It is spelled by the
-same rules, and where no import is known to work the annotation keeps the
-checker's full name. Existing `TYPE_CHECKING` guards keep their runtime behavior;
-Towel does not add generated imports to them.
+[Documentation index](README.md)

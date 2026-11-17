@@ -5,7 +5,7 @@
 ## Current release observations
 
 The latest release is **1.947**, published October 26, 2026. Its
-[controlled comparison](../../PERFORMANCE.md#1947-published-release-comparison)
+[controlled comparison](../../maintainers/PERFORMANCE_HISTORY.md#1947-published-release-comparison)
 with 1.946 observed full-CLI mean increases of 2.58% for Click, 8.84% for Rich
 and 1.25% for Voluptuous, with original consumer outcomes preserved. These
 are two samples per version on a shared host, not a general performance claim.

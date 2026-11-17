@@ -106,6 +106,8 @@ docs/docs_local/
 *.txt
 # Retained release output is intentional, versioned test evidence.
 !tests/release_evidence/**/*.txt
+# The documentation's example projects keep their Python sources as .py.txt.
+!tests/documentation_projects/**/*.py.txt
 !requirements.txt
 
 # Local task/scratch state (not part of the project)

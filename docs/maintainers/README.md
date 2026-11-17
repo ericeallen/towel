@@ -17,6 +17,7 @@ the [documentation index](../README.md) instead.
 - [1.947 overview](RELEASE_1_947.md): the seven audit repairs, scope changes and validation boundary.
 - [1.946 overview](RELEASE_1_946.md): historical improvements since 1.792 and their limits.
 - [Historical release evidence](RELEASE_HISTORY.md): earlier releases' records, under their original sources.
+- [Performance measurements, through 1.949](PERFORMANCE_HISTORY.md): dated timing investigations and release comparisons, with their conditions.
 
 ## Reviews and audits
 

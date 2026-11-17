@@ -10,6 +10,80 @@ mnemonics with PEP 440 ordering; see the
 
 ## [Unreleased]
 
+Towel 2.0: a relaxed default that extracts far more, and plain calls in place
+of strict mode's bookkeeping. The [documentation](https://ericeallen.github.io/towel/)
+is now a site, and shows every command's output.
+
+### Upgrade notes
+
+- **Relaxed mode is the default.** Towel assumes a program does not depend on
+  exactly when Python frees an object it no longer uses, that reading an
+  attribute or comparing has no side effects, and that module functions are
+  not rebound while a helper runs. `--strict`, or `strict = true` under
+  `[tool.towel]`, keeps 1.949's behavior exactly
+  ([relaxed and strict](https://github.com/ericeallen/towel/blob/main/docs/RELAXED_AND_STRICT.md)).
+- **`preview --check` exits 3** when it would change code. Status 3 is new, and
+  only `--check` returns it.
+- **Abbreviated options are refused**: `--summ` is exit 2, `unrecognized
+  arguments`. Scripts must spell options in full.
+- **`rename-helpers --llm` is deprecated**: it prints a warning and will be
+  removed; the prompt is the same for every assistant.
+- **`--time-limit` above 100,000,000 seconds is refused** (exit 2) instead of
+  ending in a traceback.
+- **Fewer workers by default**: at most eight, the core count and what fits in
+  memory. `--jobs N` or `TOWEL_WORKERS` overrides it.
+- **Progress defaults to `auto`**: a bar on a terminal, nothing in a pipe, and
+  no warning when tqdm is missing.
+- Unknown rename keys are refused with exit 2, and a rename without a project
+  root needs `--complete-scope`.
+
+### Added
+
+- Callers pass arguments as themselves wherever that cannot change what runs,
+  and call helpers directly; `lambda:` remains only where an expression must
+  run later, repeatedly or conditionally.
+- Copies that differ in an attribute of the block's own loop variable become
+  one helper with a callback (`lambda item: item.weight_kg`).
+- A block of statements that duplicates the whole body of an existing
+  function becomes a call to that function ("Reuse NAME"), where nothing can
+  rebind the function while it runs. A repeated expression gets a new helper.
+- Repeated multi-line expressions, blocks repeated inside one function, blocks
+  that `await` (as `async def` helpers), differing f-string text and
+  consistently renamed locals are extracted.
+- Every run reports what it read (`Analysed N Python files`), what it skipped,
+  and why it left code alone, in a sentence per reason, with what you can do.
+  `--explain` lists every place. In relaxed mode, files that do not parse are
+  skipped with a warning; `--strict` still refuses them.
+- `[tool.towel]` in `pyproject.toml` sets defaults (`--no-config` ignores it);
+  a `towel-check` pre-commit hook; `--quiet`; `--jobs`; `--include-ignored`;
+  `--complete-scope` on `dry` and `preview`; `dry --no-helper-metadata`;
+  `rename-helpers --format`; `-V`; `python -m towel`.
+- A typed project whose configured checker is missing runs untyped with a
+  warning; unannotated changes proceed past unresolved imports.
+- JSON results gain `mode`, `types`, `config_path`, `outcome`, `analysed`,
+  `left_alone` and `relaxed_findings` (schema 1, additive).
+- Python 3.14 and 3.15. Strict mode's lifetime guarantees are certified for
+  3.11 to 3.13; on later versions it leaves alone what they cover, so install
+  on 3.13 to use `--strict` (`uv tool install` now picks 3.14 or 3.15).
+
+### Changed
+
+- `dry` asks once, after the analysis, naming the files it will change, and
+  warns about uncommitted changes in place; `towel dry PATH` alone explains
+  that it needs an output.
+- Help lists options in four groups, states each default and fits the terminal.
+- Helpers keep the source's parameter order, spelling and indentation.
+- Files Git ignores, and `build/`, `dist/` and `*.egg-info`, are not analysed.
+
+### Fixed
+
+- A crash on a namespace package whose modules mypy renamed.
+- Group SIGINT and SIGTERM always exit 130 and 143, even when workers die first.
+- `preview` no longer fails on a file that does not decode.
+- Negative counts and huge time limits give argument errors, not tracebacks.
+
+### Maintenance
+
 - Ecosystem harness: a refusal the manifest reviews (`expected_refusal`) is
   `REFUSED`, which passes only while it lists exactly the reviewed problems;
   any other refusal or crash still fails. The manifest pins the reviewed
@@ -119,7 +193,7 @@ retain the state of their original candidates.
   excluded runnable files. Warning-free inputs reuse the
   source-only guard verdict within an analysis, avoiding repeated lexical scans
   while preserving native warning replay and parser-limit checks. See the
-  [captured-mapping policy](docs/GENERATED_CODE.md#arguments-and-evaluation).
+  [captured-mapping policy](docs/design/GENERATED_CODE_RULES.md#arguments-and-evaluation).
 - Local refreshes preserve incremental candidate pairing when the project root
   and builtin-mapping hazard are unchanged. Changing which files a refresh
   visits no longer triggers a full re-pair; genuine dependency changes and
@@ -515,7 +589,7 @@ formatted Packaging command: **11.9% slower**. Four fresh-process samples per
 arm produced consistent results in two balanced blocks. The candidate applied
 20 refactorings versus 18; these are full requested paths with different
 transformations, not identical-work timings. No whole-corpus speedup is
-established. See the [final comparison](docs/PERFORMANCE.md#october-5-repaired-candidate-comparison).
+established. See the [final comparison](docs/maintainers/PERFORMANCE_HISTORY.md#october-5-repaired-candidate-comparison).
 The earlier improvements below belong to their development checkpoints and
 are not final-release performance claims.
 
@@ -524,7 +598,7 @@ complete CLI comparisons measured immutable ownership memoization, witnessed
 fixed-Any retry pruning, and exact unchanged-context refusal retention. Each
 produced byte-identical output; none established a complete-command speedup.
 Those timings predate removal of the inner rendered-variant refusal memo and
-do not measure that removal. See [the optimization measurements](docs/PERFORMANCE.md#october-6-optimization-experiments).
+do not measure that removal. See [the optimization measurements](docs/maintainers/PERFORMANCE_HISTORY.md#october-6-optimization-experiments).
 
 - Cache pure ownership facts weakly by immutable AST identity, returning fresh
   mutable result sets to callers.
@@ -545,7 +619,7 @@ do not measure that removal. See [the optimization measurements](docs/PERFORMANC
   averaged 36.24 seconds versus 41.59 seconds
   for published 1.772, about 13% faster, while applying one more refactoring.
   Generated Python is unchanged from the preceding candidate. See the
-  [measurement conditions and samples](docs/PERFORMANCE.md#october-2-complete-cli-comparison).
+  [measurement conditions and samples](docs/maintainers/PERFORMANCE_HISTORY.md#october-2-complete-cli-comparison).
 
 An earlier comparison at development commit `3af8c4b` against the actual
 published 1.772 wheel found no meaningful Packaging whole-command speedup

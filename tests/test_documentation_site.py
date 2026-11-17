@@ -30,8 +30,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGURATION = ROOT / "zensical.toml"
-RECORD_GROUPS = ("Design (for contributors)", "Maintainers' records")
-RECORD_DIRECTORIES = {"Design (for contributors)": "design", "Maintainers' records": "maintainers"}
+USER_GROUPS = ("Getting started", "Guides", "Reference")
+CONTRIBUTORS = "Contributors"
+RECORD_GROUPS = ("Design", "Maintainers' records")
+RECORD_DIRECTORIES = {"Design": "design", "Maintainers' records": "maintainers"}
 
 
 def _project() -> dict[str, object]:
@@ -84,18 +86,54 @@ def test_an_unlisted_page_is_found(tmp_path: Path) -> None:
     assert _unlisted(tmp_path, entries) == ["sub/page.md"]
 
 
-def test_users_pages_come_first_and_records_stay_in_their_own_groups() -> None:
-    nav = _project()["nav"]
+def _check_grouping(nav: object) -> None:
     assert isinstance(nav, list)
     titles = [next(iter(item)) if isinstance(item, dict) else item for item in nav]
-    assert titles[0] == "Home" and tuple(titles[-2:]) == RECORD_GROUPS
+    assert titles == ["Home", *USER_GROUPS, CONTRIBUTORS]
     for group, target in _entries(nav):
         directory = PurePosixPath(target).parts[0] if "://" not in target else ""
-        holder = group[0] if group else ""
-        if holder in RECORD_DIRECTORIES:
-            assert directory == RECORD_DIRECTORIES[holder], f"{target} is filed under {holder}"
+        if group[:1] == (CONTRIBUTORS,):
+            holder = group[1] if len(group) > 1 else ""
+            assert holder in RECORD_DIRECTORIES or "://" in target, f"{target} is loose"
+            if holder in RECORD_DIRECTORIES:
+                assert directory == RECORD_DIRECTORIES[holder], f"{target} is filed under {holder}"
         else:
             assert directory not in RECORD_DIRECTORIES.values(), f"{target} is in the user's path"
+
+
+def test_users_pages_come_first_and_records_stay_in_their_own_groups() -> None:
+    """Cold reads of 2.0 found 16 proposals and 12 records beside the user's pages.
+
+    The navigation has the user's three groups, then one group for contributors
+    that holds the design pages and the maintainers' records, each in its own
+    subgroup, so a reader of the guides never browses past them.
+    """
+    _check_grouping(_project()["nav"])
+
+
+@pytest.mark.parametrize(
+    "nav",
+    [
+        [{"Home": "README.md"}, {"Guides": ["design/README.md"]}],
+        [
+            {"Home": "README.md"},
+            {"Getting started": ["QUICKSTART.md"]},
+            {"Guides": ["design/DECISIONS.md"]},
+            {"Reference": ["CLI_GUIDE.md"]},
+            {"Contributors": []},
+        ],
+        [
+            {"Home": "README.md"},
+            {"Getting started": ["QUICKSTART.md"]},
+            {"Guides": ["NAMING.md"]},
+            {"Reference": ["CLI_GUIDE.md"]},
+            {"Contributors": [{"Design": ["maintainers/README.md"]}]},
+        ],
+    ],
+)
+def test_the_grouping_check_rejects_records_in_the_users_path(nav: object) -> None:
+    with pytest.raises(AssertionError):
+        _check_grouping(nav)
 
 
 @pytest.mark.parametrize(
@@ -112,7 +150,7 @@ def test_users_pages_come_first_and_records_stay_in_their_own_groups() -> None:
 def test_the_users_pages_are_in_the_users_part_of_the_navigation(page: str) -> None:
     groups = {target: group for group, target in _entries(_project()["nav"])}
     assert page in groups
-    assert not set(groups[page]) & set(RECORD_GROUPS)
+    assert not set(groups[page]) & {*RECORD_GROUPS, CONTRIBUTORS}
 
 
 def test_headings_get_githubs_anchors_so_one_link_works_in_both_places() -> None:

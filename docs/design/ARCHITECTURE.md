@@ -287,7 +287,7 @@ higher-order factory literals stay fixed unless the explicit API promotion
 option is enabled. Lambda constant differences and deferred expressions can
 produce different kinds of arguments in one substitution; downstream guards
 still determine whether a complete candidate is emitted. See
-[the argument guide](../GENERATED_CODE.md#equal-looking-and-unused-arguments).
+[the argument guide](GENERATED_CODE_RULES.md#equal-looking-and-unused-arguments).
 
 The result is a `Substitution` (in `substitution.py`): the template, the ordered
 parameters, and, per parameter, the argument expression at each call site and
@@ -1694,7 +1694,7 @@ resident size of 174 MB under `--no-types --no-format`, and 11.9 s and
 2026 (the same machine and settings, other work loading it to a load
 average of 11 to 13): on 46,165 lines it takes 35 s under `--no-types
 --no-format` (22 applied) and 138 s with the defaults (21 applied). The tables in
-[KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md#performance) give the
+[KNOWN_LIMITATIONS.md](CORRECTNESS_MODEL.md#performance) give the
 per-project figures. The [published-wheel comparison](proposals/published-1772-comparison.md)
 records the later first-Pyright-reveal improvement and Packaging full-command
 result with their separate timing boundaries; it establishes no complete-Sphinx
@@ -2021,9 +2021,9 @@ Existing unparsed-program refusal rules and excluded non-parsing-file treatment
 remain unchanged. This scan does not inspect reflective namespace operations
 or retain source/ASTs in its boolean. The source-local module-binding facts
 include the same attribute-write condition. That boolean is separate from the
-bounded per-analyzer source-verdict memo; the [performance guide](../PERFORMANCE.md#1947-large-module-builtin-guard-repair)
+bounded per-analyzer source-verdict memo; the [performance guide](../maintainers/PERFORMANCE_HISTORY.md#1947-large-module-builtin-guard-repair)
 records its storage and warning-policy limits. Both pair and clustered-site
-checks apply the [captured-mapping dependency policy](../GENERATED_CODE.md#arguments-and-evaluation).
+checks apply the [captured-mapping dependency policy](GENERATED_CODE_RULES.md#arguments-and-evaluation).
 
 The current per-file hazard lookup is separate from bounded historical
 `(project root, hazard)` observations. A local refresh visits only rewritten

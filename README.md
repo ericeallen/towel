@@ -1,15 +1,110 @@
 # Towel
 
-Towel finds repeated Python code and extracts it into shared helper functions.
-Preview the changes, review the generated code, give the helpers meaningful
-names, and run your project's tests before adopting the result.
+**Towel finds duplicated Python code and refactors it for you.** It moves each
+repeated block into a shared helper function and replaces the copies with
+calls, even when the copies differ in a few names or values. Linters such as
+pylint's `duplicate-code` tell you where the copies are; Towel writes the
+helper and the calls, and leaves alone anything it cannot change safely.
 
-**Release status: 1.949 (beta).** This page describes that version. The
-[GitHub releases page](https://github.com/ericeallen/towel/releases) lists the
-published versions. The release notes there say what changed and, from 1.732
-on, how the release was validated.
+[![PyPI](https://img.shields.io/pypi/v/code-towel?label=code-towel)](https://pypi.org/project/code-towel/)
+[![Python](https://img.shields.io/pypi/pyversions/code-towel)](https://pypi.org/project/code-towel/)
+[![CI](https://github.com/ericeallen/towel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ericeallen/towel/actions/workflows/ci.yml)
+
+Two functions in `src/accounts.py` check a form the same way, except for the
+variable they check and the shortest name they allow. Ask Towel what it would
+do; `preview` changes nothing:
+
+```bash
+towel preview src/
+```
+
+```diff
+Would apply 1 refactoring(s).
+Analysed 1 Python file (2 functions).
+Would change 1 file(s):
+  accounts.py: 1 refactoring(s)
+    - Extract common code from register_user and register_admin
+--- before/accounts.py
++++ after/accounts.py
+@@ -1,16 +1,16 @@
++def __extracted_func_0(__param_0, __param_1):
++    if not __param_0.get("name"):
++        raise ValueError("name is required")
++    if len(__param_0["name"]) < __param_1:
++        raise ValueError("name is too short")
++    return save(__param_0)
++
++
+ def register_user(form):
+     user = dict(form)
+-    if not user.get("name"):
+-        raise ValueError("name is required")
+-    if len(user["name"]) < 2:
+-        raise ValueError("name is too short")
+-    return save(user)
++    return __extracted_func_0(user, 2)
+
+
+ def register_admin(form):
+     admin = dict(form, role="admin")
+-    if not admin.get("name"):
+-        raise ValueError("name is required")
+-    if len(admin["name"]) < 8:
+-        raise ValueError("name is too short")
+-    return save(admin)
++    return __extracted_func_0(admin, 8)
+Input files were not changed.
+```
+
+What differed between the copies became the helper's arguments. `towel dry`
+then makes the change: despite its name, it writes, and asks first (the name
+is for "don't repeat yourself"). `towel rename-helpers` gives the helper and
+its parameters real names; then run your tests and keep the change. The
+[quick start](https://github.com/ericeallen/towel/blob/v1.949/docs/QUICKSTART.md)
+does all of that in ten minutes.
+
+## Get started
+
+```bash
+uv tool install code-towel     # or: pipx install code-towel
+towel preview src/             # show what would change; writes nothing
+towel dry src/ src/            # make the change in place: commit your work first
+towel rename-helpers src/ --list   # the helpers to name, and their parameters
+```
+
+Giving the input path again as the output, as here, refactors the project in
+place. To keep the original, give `dry` a new directory instead:
+`towel dry src/ cleaned/`. A separate output path must not already exist or
+overlap the input.
+
+## What Towel will not do
+
+**What Towel promises.** A change Towel makes keeps what your program
+computes and does: its results, output, exceptions and the order of its side
+effects. That holds for programs that do not use reflection or
+self-instrumentation, including through code they call. Reflection here means
+reading frames, source or line numbers, as `inspect.stack()` does, or a log
+format with `%(funcName)s`; self-instrumentation means a tool that rewrites
+functions, such as pytest's assertion rewriting. Mark a function that depends
+on these with `# towel: no-extract`. In relaxed mode, the default, Towel also
+assumes that your program does not depend on when Python frees an object it no
+longer uses; that reading an attribute, indexing, comparing and arithmetic have
+no side effects; and that a module's functions, classes and imports are not
+rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
+none of these three assumptions. A change that breaks a program meeting these
+conditions is a bug.
+
+[Relaxed and strict](https://github.com/ericeallen/towel/blob/v1.949/docs/RELAXED_AND_STRICT.md)
+explains each assumption and when to use `--strict`.
 
 ## Install
+
+**Release status: 1.949 (beta).** This README and the guides it links
+describe Towel 2.0; `towel --version` shows the version you have. Versions
+before 2.0 have no relaxed mode (they behave as `--strict` does), no
+`--check` and no `[tool.towel]`. The
+[GitHub releases page](https://github.com/ericeallen/towel/releases) lists every
+published version with its release notes.
 
 The PyPI package is **[`code-towel`](https://pypi.org/project/code-towel/)**;
 the command is **`towel`**. The PyPI name `towel` belongs to an unrelated project,
@@ -25,7 +120,12 @@ towel --version
 towel --help
 ```
 
-uv downloads a suitable Python when the machine has none. Without uv or pipx,
+uv picks the newest Python it can, now 3.14 or 3.15, and downloads one when
+the machine has none. On Python 3.14 and later, `--strict` leaves alone what
+depends on the order Python frees objects, which CPython 3.14 changed, so it
+extracts less; the default, relaxed mode, is the same on every version. If you
+will use `--strict`, install on 3.13 with
+`uv tool install --python 3.13 code-towel`. Without uv or pipx,
 make a virtual environment with a Python in that range and install into it:
 
 ```bash
@@ -34,114 +134,56 @@ python3 -m venv .venv && .venv/bin/pip install "code-towel>=1.414"
 .venv/bin/towel --version
 ```
 
-A bare `pip install code-towel` often fails on a system Python: there may be
-no `pip` command, and Homebrew's and Debian's Pythons refuse to install outside
-an environment. The `>=1.414` stops an older Python with an old pip, such as
-the 3.9 that comes with macOS's developer tools, from installing a withdrawn
-1.0 release in place of this one.
+A bare `pip install code-towel` often fails on a system Python: Homebrew's and
+Debian's Pythons refuse to install outside an environment. The `>=1.414` keeps
+an old pip, such as the one with macOS's Python 3.9, from installing a
+withdrawn 1.0 release instead.
 
-The runtime uses only the standard library. Optional tools format inserted
-code and annotate and type-check generated helpers. Install them into the
-same environment as Towel:
+Towel itself needs only the standard library. To have it format the code it
+inserts and type-check the helpers it writes, install the optional tools into
+the same environment:
 
 ```bash
 uv tool install "code-towel[format,types]"     # or: pipx install "code-towel[format,types]"
 .venv/bin/pip install "code-towel[format,types]>=1.414"
 ```
 
-Towel uses these tools when installed; `--no-format` and `--no-types` turn
-either behavior off. Update with `uv tool upgrade code-towel`,
-`pipx upgrade code-towel` or `.venv/bin/pip install --upgrade code-towel`, or
-run without installing with `uvx --from code-towel towel --help`.
+A type checker needs your project's dependencies, which an environment of
+Towel's own does not have; for a typed project, run Towel in the project's
+environment
+([typed projects](https://github.com/ericeallen/towel/blob/v1.949/docs/TYPING.md)).
 
-## Try it on your project
+`--no-format` and `--no-types` turn either off for one run. Upgrade with
+`uv tool upgrade code-towel`, `pipx upgrade code-towel` or
+`.venv/bin/pip install --upgrade code-towel`, or try Towel without installing
+it: `uvx --from code-towel towel --help`.
 
-```bash
-# See the proposed changes without modifying your project.
-towel preview path/to/project
+## Learn more
 
-# Keep the original and write into a fresh sibling directory.
-towel dry path/to/project path/to/cleaned --no-interactive
-
-# Review the result before adopting it. diff exits 1 when it finds changes.
-diff -ru path/to/project path/to/cleaned
-```
-
-A separate output path must not already exist or overlap the input. Giving the
-input path again as the output refactors the project in place, so commit your
-work first. Helpers are shared within a module by default; `--cross-module`
-also shares them between modules.
-A complete preview runs the full transformation pipeline. `--quick` gives a
-partial structural listing, which does not predict the final result.
-
-Follow the [runnable quick start](https://github.com/ericeallen/towel/blob/v1.949/docs/QUICKSTART.md)
-for a complete example through extraction, naming, tests and adoption. The
-[naming guide](https://github.com/ericeallen/towel/blob/v1.949/docs/NAMING.md)
-includes a manual rename mapping; no LLM account is required.
-
-## What to expect
-
-Towel checks source correspondence, bindings, control flow and evaluation order,
-then declines transformations that fail those checks. An extraction must also
-repay the complexity of its helper and callers. Some repeated code is better
-left as it is.
-
-Helpers initially have names such as `__extracted_func_0`. Preserving evaluation
-and cleanup order can require lookup functions or argument-lifetime bookkeeping.
-Review the whole change, including callers. The
-[generated-code guide](https://github.com/ericeallen/towel/blob/v1.949/docs/GENERATED_CODE.md)
-explains those cases; the
-[command-line guide](https://github.com/ericeallen/towel/blob/v1.949/docs/CLI_GUIDE.md)
-covers exclusions, bounded runs, output formats and recovery.
+- [Quick start](https://github.com/ericeallen/towel/blob/v1.949/docs/QUICKSTART.md): a first refactoring, named, tested and kept.
+- [Reading Towel's output](https://github.com/ericeallen/towel/blob/v1.949/docs/GENERATED_CODE.md): helpers, parameters and the occasional `lambda`.
+- [Why something was left alone](https://github.com/ericeallen/towel/blob/v1.949/docs/WHY_LEFT_ALONE.md): every reason Towel gives, and what to do.
+- [Using Towel on a project](https://github.com/ericeallen/towel/blob/v1.949/docs/USING_TOWEL.md): branches, scope, long runs and reviewing a large change.
+- [Recipes](https://github.com/ericeallen/towel/blob/v1.949/docs/RECIPES.md): CI, pre-commit and `[tool.towel]` settings.
+- [Naming helpers](https://github.com/ericeallen/towel/blob/v1.949/docs/NAMING.md) and the [command reference](https://github.com/ericeallen/towel/blob/v1.949/docs/CLI_GUIDE.md).
+- [All documentation](https://github.com/ericeallen/towel/blob/v1.949/docs/README.md), also on [the documentation site](https://ericeallen.github.io/towel/).
 
 ## Requirements
 
 Python 3.11 to 3.15 on a POSIX system (macOS or Linux). Applying changes needs
-POSIX filesystem semantics. Parallel analysis uses the `fork` start method;
-under other start methods analysis runs on a single core. Windows is not a
-supported or validated release platform.
+POSIX filesystem semantics. Parallel analysis forks worker processes, as macOS
+and Linux both allow; where Python cannot fork, analysis runs on a single core.
+Windows is not a supported or validated release platform.
 
-One core is enough; `TOWEL_WORKERS=1` limits analysis to one worker. Memory,
-disk use and run time depend on the project and enabled tools. See
-[requirements and resources](https://github.com/ericeallen/towel/blob/v1.949/docs/REQUIREMENTS.md)
-and [performance measurements](https://github.com/ericeallen/towel/blob/v1.949/docs/PERFORMANCE.md)
-for measured workloads and their conditions.
+One core is enough, and `TOWEL_WORKERS=1` limits analysis to one worker. A
+module takes seconds; a large project with type checking can take an hour.
+[Requirements and performance](https://github.com/ericeallen/towel/blob/v1.949/docs/REQUIREMENTS.md)
+has the figures.
 
-## Checks and limitations
+## Contributing and security
 
-Towel's soundness requirement is to preserve the behavior of programs that do
-not use reflection or self-instrumentation, including through code they call.
-An accepted transformation that changes such a program's behavior is a bug;
-Towel must fix the transformation or refuse it.
-
-Reflection and source, AST, bytecode, frame or namespace inspection are outside
-its preservation guarantee, as is instrumentation that uses them to transform
-functions or classes. Towel does not scan for these behaviors or refuse code to
-protect them; decorators, ordinary calls and hooks have the same boundary.
-Protect sensitive definitions with `# towel: no-extract` immediately after
-the signature's final colon. The
-[function opt-out guide](https://github.com/ericeallen/towel/blob/v1.949/docs/CLI_GUIDE.md#protect-a-function)
-explains its placement and limits. Mark the frame whose identity matters,
-including when its callee inspects it. The marker preserves that definition's
-source, not module namespaces, absolute line numbers or unmarked call chains.
-Review the
-[known limitations](https://github.com/ericeallen/towel/blob/v1.949/docs/KNOWN_LIMITATIONS.md)
-and run your tests before adopting changes.
-
-In annotated projects, Towel uses the configured type checkers when available
-and preserves caller-side narrowing. Existing checker errors are compared
-against a baseline; a checker that cannot run refuses typed extraction.
-The [typing guide](https://github.com/ericeallen/towel/blob/v1.949/docs/TYPING.md)
-explains this policy and the unverified `--no-types` option.
-
-## Documentation and development
-
-The [documentation index](https://github.com/ericeallen/towel/blob/v1.949/docs/README.md)
-groups tutorials, task guides, technical reference, design decisions and
-release evidence. Contributors can start with
-[development setup and checks](https://github.com/ericeallen/towel/blob/v1.949/CONTRIBUTING.md);
-release maintainers should follow the
-[release procedure](https://github.com/ericeallen/towel/blob/v1.949/docs/maintainers/RELEASING.md).
+Contributors can start with
+[development setup and checks](https://github.com/ericeallen/towel/blob/v1.949/CONTRIBUTING.md).
 Report security issues through the
 [security policy](https://github.com/ericeallen/towel/blob/v1.949/SECURITY.md).
 

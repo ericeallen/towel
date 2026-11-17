@@ -1,0 +1,10 @@
+[project]
+name = "billing"
+version = "0.1.0"
+
+[tool.black]
+line-length = 88
+
+[tool.towel]
+min-lines = 4
+exclude = ["generated"]

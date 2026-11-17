@@ -1,0 +1,12 @@
+def notify_owner(order, mailer):
+    mailer.connect()
+    mailer.send(order.owner_email, f"Order {order.id} shipped")
+    mailer.close()
+    return order.id
+
+
+def notify_buyer(order, mailer):
+    mailer.connect()
+    mailer.send(order.buyer.email(), f"Order {order.id} shipped")
+    mailer.close()
+    return order.id
