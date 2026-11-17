@@ -80,7 +80,8 @@ def test_the_helper_takes_the_known_type_and_the_place_of_the_first_assignment(
 ) -> None:
     outcome = apply_one(tmp_path, TAG, pick="__init__ and __setstate__")
     assert outcome.error is None, outcome.error
-    assert outcome.signature() == "(self, abi: str, interpreter: str, platform: str) -> None"
+    # The inputs come in the order __init__, the first site, reads them (shape).
+    assert outcome.signature() == "(self, interpreter: str, abi: str, platform: str) -> None"
     assert outcome.module is not None
     owner = ast.parse(outcome.module).body[0]
     assert isinstance(owner, ast.ClassDef)
