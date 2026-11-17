@@ -380,7 +380,15 @@ def test_relaxed_suppressing_context(tmp_path: Path, opaque: bool, typed: bool) 
             "    def __enter__(self) -> None:\n        pass\n"
             "    def __exit__(self, *exc_info: object) -> bool:\n        return True\n",
         )
-    before = _observe(source, "")
+    driver = """
+for function in (f, g):
+    for flag in (False, True):
+        try:
+            print(function(flag))
+        except UnboundLocalError as error:
+            print(type(error).__name__, str(error))
+"""
+    before = _observe(source, driver)
     path, output = tmp_path / "m.py", tmp_path / "out.py"
     path.write_text(source)
     arguments = [
@@ -397,17 +405,10 @@ def test_relaxed_suppressing_context(tmp_path: Path, opaque: bool, typed: bool) 
     result = invoke(arguments)
     assert result.status == 0, result.stderr
     transformed = output.read_text()
-    if typed:
-        # The unsafe candidate reads a possibly unbound local; the safe
-        # arithmetic suffix does not repay its annotated helper's overhead.
-        assert "thunk_of_possibly_unbound_local" in result.stdout
-        assert "unprofitable_helper" in result.stdout
-        assert "with similar code and extracted none." in result.stdout
-        assert ast.dump(ast.parse(transformed)) == ast.dump(ast.parse(source))
-    else:
-        assert "Applied 1 refactoring(s)" in result.stdout
-        assert "def __extracted_func_" in transformed
-    assert _observe(transformed, "") == before
+    assert "thunk_of_possibly_unbound_local" in result.stdout
+    assert "with similar code and extracted none." in result.stdout
+    assert ast.dump(ast.parse(transformed)) == ast.dump(ast.parse(source))
+    assert _observe(transformed, driver) == before
 
 
 def _run_project(root: Path, driver: str) -> str:
