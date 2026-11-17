@@ -69,6 +69,7 @@ def test_default_typed_run_skips_unavailable_input(
         payload = json.loads(result.stdout)
         assert payload["applied"] > 0, payload
         assert result.stderr.count("Skipping ") == 1, result.stderr
+        assert "type checker does not look at" not in result.stderr
         assert str(bad) in result.stderr
         assert source.read_text() == LITERAL_DUPLICATES
         if command == "dry":

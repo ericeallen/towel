@@ -35,6 +35,8 @@ import dataclasses
 import hashlib
 import os
 from pathlib import Path
+
+from ..source_files import source_is_skipped
 import re
 import tomllib
 
@@ -538,7 +540,7 @@ class HelperAnnotationWiring(EngineState):
             originals: Dict[str, str] = {}
             unreadable: Set[str] = set()
             for path in dict.fromkeys(file_paths):
-                source = self._read_source(path)
+                source = None if source_is_skipped(Path(path)) else self._read_source(path)
                 if source is None:
                     TYPES.debug("left out of the original check, since it cannot be read: %s", path)
                     unreadable.add(self._where_checked(path))
