@@ -591,28 +591,37 @@ default; strict mode keeps exact lifetimes"), so it may take first's loop.
 pkg/fast.py recompiles ``kernels.first`` from its source, rewriting
 ``i * 2``: reflection, outside the contract in both modes, as strict mode's
 own extraction from r7d_instrumenting_call_applied_by_hand shows, so only
-the recompiled function's output may change. Since 2.0 (shape) the shared
-code is first's whole body, so relaxed mode calls ``first`` from ``second``
-("Redirect to an existing function only within a clean consumer scope"):
-first keeps its source, the recompiled function still finds its loop, and
-the output does not change at all (``_assert_first_kept_its_source``).
+the recompiled function's output may change. The shared code is first's
+whole body, but relaxed mode does not call ``first`` from ``second``:
+pkg/instrument.py runs ``exec`` with first's module globals, text the
+redirect's rebinding scan cannot read (integration 6). So relaxed mode
+extracts first's loop, and fast.py, recompiling first's source, finds only
+the helper's call there (``_assert_only_the_recompiled_function_changed``).
 """
 
 
-def _assert_first_kept_its_source(before: Path, after: Path) -> None:
-    """``second`` calls ``first``, whose source fast_first still recompiles: nothing prints otherwise."""
+def _assert_only_the_recompiled_function_changed(
+    before: Path, after: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The one output line that differs is ``fast_first``, which now computes first unrewritten."""
     code_before, out_before, err_before = _run(before)
     code_after, out_after, err_after = _run(after)
     assert (code_after, err_after) == (code_before, err_before)
     assert out_before == "first 13 second -13\nfast_first 121\n"
-    assert out_after == out_before
-    functions = {
-        node.name: node
+    # 13 is first(4): the recompiled source holds no ``i * 2`` to rewrite.
+    assert out_after == "first 13 second -13\nfast_first 13\n"
+    first = next(
+        node
         for node in ast.parse((after / "pkg" / "kernels.py").read_text()).body
-        if isinstance(node, ast.FunctionDef)
-    }
-    assert "i * 2" in ast.unparse(functions["first"])
-    assert "first(n)" in ast.unparse(functions["second"])
+        if isinstance(node, ast.FunctionDef) and node.name == "first"
+    )
+    assert "i * 2" not in ast.unparse(first)
+    # The redirect was declined at the exec into first's globals.
+    assert any(
+        "Cannot redirect to first" in record.message
+        and "instrument.py:23 may rebind it" in record.message
+        for record in caplog.records
+    )
 
 
 @pytest.mark.parametrize(
@@ -666,7 +675,7 @@ def test_relaxed_directory_refactoring_preserves_program_output(
             assert transformed, RELAXED_REFLECTION_WHERE_PARSED[case]
             for path in (after / "pkg").rglob("*.py"):
                 compile(path.read_bytes(), str(path), "exec")
-            _assert_first_kept_its_source(before, after)
+            _assert_only_the_recompiled_function_changed(before, after, caplog)
         else:
             assert _run(after) == _run(before)
         if transformed:
