@@ -67,7 +67,15 @@ def _sites(
 # --- clustering scan memo -----------------------------------------------------
 
 
-def test_clustered_proposals_are_the_same_cold_and_warm(tmp_path: Path) -> None:
+def test_clustered_proposals_are_the_same_cold_and_warm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The memo is this process's: pairs judged in forked workers fill the
+    # workers' copies of it. With callbacks (byvalue) and pairs inside one
+    # function (reach) this module forms over PARALLEL_PAIR_THRESHOLD pairs,
+    # so under TOWEL_WORKERS=2 the cold run forked and the warm run scanned
+    # what the workers had cached. One worker keeps the contract observable.
+    monkeypatch.setenv("TOWEL_WORKERS", "1")
     path = tmp_path / "similar.py"
     path.write_text(_similar_module(5))
     engine = UnificationRefactorEngine(annotate_helpers=False)
