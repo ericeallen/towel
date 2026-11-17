@@ -53,11 +53,23 @@ def _independent_statement_groups(helper: ast.FunctionDef, statements: Sequence[
     """
     if len(statements) < 2:
         return False
-    parameters = set(parameter_names(helper.args))
-    uses = [
-        {node.id for node in ast.walk(statement) if isinstance(node, ast.Name)} & parameters
+    statement_names = [
+        {node.id for node in ast.walk(statement) if isinstance(node, ast.Name)}
         for statement in statements
     ]
+    for index, statement in enumerate(statements):
+        written = {
+            node.id
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+        }
+        if any(written & used for other, used in enumerate(statement_names) if other != index):
+            # A normalization pipeline may repeat its syntax while each step
+            # consumes the preceding result. It is one computation, not a
+            # bundle of independent test cases.
+            return False
+    parameters = set(parameter_names(helper.args))
+    uses = [used & parameters for used in statement_names]
     shared = set.intersection(*uses)
     groups = [used - shared for used in uses]
     if any(len(group) != len(groups[0]) for group in groups):

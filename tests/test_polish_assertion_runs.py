@@ -95,3 +95,16 @@ def test_nested_statement_runs_are_not_bundled(wrapper: str) -> None:
         for index in range(20)
     ]
     assert not worthwhile_helper(helper, sites)
+
+
+def test_repeated_assignments_that_feed_each_other_remain_one_computation() -> None:
+    """Re-audit 2: same syntax is not independent repetition when each step reads the last."""
+    helper = ast.parse(
+        "def helper(text):\n"
+        "    text = text.replace('a', 'b')\n"
+        "    text = text.replace('c', 'd')\n"
+        "    return text\n"
+    ).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    sites = [Replacement((i, i), ast.parse("helper(text)").body[0]) for i in range(8)]
+    assert worthwhile_helper(helper, sites)
