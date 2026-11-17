@@ -1,0 +1,15 @@
+class Cart:
+    def __init__(self, items):
+        self.items = items
+
+    def subtotal(self):
+        total = 0
+        for item in self.items:
+            total += item.price * item.quantity
+        return round(total, 2)
+
+    def taxed_total(self, rate):
+        total = 0
+        for item in self.items:
+            total += item.price * item.quantity
+        return round(total * (1 + rate), 2)

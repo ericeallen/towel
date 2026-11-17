@@ -1,6 +1,10 @@
 # Python API guide
 
-> **Supplementary API guide.** A how-to for the `UnificationRefactorEngine` API. Start with the [documentation index](README.md) or the [command-line guide](CLI_GUIDE.md) for CLI use. Current limitations are in [Known limitations](KNOWN_LIMITATIONS.md).
+[Documentation index](README.md)
+
+This guide is for calling Towel from Python, through `UnificationRefactorEngine`.
+For the command line, see the [command reference](CLI_GUIDE.md); for what Towel
+will not change, [known limitations](KNOWN_LIMITATIONS.md).
 
 On this page:
 
@@ -123,33 +127,18 @@ After each applied proposal, the engine re-analyzes only the changed files to en
 
 ## Command-Line Usage
 
-Preview opportunities read-only, then refactor into a fresh directory to diff
-and adopt:
-
-```bash
-towel preview src/
-towel dry src/ src_cleaned/ --no-interactive
-```
-
-`preview` runs the complete `dry` pipeline in a disposable copy and prints its
-concise summary and final source diff; `--inventory` adds helper metadata.
-With the same options, it includes the
-same type checking, formatting, repeated extraction and final verification.
-`--quick` requests a partial, untyped analysis whose proposals are not the final
-result or an upper bound. `dry` writes the verified refactored copy.
-`dry` refactors the target inside a private temporary copy of its whole project,
-in place or not, so every decision sees the modules around the target (an import
-cycle through a module outside the target is seen), and writes nothing until the
-run has succeeded, its final type-check confirmation included: the target to the
-output directory all at once, or, in place, every file it changed as one
-journaled batch. A run that fails, or is stopped, before that write leaves the
-project as it was, and a failure caught during the write is rolled back. An
+The command line runs the same engine: `towel preview src/` shows what a run
+would change, and `towel dry src/ cleaned/` writes the result
+([command reference](CLI_GUIDE.md)). `dry` refactors the target inside a
+private copy of its whole project, so every decision sees the modules around
+it, and writes nothing until the run, its final type check included, has
+succeeded: to a new output all at once, or, in place, every changed file as
+one journaled batch. A failure caught during the write is rolled back. An
 in-place write that is killed part-way can leave some files changed and others
 not; it also leaves a `.towel-transaction-<id>` journal, and
 `towel recover` restores the original files from it, as
 [recovery and interrupted writes](CLI_GUIDE.md#recovery-and-interrupted-writes)
-describes.
-See the [command-line guide](CLI_GUIDE.md) for CLI options and the [Quick start](QUICKSTART.md) for a first run.
+describes. For a first run, see the [quick start](QUICKSTART.md).
 
 ## Configuration
 
@@ -173,6 +162,10 @@ and formatting tools, while the bare API defaults for those callbacks are `None`
 
 | Parameter | Default | Effect |
 |---|---|---|
+| `strict` | `False` | Strict mode: keep exactly when objects are released and names looked up, as releases before 2.0 did (`--strict`); see [relaxed and strict](RELAXED_AND_STRICT.md). |
+| `expression_candidates` | `True` | Also extract a repeated expression of at least `min_lines` lines, as a helper that returns it. |
+| `include_ignored` | `False` | Also analyse files Git ignores (`--include-ignored`). |
+| `complete_scope` | `False` | Declare that the target holds every file that uses its code (`--complete-scope`). |
 | `parameterize_constants` | `True` | Differing constant occurrences become helper parameters, subject to exact caller-column and compiler-pool checks. |
 | `parameterize_builtins` | `False` | Permit caller-side lookup thunks such as `lambda: len` when sharing across modules. Default cross-module bare builtin reads decline except `__debug__`. This option cannot override `builtin_mapping_replaced`: possible `__builtins__` replacement declines every explicit module/global fallback read (including custom keys and currently module-bound names), plus implicit import/class lookups. Ordinary `receiver.__builtins__` stores/deletions anywhere in the analyzed program make every module uncertain; excluded runnable files still count. Explicit locals, parameters and cells remain eligible; same-spelled locals do not redirect implicit operations. `__debug__` and blocks without captured-mapping dependencies retain their ordinary rules. See the [evaluation-scope policy](design/GENERATED_CODE_RULES.md#arguments-and-evaluation). Unknown lookup results remain deferred; typed thunks retain their callable result, e.g. `Callable[[], Callable[..., int]]` for `lambda: len`. Blocks differing in which builtin they use still decline. |
 | `cross_module_helpers` | `False` | Also share a helper between duplicates in different modules, importing it into the others (`--cross-module/--no-cross-module`). Off, only duplicates within a module are paired and no import of a project module that runs is written. |
@@ -188,13 +181,11 @@ and formatting tools, while the bare API defaults for those callbacks are `None`
 | `promote_equal_hof_literals` | `False` | Explicit API opt-in to expose equal literal arguments of higher-order factory calls as helper parameters after all sites pass its checks. The CLI has no corresponding flag. |
 | `settings` | `None` | A `towel.diagnostics.Settings`: what Towel reads from the environment (worker cap, debug switches). When omitted, the engine reads the environment once at construction; the command line and the analysis session each read it once as well (see *Diagnostics and settings* in [ARCHITECTURE.md](design/ARCHITECTURE.md)). |
 
-`reuse_existing_functions` is deprecated and does nothing: a duplicate that is
-the whole body of a function once made the other sites call that function, and
-since 1.772 an extracted input function calls a fresh helper instead, because
-a call to the
-existing function looked it up in its module each time, so patching or
-rebinding it changed both. The keyword is still accepted, and will be removed
-in a later release.
+`reuse_existing_functions` is deprecated and does nothing; the keyword is still
+accepted and will be removed in a later release. In 2.0, where one copy is
+already the whole body of a function, the other copies call that function
+(the proposal reads "Reuse NAME"), in both modes, where Towel can show that
+nothing rebinds the function while they run.
 
 `prefer_absolute_imports` and `pep420_namespace_packages`, and the
 `--prefer-absolute-imports` and `--pep420` flags, are deprecated and do
@@ -607,15 +598,12 @@ def calculate_discount_for_premium_customer(price, customer):
     return final_price
 ```
 
-**Result:** Both files remain unchanged. Identical bodies alone do not establish
-that a cross-module extraction is safe. This example's candidates fail the
-import-safety, reassignment or owned-value lifetime checks (reported as
-`import_time_effects`, `unsafe_reassignment_block1` and
-`owned_binding_frame_boundary`). The command reports no refactorings.
-
-An accepted cross-module extraction must also establish that every borrower
-can safely import the helper's host. See [cross-module checks](CROSS_MODULE.md)
-and [argument ownership](design/GENERATED_CODE_RULES.md#arguments-and-evaluation).
+**Result:** Both files remain unchanged. Sharing a helper between modules
+adds an import, and Towel adds one only where a module already imports the
+other at its top: here `file2` does not import `file1`, so the new import
+could change the order modules load in (`import_time_effects`). The run ends
+by saying what each pair of modules lacked, and that adding the import is the
+change that lets Towel share the code. See [cross-module checks](CROSS_MODULE.md).
 
 ### Example 3: Methods
 
@@ -639,15 +627,28 @@ class Report:
         return f"total {total:.2f}"
 ```
 
-**Result:** The class remains unchanged. The common tail would move the
-`total` binding into a helper while the caller retains `values`. Towel cannot
-certify the resulting owned-value lifetime across those frames, so it declines
-that candidate as `owned_binding_frame_boundary`; the other candidates do not
-unify. Numeric-looking code does not prove that its runtime values lack
-finalizers.
+**Result:** The common tail becomes a method of `Report`, private to the class:
 
-When a shared method block passes these checks, its helper has a class-private
-name, preserving private attribute access and avoiding accidental overrides by
+```python
+    def totals(self):
+        values = [row["amount"] for row in self.rows if row["amount"] > 0]
+        return self.__extracted_func_0(values)
+
+    def refunds(self):
+        values = [row["amount"] for row in self.rows if row["amount"] < 0]
+        return self.__extracted_func_0(values)
+
+    def __extracted_func_0(self, values):
+        total = sum(values)
+        self.__cache["total"] = total
+        return f"total {total:.2f}"
+```
+
+With `strict=True` the class remains unchanged: `total` would be released
+when the helper returns, before `values`, and strict mode declines that
+candidate as `owned_binding_frame_boundary`.
+
+A method helper has a class-private name, preserving private attribute access and avoiding accidental overrides by
 ordinary differently named subclasses. Blocks shared by methods of different
 classes instead use a module-level helper with a receiver argument. See the
 [method insertion checks and scope limits](design/CORRECTNESS_MODEL.md#method-insertion).

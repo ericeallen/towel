@@ -49,7 +49,7 @@ or a declined confirmation is cancellation, not completed work.
 success with `iteration_cap`; it does not assert that all opportunities were
 exhausted. A time limit stops an incomplete attempt with status 124 and no
 published output. Final publication and cleanup may extend beyond the elapsed
-limit so they can finish safely. See [bounded runs](CLI_GUIDE.md#control-tools-and-work).
+limit so they can finish safely. See [bounded runs](CLI_GUIDE.md#limits).
 
 Human-readable output is intended for people. Errors, warnings and progress go
 to stderr. Use explicit structured output for automation and check the process

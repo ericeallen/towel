@@ -40,7 +40,7 @@ requires an explicit `--complete-scope` declaration; library callers retain
 the complete-target precondition where project discovery has no anchor.
 Excluded sources and external installed consumers are outside that scope;
 unreadable included sources refuse the batch. See [definition selection and
-consumer scope](../NAMING.md#definition-selection-and-consumer-scope).
+consumer scope](../NAMING.md#where-to-run-it).
 
 ## Measurement environment
 

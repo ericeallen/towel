@@ -1,0 +1,14 @@
+def total_weight(items):
+    total = 0
+    for item in items:
+        total += item.weight_kg
+    print(f"{len(items)} items")
+    return round(total, 1)
+
+
+def total_volume(items):
+    total = 0
+    for item in items:
+        total += item.volume_l
+    print(f"{len(items)} items")
+    return round(total, 1)

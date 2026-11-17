@@ -603,7 +603,7 @@ returns status 124 and publishes no output. Final publication and cleanup may
 extend beyond that limit to finish safely; this is not a hard process-kill or
 memory bound. Progress goes to stderr, so stdout can be redirected. Ctrl-C and
 SIGTERM request cleanup; interrupted publication uses its recovery journal.
-See [CLI controls](CLI_GUIDE.md#control-tools-and-work) and
+See [CLI controls](CLI_GUIDE.md#limits) and
 [exit statuses](COMPATIBILITY.md#cli-contract).
 
 Complete preview performs the full transformation pipeline and discards its

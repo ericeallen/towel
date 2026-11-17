@@ -157,7 +157,7 @@ def not_run_because(command: str) -> Optional[str]:
 
 def saved_path(fence: Fence) -> Optional[str]:
     """The file a block is saved as, when the paragraph before it says so."""
-    named = re.search(r"[Ss]ave (?:this|it) as `([^`]+)`", fence.preceding)
+    named = re.search(r"[Ss]ave\s+(?:this|it)\s+as\s+`([^`]+)`", fence.preceding)
     return named.group(1) if named else None
 
 
@@ -258,6 +258,11 @@ PAGES: Tuple[Page, ...] = (
     Page("docs/RELAXED_AND_STRICT.md", project="formatted"),
     Page("docs/KNOWN_LIMITATIONS.md", project="formatted"),
     Page("docs/RECIPES.md", project="recipes", git=True),
+    Page("docs/USING_TOWEL.md", project="project", git=True),
+    Page("docs/FAQ.md", project="project", git=True),
+    Page("docs/CLI_GUIDE.md", project="project", git=True),
+    Page("docs/NAMING.md", project="quickstart"),
+    Page("docs/GALLERY.md", project="gallery"),
 )
 """Every user page that shows a command; `test_every_page_that_shows_a_command_is_run` keeps it complete."""
 

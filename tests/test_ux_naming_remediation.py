@@ -585,7 +585,9 @@ def test_naming_guide_example_works_on_quickstart_and_omits_private_skill(tmp_pa
     )
     assert dry_res.status == 0, dry_res.stderr
 
-    json_blocks = re.findall(r"(?ms)^```json\n(.*?)^```", naming_doc)
+    json_blocks = re.findall(
+        r"(?ms)Save\s+this\s+as\s+`renames.json`:\n\n```json\n(.*?)^```", naming_doc
+    )
     assert json_blocks, "expected a JSON mapping example in docs/NAMING.md"
     renames_file = tmp_path / "renames.json"
     renames_file.write_text(json_blocks[0], encoding="utf-8")

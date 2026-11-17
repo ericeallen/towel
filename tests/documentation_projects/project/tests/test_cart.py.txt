@@ -1,0 +1,11 @@
+import unittest
+from types import SimpleNamespace
+
+from shop.cart import Cart
+
+
+class CartTests(unittest.TestCase):
+    def test_totals(self):
+        cart = Cart([SimpleNamespace(price=2.5, quantity=4), SimpleNamespace(price=1, quantity=3)])
+        self.assertEqual(cart.subtotal(), 13.0)
+        self.assertEqual(cart.taxed_total(0.1), 14.3)
