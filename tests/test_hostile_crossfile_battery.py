@@ -346,7 +346,6 @@ UNCERTIFIED_OWNERSHIP_REFUSALS = frozenset(
 )
 UNCERTIFIED_EXPLICIT_OWNERSHIP_REFUSALS = frozenset(
     {
-        "r9sb_lambda_capture_across_modules",
         "xf28_registration_decorator_in_reused_module",
         "xf3_same_named_local_function",
         "xf4_same_named_class",

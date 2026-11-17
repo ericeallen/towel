@@ -22,6 +22,7 @@ import pytest
 from tests.test_created_object_escapes import _escapes
 from towel.unification.unifier import Unifier
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.argument_ownership import _supported_runtime
 
 
 @pytest.mark.parametrize(
@@ -179,7 +180,6 @@ def test_closed_callback_parameter_does_not_capture_a_helper_argument(
 ) -> None:
     """Audit D4: an unchanged callback signature still shadows a helper's free argument."""
     from tests.hostile_execution import ScopeWatch, observe
-    from tests.hostile_refactoring import refactor_script
 
     source = (Path(__file__).parent / "hostile_cases/r9sb_lambda_parameter_capture.py").read_text()
     # Retain the original capture regression with one shared keyword signature.
@@ -191,7 +191,16 @@ def test_closed_callback_parameter_does_not_capture_a_helper_argument(
     before = observe(script.name, script.parent)
     assert before[0] == 0
     scopes = ScopeWatch()
-    assert refactor_script(script, file_finisher=scopes, strict=strict) > 0
+    engine = UnificationRefactorEngine(
+        min_lines=3, file_finisher=scopes, skip_trivial_helpers=False, strict=strict
+    )
+    _, applied, _ = engine.refactor_to_fixed_point(str(script), progress="none")
+    if strict and not _supported_runtime():
+        assert applied == 0
+        assert script.read_text() == source
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+    else:
+        assert applied > 0
     assert scopes.found == []
     assert observe(script.name, script.parent) == before
 

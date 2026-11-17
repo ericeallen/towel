@@ -68,6 +68,7 @@ from .progress import DEFAULT_PROGRESS, ProgressMode, ProgressRenderer
 
 from ..diagnostics import LOG, Settings
 from ..source_text import read_source
+from ..program_files import describe_source_failure
 from .visitors import DefinitionDepthVisitor, FunctionCollector
 from .if_binding_transfer import sharing_if_transfer_proofs
 
@@ -108,7 +109,7 @@ def parse_modules(paths: Sequence[str]) -> List[RawModule]:
         try:
             src, tree = _read_and_normalize_module(p)
         except (OSError, UnicodeError, SyntaxError) as error:
-            LOG.warning("Skipping %s: %s", p, error)
+            LOG.warning("Skipping %s: %s", p, describe_source_failure(error))
             continue
         modules.append(RawModule(file_path=p, source=src, tree=tree))
     return modules
@@ -245,8 +246,7 @@ def skipped_because(error: SourceFileError) -> str:
             " two lines)"
         )
     if isinstance(cause, SyntaxError):
-        # Its own words name the file and line: "'(' was never closed (m.py, line 1)".
-        return str(cause)
+        return describe_source_failure(cause)
     if isinstance(cause, OSError):
         return f"it cannot be read: {cause.strerror or cause}"
     return str(error)
@@ -382,7 +382,7 @@ class AnalysisSession:
             source = read_source(path)
         except (OSError, UnicodeError, SyntaxError) as error:
             self._discard(key)
-            raise SourceFileError(str(error)) from error
+            raise SourceFileError(describe_source_failure(error)) from error
         cacheable = parsing_is_pure(source)
         cached = self._entries.get(key) if cacheable else None
         if cached is not None and cached.module.source == source:
@@ -394,7 +394,7 @@ class AnalysisSession:
         try:
             tree = parse_analysis_source(source, filename=path)
         except SyntaxError as error:
-            raise SourceFileError(str(error)) from error
+            raise SourceFileError(describe_source_failure(error)) from error
         try:
             module = analyze_scopes([RawModule(file_path=path, source=source, tree=tree)])[0]
             module.class_infos = collect_classes([module])

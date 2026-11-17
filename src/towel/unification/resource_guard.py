@@ -195,7 +195,9 @@ def _resolution(module: ast.AST) -> _Resolution:
             )
             body = [condition for generator in node.generators for condition in generator.ifs]
             body += [generator.iter for generator in node.generators[1:]]
-            body += [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+            # Unpacking dict comprehensions have no value on Python 3.15.
+            elements = [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+            body += [element for element in elements if element is not None]
 
         def visit(current: ast.AST, conditional: bool = False) -> None:
             locations[id(current)] = key

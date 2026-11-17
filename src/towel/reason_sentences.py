@@ -65,6 +65,11 @@ _UNPROFITABLE = _says(
 )
 
 PAIR_REASONS: Mapping[RejectReason, Explanation] = {
+    RejectReason.RESOURCE_LIFETIME_UNPROVEN: _says(
+        "This block creates or weakly references a resource that later code may depend on,"
+        " and Towel cannot keep it alive in a helper.",
+        "Use a with statement to manage the resource, or use --strict.",
+    ),
     RejectReason.BARE_NAME_DIFFERS_BY_MODULE: _says(
         _CROSS_MODULE + "a helper shared between modules would read a module-level name that"
         " means something different in each of them."

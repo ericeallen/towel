@@ -100,7 +100,7 @@ def program_directories(
             for name in files
             if not name.startswith(".#")
             and not _dangling_link(Path(parent, name))
-            and not (name.endswith(".py") and skip_nonprogram_file(Path(parent, name)))
+            and not (name.endswith(".py") and skip_nonprogram_file(Path(parent, name), root=root))
         )
 
 
@@ -111,12 +111,22 @@ def _dangling_link(path: Path) -> bool:
         return False
 
 
-def skip_nonprogram_file(path: Path) -> bool:
+def skip_nonprogram_file(
+    path: Path, *, root: Optional[Path] = None, explicit: bool = False
+) -> bool:
     """Relaxed runs take unreadable/unparsable source to be no part of the program."""
     policy = current_source_policy()
     if path.name.startswith(".#") or _dangling_link(path):
         return True
     if policy is None or policy.strict:
+        return False
+    if (
+        not explicit
+        and root is not None
+        and excluded_by(path.resolve(), root.resolve(), policy.excluded_names)
+    ):
+        # Excluded inputs are left out intentionally. An explicit file target
+        # takes precedence over its filename appearing in --exclude.
         return False
     failure = parse_failure(path, include_decoding_errors=True)
     if failure is None:
@@ -188,16 +198,20 @@ def _complaint(data: bytes, path: Path, include_decoding_errors: bool) -> Option
     try:
         text = decode_source(data)
     except (SyntaxError, UnicodeError, LookupError) as error:
-        return f"it cannot be decoded: {_described(error)}" if include_decoding_errors else None
+        return (
+            f"it cannot be decoded: {describe_source_failure(error)}"
+            if include_decoding_errors
+            else None
+        )
     try:
         ast.parse(text, filename=str(path))
     except (SyntaxError, ValueError, RecursionError) as error:
         # ValueError: a null byte, before 3.12 made that a SyntaxError.
-        return _described(error)
+        return describe_source_failure(error)
     return None
 
 
-def _described(error: BaseException) -> str:
+def describe_source_failure(error: BaseException) -> str:
     """What a failed parse says, as the refusal shows it: ``line 6: f-string: expecting '}'``."""
     if isinstance(error, SyntaxError):
         return error.msg if not error.lineno else f"line {error.lineno}: {error.msg}"
@@ -242,7 +256,11 @@ def _unparsed_below(
             candidates[path] = None
     own = [target] if target.is_file() else python_sources(target, excluded=excluded_names)
     candidates.update(dict.fromkeys(own))
-    found = (parse_failure(path) for path in sorted(candidates) if not skip_nonprogram_file(path))
+    found = (
+        parse_failure(path)
+        for path in sorted(candidates)
+        if not skip_nonprogram_file(path, root=root, explicit=path == target)
+    )
     return tuple(failure for failure in found if failure is not None)
 
 
@@ -289,14 +307,14 @@ def refuse_unparsed_file(
     file decodes, as under ``-W error`` for an invalid escape, the scan
     still could not read it, and that refuses too.
     """
-    if skip_nonprogram_file(path):
+    if skip_nonprogram_file(path, root=root):
         return
     resolved = root.resolve()
     if excluded_by(path, resolved, excluded_names):
         return
     failure = parse_failure(path)
     if failure is None and error is not None and _decodes(path):
-        failure = UnparsedFile(path, _described(error))
+        failure = UnparsedFile(path, describe_source_failure(error))
     if failure is not None:
         raise unparsed_refusal((failure,), resolved)
 

@@ -706,3 +706,17 @@ def test_weak_value_dictionary_keeps_its_initial_values(tmp_path: Path) -> None:
     generated, original, changed = _refactored(tmp_path, source)
     assert _run(original)[0] == 0
     assert _run(changed) == _run(original), generated
+
+
+def test_unpacking_dict_comprehension_keeps_its_resource_checks() -> None:
+    """Integration 3: optional comprehension children must not crash or hide resources.
+
+    Construct the unpacking AST on older interpreters too: Python 3.15 makes
+    value optional, while key holds the expression being unpacked.
+    """
+    module = ast.parse("def work():\n    return {open(path): open(path) for path in paths}\n")
+    comprehension = next(node for node in ast.walk(module) if isinstance(node, ast.DictComp))
+    setattr(comprehension, "value", None)
+    function = module.body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert resource_guard(function.body, module).refusal is not None
