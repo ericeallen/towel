@@ -64,6 +64,7 @@ PROJECTS = ROOT / "tests" / "documentation_projects"
 OUTPUT_LANGUAGES = ("text", "diff", "json")
 NOT_RUN: Tuple[Tuple[str, str], ...] = (
     (r"^(uv tool|pipx|uvx) ", "installs or runs a published release"),
+    (r"^uv run --with ", "installs a published release into the project's environment"),
     (r"^python3 -m venv ", "creates an environment and installs a published release into it"),
     (r"^(\.venv/bin/)?pip3? install ", "installs a published release"),
     (r"^\.venv/bin/", "uses the environment the page's skipped install created"),
@@ -265,6 +266,7 @@ PAGES: Tuple[Page, ...] = (
     Page("docs/GALLERY.md", project="gallery"),
     Page("docs/REQUIREMENTS.md"),
     Page("docs/CROSS_MODULE.md", project="crossmodule"),
+    Page("docs/TYPING.md"),
 )
 """Every user page that shows a command; `test_every_page_that_shows_a_command_is_run` keeps it complete."""
 

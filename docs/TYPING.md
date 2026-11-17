@@ -1,242 +1,183 @@
-# Type checking and helper annotations
+# Typed projects
 
-[Documentation index](README.md)
+In a project with type annotations, Towel annotates the helpers it writes and
+type-checks every change before it makes it. Save this as `pyproject.toml`:
 
-Towel annotates helpers in code that already uses annotations. It combines
-what callers declare with what the project's checker can infer, then checks
-the proposed helper together with its rewritten calls and unchanged consumers.
-Caller-side type narrowing stays at the call site.
+```toml
+[project]
+name = "inventory"
+version = "0.1.0"
+requires-python = ">=3.11"
 
-On this page:
+[tool.mypy]
+strict = true
 
-- [Choosing a checker](#choosing-a-checker)
-- [Checking a transformation](#checking-a-transformation)
-- [Code the checker cannot verify](#code-the-checker-cannot-verify)
-- [Constructing annotations](#constructing-annotations)
-- [Generic helpers and signature fallbacks](#generic-helpers-and-signature-fallbacks)
-- [Running without verification](#running-without-verification)
-
-## Choosing a checker
-
-Install the optional tools with `uv tool install "code-towel[types]"`, or into Towel's environment.
-Towel follows the project's configuration:
-
-| Project configuration | Behavior |
-| --- | --- |
-| mypy | mypy infers and verifies types. |
-| Pyright | Pyright infers and verifies types. |
-| Both | mypy infers; both verify. A new error from the first checker rejects the candidate without asking the other. |
-| Neither | Use an installed checker, preferring mypy. |
-
-A configured checker should be installed where Towel runs. If it is not,
-Towel warns, naming the checker, the configuration that asks for it and how
-to install it, and goes on without type checking: helpers are written without
-annotations, as with [`--no-types`](#running-without-verification), and
-`--json` reports `"types": "unverified"`. With `--strict`, the run refuses
-instead, before writing anything, and exits 1.
-
-With no mypy configuration, verification uses mypy's defaults, as a direct
-mypy check of the same files would. Unannotated function bodies go unchecked,
-and imports without available types are errors. Inference alone looks inside
-unannotated bodies to obtain more than `Any`.
-
-### Plugins and project configuration
-
-Configured mypy plugins, including django-stubs, pydantic and SQLAlchemy
-plugins, run in every check. They execute project-configured code. If a plugin
-cannot load, the typed run refuses before writing and includes mypy's error.
-
-Run Towel in an environment with the dependencies and checker setup the
-project needs. See [checker setup in the API guide](USAGE_GUIDE.md#formatting-and-type-checker-setup)
-when constructing an engine directly.
-
-## Checking a transformation
-
-Before changing anything, Towel checks the original project and reports its
-existing errors. Those errors form the baseline. A proposed change must not
-introduce an error the baseline cannot account for.
-
-All prospective changed modules are checked together with unchanged consumers.
-Once a change is accepted, its result becomes the baseline for the next
-change. A run verified through the Pyright language server also receives a
-fresh command-line Pyright check at the end. A malformed diagnostic
-publication is rejected before it can clear known errors or acknowledge a
-completed check. Towel abandons that warm session and checks the same candidate
-with command-line Pyright; a failed fallback cannot certify a change.
-
-### How existing errors are matched
-
-The comparison accounts for movement without treating any error of the same
-kind as interchangeable:
-
-- In untouched files, an error must retain the same message and line.
-- On untouched lines of a changed file, it must retain the same message at
-  the corresponding line after movement.
-- In a new helper, it must correspond to the same statement in one original
-  copy of the extracted block. Each error from that copy accounts for one
-  error; errors from the other copies are not spare allowances.
-- At a rewritten call site, it must correspond to the lines the call replaced.
-
-Messages containing line numbers, such as `already defined on line 12`, may
-change when code moves. Towel then treats the message as new and declines the
-change. This conservative rule prevents a moved baseline error from hiding
-a new one. The final cold check uses the same comparison.
-
-### Preserving narrowing
-
-A guard or assignment that establishes a refinement used later by its caller
-stays in the caller. Extracting the guard into an ordinary helper would hide
-that fact from the checker. Towel looks for smaller valid extraction windows
-around these boundaries instead of repeatedly checking a proposal that cannot
-preserve the caller's types.
-
-The intent is both to save typed validation time and to retain useful
-extractions. The [design decisions](design/DECISIONS.md) record this requirement;
-declining every proposal would not satisfy it.
-
-Narrowing can also be lost when a guarded expression becomes a caller-side
-lambda. The helper's predicate does not refine the captured value in that
-lambda. Towel stops the signature ladder before an `Any` fallback when a mypy
-or Pyright diagnostic establishes that a nullable operand lost a required
-refinement and the operand corresponds to the original caller expression.
-The supported correspondence includes argument and operator diagnostics,
-receivers, bounded unchanged local aliases, and scalar or fixed-tuple return
-and annotated-assignment flows. Return and assignment cases require the
-matching declaration in the original caller; an interim helper annotation
-alone does not establish that obligation.
-
-Reading a nullable value under a guard is insufficient to refuse extraction.
-An Optional-aware conversion or consumer can remain precise, and a caller
-declared to return `float | None` may need a later generic signature rather
-than refusal. The decision uses checker evidence and source correspondence,
-not a whitelist of callee names. Ambiguous diagnostics and arbitrary control
-flow are not covered by this specific proof.
-
-## Code the checker cannot verify
-
-### Untyped imports
-
-When the checker cannot type a name a file imports, for example because the
-import cannot be resolved or its stubs are missing, a change there cannot be
-checked. A change whose helper and callers have no annotations goes ahead
-anyway, and the run says once that it did. A change to annotated code is left
-alone, and the run names the first unresolved import. With `--strict`, every
-change in such a file is left alone. Install the missing dependencies or stubs
-where Towel runs to check these changes, or use `--no-types`.
-
-Towel asks every configured checker what each import binds. Suppressing the
-usual diagnostic with `ignore_missing_imports` or Pyright's
-`reportMissingImports` does not make an untyped import verifiable. Similarly,
-a subtype question involving a type seen as `Any` remains unanswered.
-
-### Unreachable and excluded code
-
-A checker may consider code unreachable because of its target platform or
-Python version, or because declared types rule out a branch. Examples include
-`if sys.platform == "win32":` while checking for Linux, or a fallback after an
-`isinstance` test the annotated argument always passes.
-
-Towel probes which regions each checker actually sees. It reports unseen
-regions and declines any transformation that writes a line outside some
-applicable checker's coverage.
-
-Configuration exclusions are different: a file suppressed by a checker's
-configuration, such as Pyright's `exclude` or `ignore`, is outside that
-checker's check. Other configured checkers may still verify it. If none
-reports on the file, Towel treats it like an unannotated function body: it
-copies declared annotations, but does not infer annotations no checker would
-verify.
-
-### Checker failures
-
-A checker that crashes, times out or cannot load its plugins during a run
-refuses the typed run: Towel does not switch to untyped extraction part-way.
-Fix the checker setup, or choose `--no-types`.
-
-## Constructing annotations
-
-### Parameters and return values
-
-If every argument for a helper parameter is an annotated, never-rebound
-parameter of its caller, Towel uses that declaration. Otherwise it asks the
-checker for the expression's type at each call.
-
-When argument types differ, an ordinary signature uses their union, reduced
-by the checker's subtype relation. For example, `int | bool` becomes `int`,
-and a subclass disappears from a union containing its base class.
-
-The return annotation must satisfy every caller. Towel chooses the narrower
-declared return type, or a revealed type confirmed to be a subtype of every
-relevant declaration. Thunks use `Callable[[], T]`. A class passed as a value
-uses `type[C]`, rather than the constructor signature a checker may reveal.
-
-A method's receiver is not annotated from its call sites: its defining class
-already determines what bare `self` means. Once a helper has another
-annotation, any remaining unspecified parts are completed with `Any`, so the
-signature is not partial.
-
-### Names and runtime behavior
-
-Annotation names are private and chosen to avoid bindings already spelled
-in the module. For example:
-
-```python
-if 0 > 1:
-    from pkg.models import Item as _Item
+[tool.black]
+line-length = 88
 ```
 
-An existing import can be reused when it is the name's only binding anywhere
-in the module. New imports needed only by annotations use the immutable false
-comparison `0 > 1`, which mypy and pyright still read for types. Existing
-`TYPE_CHECKING` guards retain their runtime behavior; their mutable flags are
-not a reason to add imports that could execute. Where needed, the generated
-guard carries `# pragma: no cover` so coverage.py excludes it.
-These choices avoid adding public names to star imports or rebinding the
-program's names.
+Save this as `inventory/report.py`:
 
-Generated annotations must also avoid introducing runtime effects. Compound
-annotation forms are quoted where needed, including compatibility with the
-project's oldest declared Python. For example, a project supporting Python
-3.9 without postponed annotations cannot evaluate `int | None`, so that form
-is written as a string. The [architecture reference](design/ARCHITECTURE.md#helper-annotations)
-gives the exact rendering rules.
+```python
+from dataclasses import dataclass
 
-## Generic helpers and signature fallbacks
 
-Towel preserves relationships between argument and result types when it can.
-A shared helper for `list[int] -> int` and `list[str] -> str` can become
-`list[T] -> T`. Integer and string addition can use a constrained type
-parameter connecting both operands to the result.
+@dataclass
+class Item:
+    name: str
+    count: int
+    price: float
 
-Existing generic callers receive fresh helper type parameters with supported
-bounds and constraints preserved. Instance and class methods retain type
-parameters already bound by their host class; static helpers infer them from
-their explicit arguments. See the
-[type-parameter design](design/proposals/type-parameters.md) for the inference order
-and unsupported cases.
 
-Towel tries a precise ordinary signature, then supported generic signatures.
-When those fail, it can try targeted `Any` substitutions and a broad `Any`
-fallback, except when a semantic refusal such as required narrowing has ended
-the ladder. An unannotated variant is considered only when every remaining
-error from the `Any` variant lies inside the helper itself; errors elsewhere
-still reject it. Every candidate signature must pass the applicable checks.
+def low_stock(items: list[Item]) -> list[str]:
+    names = []
+    for item in items:
+        if item.count < 5:
+            names.append(item.name.upper())
+    names.sort()
+    return names
 
-Text identical to a file's current contents is withheld from mypy so its
-incremental cache remains useful. Checker failure or remaining new errors
-decline the proposal.
 
-## Running without verification
+def out_of_stock(items: list[Item]) -> list[str]:
+    names = []
+    for item in items:
+        if item.count < 1:
+            names.append(item.name.upper())
+    names.sort()
+    return names
+```
 
-`--no-types` preserves annotations already in the source, writes helpers
-without annotations and runs no checker, which is several times faster.
-`--json` reports `"types": "off"`; a run whose checker verified its changes
-reports `"verified"`.
+```bash
+towel preview inventory
+```
 
-An API engine with no type oracle can copy caller declarations but cannot
-reason about them: unions remain unreduced, and conflicting return declarations
-leave the return annotation absent. This is distinct from proving a signature
-with a checker.
+```diff
+Would apply 1 refactoring(s).
+Analysed 1 Python file (2 functions).
+Would change 1 file(s):
+  report.py: 1 refactoring(s)
+    - Extract common code from low_stock and out_of_stock
+--- before/report.py
++++ after/report.py
+@@ -1,4 +1,13 @@
+ from dataclasses import dataclass
++
++
++def __extracted_func_0(items: "list[Item]", __param_0: int, /) -> "list[str]":
++    names = []
++    for item in items:
++        if item.count < __param_0:
++            names.append(item.name.upper())
++    names.sort()
++    return names
 
-For the full supported boundary, see
-[Type annotations on helpers](design/CORRECTNESS_MODEL.md#type-annotations-on-helpers).
+
+ @dataclass
+@@ -9,18 +18,8 @@
+
+
+ def low_stock(items: list[Item]) -> list[str]:
+-    names = []
+-    for item in items:
+-        if item.count < 5:
+-            names.append(item.name.upper())
+-    names.sort()
+-    return names
++    return __extracted_func_0(items, 5)
+
+
+ def out_of_stock(items: list[Item]) -> list[str]:
+-    names = []
+-    for item in items:
+-        if item.count < 1:
+-            names.append(item.name.upper())
+-    names.sort()
+-    return names
++    return __extracted_func_0(items, 1)
+Input files were not changed.
+```
+
+The helper takes its annotations from the functions it came from: `items` is
+declared `list[Item]` in both, and the threshold is an `int`. mypy checked
+the changed module, with the project's `strict = true`, before Towel proposed
+it.
+
+## Run Towel where your project's dependencies are
+
+A type checker can check only code whose imports it can resolve, so Towel
+must run in an environment that has your project's dependencies. A copy
+installed with `uv tool install` or `pipx` has an environment of its own, with
+none of them. In a project that uv manages, run Towel inside the project's
+environment instead:
+
+```bash
+uv run --with "code-towel[format,types]" towel preview src/
+```
+
+In any other virtual environment, install it there with
+`pip install "code-towel[format,types]"` and run that environment's `towel`.
+
+## Which checker runs
+
+| The project configures | Towel uses |
+| --- | --- |
+| mypy | mypy |
+| Pyright | Pyright |
+| Both | mypy to infer types, both to check |
+| Neither | whichever is installed where Towel runs, preferring mypy, with its defaults |
+
+When no checker is installed, Towel writes helpers without annotations and
+says so. A checker the project configures but Towel cannot find gets a
+warning that names it and how to install it. Configured mypy plugins, such as
+django-stubs' or pydantic's, load as they do when you run mypy, and they run
+code your project configures.
+
+## What a checked change means
+
+Before changing anything, Towel checks the project as it is. Errors already
+there are allowed to stay; a change that adds a new error is left alone, with
+the reason "refused by the type checker". Each accepted change becomes the
+starting point for the next.
+
+Towel cannot check what the checker cannot see:
+
+- **An import the checker cannot type**, because the package or its stubs are
+  missing: a change to unannotated code there goes ahead, and the run says so
+  once; a change to annotated code is left alone, naming the import. Install
+  the missing package or stubs where Towel runs.
+- **Code the checker considers unreachable**, such as a branch for another
+  platform or Python version, is left alone.
+- **A checker that fails while checking the project as it is**, for example
+  because a plugin cannot load: relaxed mode warns, says why, and goes on
+  without type checking (`--json` reports `"types": "unverified"`); `--strict`
+  stops before writing anything, with exit status 1. A checker that fails on a
+  proposed change refuses that change.
+
+## Reading a typed helper
+
+- **Quoted annotations.** `"list[Item]"` is quoted because the helper comes
+  before `Item` is defined. Towel also quotes a form the project's oldest
+  Python, from `requires-python`, could not evaluate.
+- **The `/`** makes the generated parameters positional-only, so a name such
+  as `__param_0` is never passed by keyword. Towel adds it when
+  `requires-python` allows. `rename-helpers` keeps it; delete it after
+  renaming if you want callers to pass the arguments by keyword.
+- **Imports under `if 0 > 1:`.** A name that only an annotation needs is
+  imported under `if 0 > 1:`. Type checkers read the import; Python never runs
+  it. Towel does not use `if TYPE_CHECKING:` because that needs an import of
+  its own and tests a variable, which a program can change; `0 > 1` needs
+  nothing and is always false.
+- **Generic helpers.** Copies that work on different types can share a helper
+  with a type parameter, such as `list[T] -> T`.
+
+## Running without the checker
+
+`--no-types` runs no checker and writes helpers without annotations; it keeps
+the annotations already in your code. It is several times faster. Your own
+type check, run afterwards, then decides whether to keep the change.
+
+Every rule Towel follows, including how existing errors are matched after
+code moves and how narrowing is kept in the caller, is in
+[type checking, in full](design/TYPE_CHECKING_RULES.md).
+
+[Documentation index](README.md)
