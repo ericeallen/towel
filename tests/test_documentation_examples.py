@@ -253,6 +253,7 @@ class Page:
 
 PAGES: Tuple[Page, ...] = (
     Page("README.md", project="readme"),
+    Page("docs/README.md", project="readme"),
     Page("docs/QUICKSTART.md"),
     Page("docs/GENERATED_CODE.md", project="formatted"),
     Page("docs/WHY_LEFT_ALONE.md"),

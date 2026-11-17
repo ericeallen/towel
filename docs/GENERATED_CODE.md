@@ -207,67 +207,64 @@ becomes a module-level function that takes the object as an argument.
 
 ## A call to a function you already have
 
-Save this as `shipping.py`:
+Save this as `orders.py`:
 
 ```python
-def can_ship(order):
-    return (
-        order.weight_kg <= 30
-        and order.country in ("US", "CA")
-        and not order.on_hold
-    )
+def send_receipt(order, mailer):
+    total = order.subtotal + order.tax
+    mailer.send(order.email, f"Receipt for {order.id}: {total:.2f}")
+    order.receipt_sent = True
 
 
-def ship_all(orders):
-    for order in orders:
-        if (
-            order.weight_kg <= 30
-            and order.country in ("US", "CA")
-            and not order.on_hold
-        ):
-            order.ship()
+def close_order(order, mailer):
+    order.status = "closed"
+    total = order.subtotal + order.tax
+    mailer.send(order.email, f"Receipt for {order.id}: {total:.2f}")
+    order.receipt_sent = True
+    order.save()
 ```
 
 ```bash
-towel preview shipping.py
+towel preview orders.py
 ```
 
 ```diff
 Would apply 1 refactoring(s).
 Analysed 1 Python file (2 functions).
 Would change 1 file(s):
-  shipping.py: 1 refactoring(s)
-    - Reuse can_ship (shipping.py) for duplicated code in ship_all
---- before/shipping.py
-+++ after/shipping.py
-@@ -8,9 +8,5 @@
+  orders.py: 1 refactoring(s)
+    - Reuse send_receipt (orders.py) for duplicated code in close_order
+--- before/orders.py
++++ after/orders.py
+@@ -6,7 +6,5 @@
 
- def ship_all(orders):
-     for order in orders:
--        if (
--            order.weight_kg <= 30
--            and order.country in ("US", "CA")
--            and not order.on_hold
--        ):
-+        if can_ship(order):
-             order.ship()
+ def close_order(order, mailer):
+     order.status = "closed"
+-    total = order.subtotal + order.tax
+-    mailer.send(order.email, f"Receipt for {order.id}: {total:.2f}")
+-    order.receipt_sent = True
++    send_receipt(order, mailer)
+     order.save()
 Input files were not changed.
 ```
 
 When one copy is already the whole body of a function, the other copies call
-that function, and there is no new helper to name. The copy here is an
-expression, not a block of statements: a repeated expression of at least
-`--min-lines` lines is a candidate too.
+that function, and there is no new helper to name. Towel does this only where
+it can show that nothing rebinds the function while the copies run. A
+repeated expression is extracted into a new helper even when an existing
+function returns it.
 
 ## Names, parameters and other details
 
 - **Names.** Helpers are called `__extracted_func_0`, `__extracted_func_1` and so
-  on; parameters keep the name both copies used, or get `_param_0` or
-  `__param_0` where the copies differ. Rename them with `towel rename-helpers`
-  ([naming guide](NAMING.md)).
+  on; parameters keep the name both copies used, or get a generated name where
+  the copies differ. A generated parameter is `__param_0` when it comes first,
+  or when the project's `requires-python` lets Towel add a `/`; one that follows
+  an ordinary parameter is otherwise `_param_0`. Rename them with
+  `towel rename-helpers` ([naming guide](NAMING.md)).
 - **A `/` in the signature** makes the parameters before it positional-only, so a
-  generated name such as `__param_0` can never be passed by keyword. You see it
-  when the project's `requires-python` allows it.
+  generated name such as `__param_0` can never be passed by keyword. Towel adds
+  it when the project's `requires-python` allows; `rename-helpers` keeps it.
 - **`async def` helpers.** A block that uses `await`, `async for` or `async with`
   becomes an `async def` helper, called as `await helper(…)`. A block that
   yields is left alone.
@@ -276,7 +273,8 @@ expression, not a block of statements: a repeated expression of at least
   module defines a helper and the others import it ([sharing across modules](CROSS_MODULE.md)).
 - **Imports under `if 0 > 1:`.** In a typed project, an import that only an
   annotation needs is added under `if 0 > 1:`, which never runs; type checkers
-  still read it ([typed projects](TYPING.md)).
+  still read it. Unlike `if TYPE_CHECKING:`, it needs no import of its own and
+  tests nothing a program can change ([typed projects](TYPING.md)).
 - **Comments and formatting.** Comments in moved code move with it. With Ruff or
   Black configured, and installed where Towel runs, inserted code is formatted;
   otherwise Towel says so in a note and leaves layout alone. `--no-format`
@@ -315,12 +313,22 @@ variable the block created. Relaxed mode writes none of this.
 
 ## What Towel guarantees
 
-Towel preserves the behavior of programs that do not use reflection or
-self-instrumentation, including through code they call: a change that alters
-such a program is a bug. Code that reads its own source, bytecode, frames or
-namespace, and tools that rewrite functions (pytest's assertion rewriting,
-typeguard, numba), can see the difference. Protect such a function by ending
-its `def` line with `# towel: no-extract`:
+**What Towel promises.** A change Towel makes keeps what your program
+computes and does: its results, output, exceptions and the order of its side
+effects. That holds for programs that do not use reflection or
+self-instrumentation, including through code they call. Reflection here means
+reading frames, source or line numbers, as `inspect.stack()` does, or a log
+format with `%(funcName)s`; self-instrumentation means a tool that rewrites
+functions, such as pytest's assertion rewriting. Mark a function that depends
+on these with `# towel: no-extract`. In relaxed mode, the default, Towel also
+assumes that your program does not depend on when Python frees an object it no
+longer uses; that reading an attribute, indexing, comparing and arithmetic have
+no side effects; and that a module's functions, classes and imports are not
+rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
+none of these three assumptions. A change that breaks a program meeting these
+conditions is a bug.
+
+Protect a function by ending its `def` line with `# towel: no-extract`:
 
 ```python
 def frame_sensitive(value):  # towel: no-extract

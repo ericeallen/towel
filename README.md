@@ -56,9 +56,10 @@ Would change 1 file(s):
 Input files were not changed.
 ```
 
-What differed between the copies became the helper's arguments. Give the
-helper and its parameters real names with `towel rename-helpers`, run your
-tests, and keep the change. The
+What differed between the copies became the helper's arguments. `towel dry`
+then makes the change: despite its name, it writes, and asks first (the name
+is for "don't repeat yourself"). `towel rename-helpers` gives the helper and
+its parameters real names; then run your tests and keep the change. The
 [quick start](https://github.com/ericeallen/towel/blob/v1.949/docs/QUICKSTART.md)
 does all of that in ten minutes.
 
@@ -68,6 +69,7 @@ does all of that in ten minutes.
 uv tool install code-towel     # or: pipx install code-towel
 towel preview src/             # show what would change; writes nothing
 towel dry src/ src/            # make the change in place: commit your work first
+towel rename-helpers src/ --list   # the helpers to name, and their parameters
 ```
 
 Giving the input path again as the output, as here, refactors the project in
@@ -77,20 +79,30 @@ overlap the input.
 
 ## What Towel will not do
 
-Towel will not change what your program does: it must preserve the behavior of
-programs that do not use reflection or self-instrumentation, including through
-code they call, and an extraction that changes such a program is a bug. It
-assumes, by default, that your program does not depend on exactly when Python
-frees an object it no longer uses; `--strict` drops that assumption, at the
-cost of more code left alone and some bookkeeping in callers
-([relaxed and strict](https://github.com/ericeallen/towel/blob/v1.949/docs/RELAXED_AND_STRICT.md)).
-It cannot see code that reads its own source or frames, or that a tool
-rewrites, such as pytest's assertion rewriting: mark such a function with
-`# towel: no-extract`, or leave its file out with `--exclude`.
+**What Towel promises.** A change Towel makes keeps what your program
+computes and does: its results, output, exceptions and the order of its side
+effects. That holds for programs that do not use reflection or
+self-instrumentation, including through code they call. Reflection here means
+reading frames, source or line numbers, as `inspect.stack()` does, or a log
+format with `%(funcName)s`; self-instrumentation means a tool that rewrites
+functions, such as pytest's assertion rewriting. Mark a function that depends
+on these with `# towel: no-extract`. In relaxed mode, the default, Towel also
+assumes that your program does not depend on when Python frees an object it no
+longer uses; that reading an attribute, indexing, comparing and arithmetic have
+no side effects; and that a module's functions, classes and imports are not
+rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
+none of these three assumptions. A change that breaks a program meeting these
+conditions is a bug.
+
+[Relaxed and strict](https://github.com/ericeallen/towel/blob/v1.949/docs/RELAXED_AND_STRICT.md)
+explains each assumption and when to use `--strict`.
 
 ## Install
 
-**Release status: 1.949 (beta).** This page describes that version. The
+**Release status: 1.949 (beta).** This README and the guides it links
+describe Towel 2.0; `towel --version` shows the version you have. Versions
+before 2.0 have no relaxed mode (they behave as `--strict` does), no
+`--check` and no `[tool.towel]`. The
 [GitHub releases page](https://github.com/ericeallen/towel/releases) lists every
 published version with its release notes.
 
@@ -108,7 +120,12 @@ towel --version
 towel --help
 ```
 
-uv downloads a suitable Python when the machine has none. Without uv or pipx,
+uv picks the newest Python it can, now 3.14 or 3.15, and downloads one when
+the machine has none. On Python 3.14 and later, `--strict` leaves alone what
+depends on the order Python frees objects, which CPython 3.14 changed, so it
+extracts less; the default, relaxed mode, is the same on every version. If you
+will use `--strict`, install on 3.13 with
+`uv tool install --python 3.13 code-towel`. Without uv or pipx,
 make a virtual environment with a Python in that range and install into it:
 
 ```bash
@@ -131,6 +148,11 @@ uv tool install "code-towel[format,types]"     # or: pipx install "code-towel[fo
 .venv/bin/pip install "code-towel[format,types]>=1.414"
 ```
 
+A type checker needs your project's dependencies, which an environment of
+Towel's own does not have; for a typed project, run Towel in the project's
+environment
+([typed projects](https://github.com/ericeallen/towel/blob/v1.949/docs/TYPING.md)).
+
 `--no-format` and `--no-types` turn either off for one run. Upgrade with
 `uv tool upgrade code-towel`, `pipx upgrade code-towel` or
 `.venv/bin/pip install --upgrade code-towel`, or try Towel without installing
@@ -144,14 +166,14 @@ it: `uvx --from code-towel towel --help`.
 - [Using Towel on a project](https://github.com/ericeallen/towel/blob/v1.949/docs/USING_TOWEL.md): branches, scope, long runs and reviewing a large change.
 - [Recipes](https://github.com/ericeallen/towel/blob/v1.949/docs/RECIPES.md): CI, pre-commit and `[tool.towel]` settings.
 - [Naming helpers](https://github.com/ericeallen/towel/blob/v1.949/docs/NAMING.md) and the [command reference](https://github.com/ericeallen/towel/blob/v1.949/docs/CLI_GUIDE.md).
-- [All documentation](https://github.com/ericeallen/towel/blob/v1.949/docs/README.md).
+- [All documentation](https://github.com/ericeallen/towel/blob/v1.949/docs/README.md), also on [the documentation site](https://ericeallen.github.io/towel/).
 
 ## Requirements
 
 Python 3.11 to 3.15 on a POSIX system (macOS or Linux). Applying changes needs
-POSIX filesystem semantics. Parallel analysis uses the `fork` start method;
-under other start methods analysis runs on a single core. Windows is not a
-supported or validated release platform.
+POSIX filesystem semantics. Parallel analysis forks worker processes, as macOS
+and Linux both allow; where Python cannot fork, analysis runs on a single core.
+Windows is not a supported or validated release platform.
 
 One core is enough, and `TOWEL_WORKERS=1` limits analysis to one worker. A
 module takes seconds; a large project with type checking can take an hour.

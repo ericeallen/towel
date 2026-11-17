@@ -32,7 +32,7 @@ Fixed point
 
 Left alone, or declined
 :   Towel found duplicate blocks but did not extract them, because it could not
-    show that the change keeps the program's behaviour or because the helper
+    show that the change keeps the program's behavior or because the helper
     would cost more to read than the code it replaces. Every run gives the
     reasons; `--explain` lists every place ([reasons](WHY_LEFT_ALONE.md)).
 
@@ -43,8 +43,11 @@ Refused
 Relaxed mode
 :   The default from Towel 2.0. Towel preserves what the program computes and
     does: its results, its output, its exceptions and the order of its side
-    effects. It assumes the program does not depend on exactly when an object
-    it no longer uses is released ([relaxed and strict](RELAXED_AND_STRICT.md)).
+    effects. It assumes three things nearly every program satisfies: that it
+    does not depend on when an object it no longer uses is released, that
+    reading an attribute, indexing, comparing and arithmetic have no side
+    effects, and that module names are not rebound while a helper runs
+    ([relaxed and strict](RELAXED_AND_STRICT.md)).
 
 Strict mode
 :   `--strict` makes Towel also preserve exactly when objects are released and

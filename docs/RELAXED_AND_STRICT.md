@@ -1,25 +1,68 @@
 # Relaxed and strict
 
-[Documentation index](README.md)
-
-Towel 2.0 has two modes. Relaxed mode, the default, makes a few assumptions
+Towel 2.0 has two modes. Relaxed mode, the default, makes three assumptions
 that nearly every program satisfies, and in return extracts far more code and
 writes plain calls. Strict mode, `--strict`, makes none of them, as every
-release before 2.0 did. Save this as `fetch.py`:
+release before 2.0 did.
+
+**On Python 3.14 and later, strict mode extracts less.** CPython 3.14 changed
+the order in which a function's variables are freed, and strict mode's proofs
+about that order cover CPython 3.11 to 3.13. On 3.14 and later it leaves alone
+whatever depends on that order, with the reason `lifetime_order_uncertified`;
+the strict examples on this page show 3.13. If you will use `--strict`,
+install Towel on 3.13: `uv tool install --python 3.13 code-towel`. Relaxed
+mode behaves the same on every version.
+
+## Which to use
+
+**What Towel promises.** A change Towel makes keeps what your program
+computes and does: its results, output, exceptions and the order of its side
+effects. That holds for programs that do not use reflection or
+self-instrumentation, including through code they call. Reflection here means
+reading frames, source or line numbers, as `inspect.stack()` does, or a log
+format with `%(funcName)s`; self-instrumentation means a tool that rewrites
+functions, such as pytest's assertion rewriting. Mark a function that depends
+on these with `# towel: no-extract`. In relaxed mode, the default, Towel also
+assumes that your program does not depend on when Python frees an object it no
+longer uses; that reading an attribute, indexing, comparing and arithmetic have
+no side effects; and that a module's functions, classes and imports are not
+rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
+none of these three assumptions. A change that breaks a program meeting these
+conditions is a bug.
+
+Use `--strict` when your program, or its tests, depend on one of the three:
+
+- **When objects are freed**: a `__del__` that does work others wait for, a
+  weak-reference callback, a `gc.callbacks` hook, or a test that checks that a
+  file is closed or an object collected at a precise point.
+- **Side effects of reading**: a property, `__getattr__`, `__getitem__`,
+  `__eq__`, `__bool__` or arithmetic method that logs, counts, or changes
+  state, so that calling it once more, or once less, would show.
+- **Rebinding while code runs**: a module's function, class or imported name
+  replaced while the code that calls it is running, as a monkeypatch inside a
+  callback, or another thread, can do.
+
+Otherwise, use the default. When Towel sees code that may depend on when
+objects are freed, a relaxed run says so before anything else
+([below](#the-notice-relaxed-mode-prints)).
+
+## The two modes on one example
+
+Save this as `fetch.py`:
 
 ```python
 async def fetch_user(client, user_id):
-    response = await client.get(f"/users/{user_id}")
+    response = await client.get(f"/user/{user_id}")
     response.raise_for_status()
     data = await response.json()
-    return data["user"]
+    return data["profile"]
 
 
 async def fetch_team(client, team_id):
-    response = await client.get(f"/teams/{team_id}")
+    response = await client.get(f"/team/{team_id}")
     response.raise_for_status()
     data = await response.json()
-    return data["team"]
+    return data["members"]
 ```
 
 In relaxed mode, the copies become one `async` helper:
@@ -38,25 +81,25 @@ Would change 1 file(s):
 +++ after/fetch.py
 @@ -1,12 +1,13 @@
 -async def fetch_user(client, user_id):
--    response = await client.get(f"/users/{user_id}")
+-    response = await client.get(f"/user/{user_id}")
 +async def __extracted_func_0(client, _param_0, _param_1, _param_2):
-+    response = await client.get(f"/{_param_0}s/{_param_1}")
++    response = await client.get(f"/{_param_0}/{_param_1}")
      response.raise_for_status()
      data = await response.json()
--    return data["user"]
+-    return data["profile"]
 +    return data[_param_2]
 +
 +
 +async def fetch_user(client, user_id):
-+    return await __extracted_func_0(client, "user", user_id, "user")
++    return await __extracted_func_0(client, "user", user_id, "profile")
 
 
  async def fetch_team(client, team_id):
--    response = await client.get(f"/teams/{team_id}")
+-    response = await client.get(f"/team/{team_id}")
 -    response.raise_for_status()
 -    data = await response.json()
--    return data["team"]
-+    return await __extracted_func_0(client, "team", team_id, "team")
+-    return data["members"]
++    return await __extracted_func_0(client, "team", team_id, "members")
 Input files were not changed.
 ```
 
@@ -73,11 +116,7 @@ Found 3 places with similar code and extracted none.
 
 Why code was left alone (most frequent first; --explain locates each place):
   3  Moving the block would change the order in which its function releases objects when it returns: the function's arguments or other variables on one side, variables the block assigns on the other. [owned_binding_frame_boundary]
-
-Places left alone, largest first:
-  fetch.py:2-5 and fetch.py:9-12: Moving the block would change the order in which its function releases objects when it returns: the function's arguments or other variables on one side, variables the block assigns on the other.
-  fetch.py:2-4 and fetch.py:9-11: Moving the block would change the order in which its function releases objects when it returns: the function's arguments or other variables on one side, variables the block assigns on the other.
-  fetch.py:3-5 and fetch.py:10-12: Moving the block would change the order in which its function releases objects when it returns: the function's arguments or other variables on one side, variables the block assigns on the other.
+...
 Input files were not changed.
 ```
 
@@ -86,11 +125,11 @@ be released when the helper returns, a moment earlier, and in a different
 order from `client` and `user_id`. No ordinary program can tell. Strict mode
 assumes yours might.
 
-## What relaxed mode assumes
+## What relaxed mode assumes, in detail
 
 Relaxed mode keeps what your program computes and does: its return values,
-output and exceptions, and the order of the side effects its calls perform. It
-assumes three things that strict mode does not:
+output and exceptions, and the order of the side effects its calls perform.
+These are its three assumptions:
 
 1. **Your program does not depend on when Python frees an object it no longer
    uses**, or in what order. Python's own language reference leaves that to
@@ -104,7 +143,7 @@ assumes three things that strict mode does not:
    runs**, as a test's monkeypatch can do.
 
 Relaxed mode also lets a lambda that uses only its own parameters move into a
-helper, which changes the lambda's `__qualname__`.
+helper, which changes the lambda's `__qualname__`; only reflection can see it.
 
 One kind of object is protected even in relaxed mode: one that cleans up
 something the program can still reach another way. A temporary directory, an
@@ -113,13 +152,10 @@ in a block keeps working after extraction, or the block is left alone with
 the reason `resource_lifetime_unproven`. A `with` statement around the
 resource always works.
 
-## When to use `--strict`
+## The notice relaxed mode prints
 
-Use it when your program, or its tests, observe when objects are freed: a
-`__del__` that does work others wait for, a weak-reference callback, a
-`gc.callbacks` hook, a test that checks that a file is closed or an object
-collected at a precise point. When Towel sees such code in the project, a
-relaxed run says so before anything else. Save this as `handles.py`:
+When Towel sees code in the project that may depend on when objects are
+freed, a relaxed run says so before anything else. Save this as `handles.py`:
 
 ```python
 class Handle:
@@ -147,6 +183,8 @@ Input files were not changed.
 The note is a hint, not a verdict: here `Handle` has nothing to do with
 `fetch.py`, and the extraction is safe. Read the places it names and decide.
 `--quiet` hides the note; `--json` reports it in `relaxed_findings`.
+
+## Making strict the default
 
 To make strict mode a project's default, add it to `pyproject.toml`
 ([recipes](RECIPES.md#project-settings)):
@@ -252,8 +290,4 @@ the helper's last parameter, `_towel_owner`, holds it until the helper
 returns, which is when the caller would have released it. Relaxed mode writes
 `return __extracted_func_0(amount, 0.10)`.
 
-Strict mode's guarantees about release order are proved for CPython 3.11 to
-3.13. CPython 3.14 releases a function's variables in the opposite order, so
-on 3.14 and later strict mode leaves alone what those proofs would extract,
-with the reason `lifetime_order_uncertified`; the examples above show 3.13.
-Relaxed mode behaves the same on every version.
+[Documentation index](README.md)

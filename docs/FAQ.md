@@ -16,10 +16,12 @@ towel dry shop/ shop/               # change shop/ in place, on a branch
 
 ## Does Towel run my code?
 
-No. It reads your code; it never imports or runs it. In a project that
-configures them, it runs your type checker (mypy or Pyright) and formatter
-(Ruff or Black) on the changed code, as you would. Towel itself uses no
-network and no AI service.
+No. It reads your code; it never imports or runs it. It does run a type
+checker (mypy or Pyright) on the changed code when one is installed where
+Towel runs, and a formatter (Ruff or Black) when the project uses one, as you
+would. One exception: mypy plugins your project configures, such as
+django-stubs' or pydantic's, run code your project names, as they do whenever
+you run mypy. Towel itself uses no network and no AI service.
 
 ## How do I undo a run?
 
@@ -51,12 +53,27 @@ before. You see it only with `--strict`
 
 ## Is relaxed mode safe for my program?
 
-Almost certainly. It assumes your program does not depend on exactly when
-Python frees an object it no longer uses, that reading an attribute or
-comparing has no side effects, and that module functions are not rebound
-while a helper runs. When Towel sees code that may depend on the first, such
-as a `__del__` method, the run says so.
-[Relaxed and strict](RELAXED_AND_STRICT.md) has the details.
+Almost certainly.
+
+**What Towel promises.** A change Towel makes keeps what your program
+computes and does: its results, output, exceptions and the order of its side
+effects. That holds for programs that do not use reflection or
+self-instrumentation, including through code they call. Reflection here means
+reading frames, source or line numbers, as `inspect.stack()` does, or a log
+format with `%(funcName)s`; self-instrumentation means a tool that rewrites
+functions, such as pytest's assertion rewriting. Mark a function that depends
+on these with `# towel: no-extract`. In relaxed mode, the default, Towel also
+assumes that your program does not depend on when Python frees an object it no
+longer uses; that reading an attribute, indexing, comparing and arithmetic have
+no side effects; and that a module's functions, classes and imports are not
+rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
+none of these three assumptions. A change that breaks a program meeting these
+conditions is a bug.
+
+When Towel sees code that may depend on when objects are freed, such as a
+`__del__` method, the run says so.
+[Relaxed and strict](RELAXED_AND_STRICT.md#which-to-use) says when to use
+`--strict`.
 
 ## Why are the helpers called `__extracted_func_0`?
 

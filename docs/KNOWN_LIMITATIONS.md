@@ -77,9 +77,23 @@ To leave a whole file or directory alone, pass `--exclude NAME`
 
 ## What Towel cannot see
 
-Towel preserves the behavior of programs that do not use reflection or
-self-instrumentation, including through the code they call. It does not look
-for these, so it is up to you to protect them:
+**What Towel promises.** A change Towel makes keeps what your program
+computes and does: its results, output, exceptions and the order of its side
+effects. That holds for programs that do not use reflection or
+self-instrumentation, including through code they call. Reflection here means
+reading frames, source or line numbers, as `inspect.stack()` does, or a log
+format with `%(funcName)s`; self-instrumentation means a tool that rewrites
+functions, such as pytest's assertion rewriting. Mark a function that depends
+on these with `# towel: no-extract`. In relaxed mode, the default, Towel also
+assumes that your program does not depend on when Python frees an object it no
+longer uses; that reading an attribute, indexing, comparing and arithmetic have
+no side effects; and that a module's functions, classes and imports are not
+rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
+none of these three assumptions. A change that breaks a program meeting these
+conditions is a bug.
+
+Towel does not look for reflection or self-instrumentation, so it is up to you
+to protect code that uses them:
 
 - **Reflection**: `inspect.stack()`, `sys._getframe()`, `locals()`, reading a
   function's source, bytecode or `__qualname__`, or listing a module's names
@@ -102,15 +116,14 @@ for these, so it is up to you to protect them:
 - **Changes the type checker rejects**, in a project it can type-check
   ([typed projects](TYPING.md)).
 
-By default Towel also assumes your program does not depend on exactly when
-Python frees objects; [relaxed and strict](RELAXED_AND_STRICT.md) explains
-that assumption and how to drop it.
+[Relaxed and strict](RELAXED_AND_STRICT.md) explains relaxed mode's three
+assumptions and how to drop them.
 
 ## Resources and platform
 
 Python 3.11 to 3.15 on a POSIX system (macOS or Linux). Applying changes needs
-POSIX filesystem semantics. Parallel analysis uses the `fork` start method;
-under other start methods analysis runs on a single core. Windows is not a
+POSIX filesystem semantics. Parallel analysis forks worker processes, as macOS
+and Linux both allow; where Python cannot fork, analysis runs on a single core. Windows is not a
 supported or validated release platform.
 
 Memory, not cores, limits the largest projects; set `TOWEL_WORKERS=1` on a

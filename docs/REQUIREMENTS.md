@@ -13,7 +13,7 @@ Pyright, which Towel uses when a project configures them.
 
 ## Requirements
 
-Python 3.11 to 3.15 on a POSIX system (macOS or Linux). Applying changes needs POSIX filesystem semantics. Parallel analysis uses the `fork` start method; under other start methods analysis runs on a single core. Windows is not a supported or validated release platform.
+Python 3.11 to 3.15 on a POSIX system (macOS or Linux). Applying changes needs POSIX filesystem semantics. Parallel analysis forks worker processes, as macOS and Linux both allow; where Python cannot fork, analysis runs on a single core. Windows is not a supported or validated release platform.
 
 Towel installs on newer Pythons too, and warns that they are outside the
 tested range. Every change to Towel runs its full test suite on Linux with each

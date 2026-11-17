@@ -4,7 +4,7 @@
 
 Several tools deal with duplicated code. Most find it and leave the change to
 you; Towel makes the change, and makes only changes it can show keep your
-program's behaviour. Which you want depends on the job.
+program's behavior. Which you want depends on the job.
 
 | Tool | Finds duplication | Changes your code | Checks the change |
 | --- | --- | --- | --- |
@@ -86,11 +86,26 @@ available. When it cannot show that the change is safe, it leaves the code
 alone and, with `--explain`, says why. See
 [Reading Towel's output](GENERATED_CODE.md) for what the result looks like.
 
+**What Towel promises.** A change Towel makes keeps what your program
+computes and does: its results, output, exceptions and the order of its side
+effects. That holds for programs that do not use reflection or
+self-instrumentation, including through code they call. Reflection here means
+reading frames, source or line numbers, as `inspect.stack()` does, or a log
+format with `%(funcName)s`; self-instrumentation means a tool that rewrites
+functions, such as pytest's assertion rewriting. Mark a function that depends
+on these with `# towel: no-extract`. In relaxed mode, the default, Towel also
+assumes that your program does not depend on when Python frees an object it no
+longer uses; that reading an attribute, indexing, comparing and arithmetic have
+no side effects; and that a module's functions, classes and imports are not
+rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
+none of these three assumptions. A change that breaks a program meeting these
+conditions is a bug.
+
 Towel's limits are the other tools' strengths: it handles Python only; it
 extracts helper functions and does not redesign your classes; it gives helpers
 placeholder names that you replace; the largest projects take from several
 minutes to over an hour rather than seconds (see [Performance](PERFORMANCE.md));
-and its check covers your program's behaviour, not whether the new helper makes
+and its check covers your program's behavior, not whether the new helper makes
 the design better. Review the diff and run your tests, as the
 [quick start](QUICKSTART.md) shows.
 

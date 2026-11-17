@@ -143,8 +143,9 @@ def _check_automation(documents: Mapping[str, str]) -> None:
     assert "Operating System :: POSIX" in classifiers
     platform = (
         f"Python {versions[0]} to {versions[-1]} on a POSIX system (macOS or Linux). "
-        "Applying changes needs POSIX filesystem semantics. Parallel analysis uses the "
-        "`fork` start method; under other start methods analysis runs on a single core. "
+        "Applying changes needs POSIX filesystem semantics. Parallel analysis forks worker "
+        "processes, as macOS and Linux both allow; where Python cannot fork, analysis runs "
+        "on a single core. "
         "Windows is not a supported or validated release platform."
     )
     _contains(_section(documents["README.md"], "## Requirements"), platform)
