@@ -1528,9 +1528,25 @@ def _run_dry(args: argparse.Namespace) -> None:
 
 def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResult":
     from towel.source_files import source_policy
+    from towel.unification.exceptions import BaselineTypeCheckError
 
     with source_policy(strict=options.strict, include_ignored=options.include_ignored):
-        return _execute_dry_with_policy(options, preview=preview)
+        try:
+            return _execute_dry_with_policy(options, preview=preview)
+        except BaselineTypeCheckError as error:
+            if options.strict or not options.types:
+                raise
+            # The failed run has closed its checker and has not staged or
+            # changed anything. Restart with bare helpers, as when selecting
+            # the requested checker fails, and preserve the requested mode.
+            print(
+                f"Warning: {error}\nContinuing without type verification; generated "
+                "helpers stay bare. Use --strict to refuse instead.",
+                file=sys.stderr,
+            )
+            result = _execute_dry_with_policy(replace(options, types=False), preview=preview)
+            result["types"] = "unverified"
+            return result
 
 
 def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "CommandResult":

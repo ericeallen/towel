@@ -365,7 +365,7 @@ def test_complete_preview_uses_original_config_and_whole_project_staging(
 def test_complete_preview_and_dry_both_fail_closed_when_checking_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory: bool, failure: str
 ) -> None:
-    """A failed original or final check cannot produce a successful preview or leave output."""
+    """Strict baseline failures and all final failures refuse without publishing."""
     root = tmp_path / "project"
     root.mkdir()
     source = root / "module.py"
@@ -409,7 +409,9 @@ def test_complete_preview_and_dry_both_fail_closed_when_checking_fails(
         monkeypatch.setattr(
             UnificationRefactorEngine, "confirm_run_with_a_cold_checker", fail_final
         )
-    flags = ["--no-format", "--progress", "none"] + (["--no-types"] if failure == "final" else [])
+    flags = ["--no-format", "--progress", "none"] + (
+        ["--no-types"] if failure == "final" else ["--strict"]
+    )
     preview = invoke(["preview", str(target), *flags])
     output = tmp_path / ("out" if directory else "out.py")
     dry = invoke(["dry", str(target), str(output), "--no-interactive", *flags])

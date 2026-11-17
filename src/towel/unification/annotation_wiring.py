@@ -88,6 +88,7 @@ from .exceptions import (
     CheckerUnavailableError,
     ProjectScanLimitError,
     RefactoringError,
+    BaselineTypeCheckError,
     UncheckedCodeError,
     Untypeable,
     UnverifiableChangeError,
@@ -577,8 +578,16 @@ class HelperAnnotationWiring(EngineState):
             # A configuration mypy only warns about is not this: one naming a
             # Python version mypy has dropped (Voluptuous and Lark ask for 3.9
             # and 3.8) is checked with mypy's oldest, as mypy checks it.
-            raise RefactoringError(
-                f"Original project type check failed: {self._type_run_baseline.reason}\n"
+            reason = self._type_run_baseline.reason
+            package_remedy = (
+                "For relative imports, target the package directory instead of one module; "
+                "for a namespace package, configure the checker's package bases as needed.\n"
+                if "No parent module" in reason
+                else ""
+            )
+            raise BaselineTypeCheckError(
+                f"Original project type check failed: {reason}\n"
+                f"{package_remedy}"
                 f"{UNTYPED_REMEDY}"
             )
 

@@ -41,6 +41,14 @@ class UnprofitableHelper(RefactoringError):
     """
 
 
+class BaselineTypeCheckError(RefactoringError):
+    """The original project could not be checked, before any change was attempted.
+
+    The CLI can restart an explicitly unverified relaxed run after this failure.
+    Candidate and final-check failures must never trigger that fallback.
+    """
+
+
 class TypeRejectedExtraction(RefactoringError):
     """Every offered helper variant completed checking and introduced type errors.
 
