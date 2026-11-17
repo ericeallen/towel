@@ -188,16 +188,20 @@ def _complaint(data: bytes, path: Path, include_decoding_errors: bool) -> Option
     try:
         text = decode_source(data)
     except (SyntaxError, UnicodeError, LookupError) as error:
-        return f"it cannot be decoded: {_described(error)}" if include_decoding_errors else None
+        return (
+            f"it cannot be decoded: {describe_source_failure(error)}"
+            if include_decoding_errors
+            else None
+        )
     try:
         ast.parse(text, filename=str(path))
     except (SyntaxError, ValueError, RecursionError) as error:
         # ValueError: a null byte, before 3.12 made that a SyntaxError.
-        return _described(error)
+        return describe_source_failure(error)
     return None
 
 
-def _described(error: BaseException) -> str:
+def describe_source_failure(error: BaseException) -> str:
     """What a failed parse says, as the refusal shows it: ``line 6: f-string: expecting '}'``."""
     if isinstance(error, SyntaxError):
         return error.msg if not error.lineno else f"line {error.lineno}: {error.msg}"
@@ -296,7 +300,7 @@ def refuse_unparsed_file(
         return
     failure = parse_failure(path)
     if failure is None and error is not None and _decodes(path):
-        failure = UnparsedFile(path, _described(error))
+        failure = UnparsedFile(path, describe_source_failure(error))
     if failure is not None:
         raise unparsed_refusal((failure,), resolved)
 
