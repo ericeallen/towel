@@ -26,6 +26,7 @@ import pytest
 import towel
 
 from towel.unification.scope_analyzer import ScopeAnalyzer
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.semantic_safety import (
     created_object_escapes,
     nested_scopes_cross_block_boundary,
@@ -179,7 +180,7 @@ def test_audit_cli_preserves_original_driver_observations(
             "--progress",
             "none",
             *options,
-            *(["--strict"] if strict else []),
+            "--strict" if strict else "--no-strict",
         ],
         capture_output=True,
         text=True,
@@ -195,5 +196,10 @@ def test_audit_cli_preserves_original_driver_observations(
     assert output.is_dir(), transformed.stdout + transformed.stderr
     assert _run_driver(driver, output) == before
 
-    if case in {"02_literal_medium", "05_varname_medium", "43_typed_generic"}:
+    if strict and not _supported_runtime() and case in {"05_varname_medium", "43_typed_generic"}:
+        assert "[lifetime_order_uncertified]" in transformed.stdout
+        assert {path.name: path.read_bytes() for path in output.glob("*.py")} == {
+            path.name: path.read_bytes() for path in source.glob("*.py")
+        }
+    elif case in {"02_literal_medium", "05_varname_medium", "43_typed_generic"}:
         assert any("def __extracted_func_" in path.read_text() for path in output.glob("*.py"))
