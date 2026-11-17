@@ -105,6 +105,7 @@ from towel.unification.class_private import (
     mangling_prefix,
 )
 from towel.unification.models import GENERATED_HELPER_NAME, ParameterKind
+from towel.unification.splicing import splice_block
 from towel.unification.defaults import (
     DEFAULT_MAX_CANDIDATE_PAIRS,
     DEFAULT_MAX_ITERATIONS,
@@ -2219,6 +2220,10 @@ def _print_call_sites(
             after = ast.unparse(repl.node)
         except ValueError:
             continue
+        if repl.expression is not None and repl.columns is not None:
+            # The call replaces an expression: show its lines with the call in place.
+            spliced = splice_block(file_lines[start - 1 : end], repl.columns, after)
+            after = textwrap.dedent("".join(spliced.lines)).rstrip("\n")
         location = os.path.relpath(fpath, target) if is_dir else os.path.basename(fpath)
         print(f"      {location}:{start}")
         for line in before.split("\n"):

@@ -27,6 +27,7 @@ from towel.unification.block_signature import (
     quick_filter,
     signature_bucket_key,
 )
+from towel.unification.expression_sites import is_expression_block
 from towel.unification.models import CodeBlockPair
 from towel.unification.pipeline import analyze_scopes, collect_functions, parse_modules
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -35,6 +36,20 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 def analyzed_functions(paths):
     modules = analyze_scopes(parse_modules(paths))
     return collect_functions(modules)
+
+
+def statement_pairs(engine, functions, **options):
+    """The pairs of statement blocks the engine forms.
+
+    Since 2.0 it also pairs expression candidates (``expression_sites``),
+    which the exhaustive search below, written for statement blocks, does
+    not enumerate; ``tests/test_expression_pairing.py`` holds those.
+    """
+    return [
+        pair
+        for pair in engine.find_block_pairs(functions, **options)
+        if not is_expression_block(pair.block1_nodes)
+    ]
 
 
 def exhaustive_pairs(engine, functions):
@@ -135,14 +150,14 @@ class Container:
     functions = analyzed_functions(paths)
     engine = UnificationRefactorEngine(min_lines=min_lines, cross_module_helpers=True)
     expected = exhaustive_pairs(engine, functions)
-    actual = engine.find_block_pairs(functions, progress="none")
+    actual = statement_pairs(engine, functions, progress="none")
     assert expected
     assert actual == expected
     # Without cross-module helpers only the pairs within one module are formed.
     within = [pair for pair in expected if not pair.is_cross_file]
     assert len(within) < len(expected)
     default = UnificationRefactorEngine(min_lines=min_lines)
-    assert default.find_block_pairs(functions, progress="none") == within
+    assert statement_pairs(default, functions, progress="none") == within
 
 
 def test_index_matches_all_original_example_files():
@@ -152,7 +167,7 @@ def test_index_matches_all_original_example_files():
     for path in paths:
         functions = analyzed_functions([str(path)])
         engine = UnificationRefactorEngine()
-        assert engine.find_block_pairs(functions) == exhaustive_pairs(engine, functions)
+        assert statement_pairs(engine, functions) == exhaustive_pairs(engine, functions)
 
 
 def test_index_extracts_blocks_and_signatures_once_per_function(tmp_path):

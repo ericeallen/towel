@@ -89,6 +89,14 @@ from .block_signature import (
     quick_filter,
     signature_bucket_key,
 )
+from .expression_sites import (
+    MINIMUM_SYNTAX_UNITS,
+    expression_site,
+    is_expression_block,
+    syntax_units,
+    truth_decides,
+)
+from .typing_forms import ModuleText
 from ..coverage_config import CoverageExclusion
 from ..consumers import MAXIMUM_FILES
 from .if_binding_transfer import sharing_if_transfer_sources
@@ -108,6 +116,7 @@ from .models import (
     RejectReason,
     AppliedChange,
     FunctionNode,
+    expression_count,
     identity_digest,
 )
 from ..type_baseline import KnownErrors
@@ -375,6 +384,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         file_finisher: Optional[Callable[[str, str], str]] = None,
         incremental_global_passes: bool = True,
         max_candidate_pairs: int = DEFAULT_MAX_CANDIDATE_PAIRS,
+        expression_candidates: bool = True,
         settings: Optional[Settings] = None,
     ):
         """
@@ -495,6 +505,13 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 declined for a cycle stays declined), and any proposal it
                 produced was applied, which changed its files. False re-pairs
                 everything on every global pass.
+            expression_candidates: Also take as a candidate one expression
+                repeated inside statements that otherwise differ, such as a
+                condition written in an ``if`` and in a comprehension's
+                ``if`` clause (default: True). Its helper returns the
+                expression and each site calls it where the expression stood
+                (``towel.unification.expression_sites``). False considers
+                runs of whole statements only, as releases through 1.949 did.
             settings: What Towel reads from the environment (worker cap,
                 debug switches). Read once from ``os.environ`` when omitted.
         """
@@ -509,6 +526,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.max_parameters = max_parameters
         self.min_lines = min_lines
         self.max_candidate_pairs = max_candidate_pairs
+        self.expression_candidates = expression_candidates
         self.skip_trivial_helpers = skip_trivial_helpers
         # reuse_existing_functions is accepted and ignored; see the docstring.
         self.annotate_helpers = annotate_helpers
@@ -660,6 +678,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._signed_block_cache: WeakKeyDictionary[
             FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
         ] = WeakKeyDictionary()
+        self._signed_expression_cache: WeakKeyDictionary[
+            FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
+        ] = WeakKeyDictionary()
+        self._exact_truth_blocks: WeakKeyDictionary[ast.AST, List[ast.stmt]] = WeakKeyDictionary()
 
     # --- Debug helpers ---
     def _debug_reject(
@@ -997,10 +1019,20 @@ class UnificationRefactorEngine(ParallelEvaluation):
         if digest is None or not nodes:
             return None
         first = nodes[0]
+        expression = expression_site(nodes)
         return BlockSite(
             digest,
             (func.lineno, func.col_offset),
             (first.lineno, first.col_offset, len(nodes)),
+            (
+                None
+                if expression is None
+                else (
+                    first.end_lineno or first.lineno,
+                    first.end_col_offset or first.col_offset,
+                    expression.exact_truth,
+                )
+            ),
         )
 
     def _remember(
@@ -1137,7 +1169,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         return PairVerdict(
             proposal,
             None if self._pair_identity is None else identity_digest(self._pair_identity),
-            None if proposal is not None or duplicate else self._rejection_key(),
+            None if proposal is not None or duplicate else self._rejection_key(pair),
             lines[:mark],
             lines[mark:],
         )
@@ -1179,16 +1211,28 @@ class UnificationRefactorEngine(ParallelEvaluation):
             self._proposing_pairs += 1
         return verdict.proposal
 
-    def _rejection_key(self) -> str:
-        """What the pair just declined counts under: its reason, with what the reason names."""
+    def _rejection_key(self, pair: CodeBlockPair) -> str:
+        """What the pair just declined counts under: its reason, with what the reason names.
+
+        A pair of expression candidates is counted apart from pairs of
+        statement blocks (``expression_count``): its sentence speaks of an
+        expression, and some reasons mean something else for one.
+        """
         reason, subject = self._pair_rejection, self._pair_rejection_subject
-        if reason is None:
-            return "other"
-        return str(reason) if subject is None else f"{reason}[{subject}]"
+        counted = (
+            "other"
+            if reason is None
+            else str(reason) if subject is None else f"{reason}[{subject}]"
+        )
+        return expression_count(counted) if is_expression_block(pair.block1_nodes) else counted
 
     @property
     def declined_pairs(self) -> Mapping[str, int]:
-        """How many candidate pairs the latest analysis declined, by ``RejectReason``."""
+        """How many candidate pairs the latest analysis declined, by ``RejectReason``.
+
+        A pair of expression candidates is counted under ``expression_count``
+        of its reason, apart from the pairs of statement blocks.
+        """
         return dict(self._pair_rejections)
 
     @property
@@ -1284,8 +1328,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # count too, including generated helpers from previous passes. Keep
         # incremental filtering below the budget calculation, as before.
         partners = _Partners.of(all_functions, self.cross_module_helpers, self.min_lines)
+        # A function's statement blocks, then its expression candidates: the
+        # two never share a bucket (``expression_signature``).
         blocks = [
-            self._signed_blocks(entry.node) if partners.participates(index) else []
+            (
+                self._signed_blocks(entry.node) + self._signed_expressions(entry.node)
+                if partners.participates(index)
+                else []
+            )
             for index, entry in enumerate(all_functions)
         ]
         buckets = [_bucketed(function_blocks) for function_blocks in blocks]
@@ -1321,6 +1371,17 @@ class UnificationRefactorEngine(ParallelEvaluation):
                                     continue  # one function: the earlier block first, apart
                                 if not quick_filter(sig1, sig2):
                                     continue
+                                if is_expression_block(block1_nodes):
+                                    if i == j:
+                                        # Expressions pair across functions only
+                                        # (DECISIONS, "Expressions are candidates").
+                                        continue
+                                    forms = self._expression_pair(
+                                        first, second, block1_nodes, block2_nodes
+                                    )
+                                    if forms is None:
+                                        continue
+                                    block1_nodes, block2_nodes = forms
                                 pairs.append(
                                     CodeBlockPair(
                                         file_path=first.file_path,
@@ -1351,6 +1412,72 @@ class UnificationRefactorEngine(ParallelEvaluation):
         finally:
             reporter.finish()
         return pairs
+
+    def _expression_pair(
+        self,
+        first: FunctionArtifact,
+        second: FunctionArtifact,
+        block1: List[ast.stmt],
+        block2: List[ast.stmt],
+    ) -> Optional[Tuple[List[ast.stmt], List[ast.stmt]]]:
+        """The blocks two expression candidates pair as, or None when they share nothing.
+
+        Two expressions with one root are a pair only if they unify with
+        enough left in common for a helper to hold (``MINIMUM_SYNTAX_UNITS``,
+        counting each differing part as the parameter that stands for it):
+        unlike two runs of statements of the same kinds, most such
+        expressions are unrelated (497 of 655 in rich), and an unrelated pair
+        is not similar code a run should count or report.
+        The unification is the one the pair's evaluation asks for again, and
+        finds remembered.
+
+        Strict mode pairs each site in the form that tests truth exactly as
+        the site did (``ExpressionSite.exact_truth``); a pair whose sites
+        disagree unifies in neither form and is declined when it is judged
+        (``truth_test_repeated``).
+        """
+        site1, site2 = expression_site(block1), expression_site(block2)
+        if site1 is None or site2 is None:
+            return None
+        plain = (block1, block2)
+        if self.strict and truth_decides(site1.expression):
+            block1, block2 = (
+                self._in_exact_truth_form(block) if site.tests_truth else block
+                for block, site in ((block1, site1), (block2, site2))
+            )
+        compared = (block1, block2) if site1.tests_truth == site2.tests_truth else plain
+        substitution = self._unify_memoized(
+            compared,
+            [{}, {}],
+            (
+                ModuleText(first.file_path, first.source),
+                ModuleText(second.file_path, second.source),
+            ),
+            thread_literal_pools=os.path.abspath(first.file_path)
+            != os.path.abspath(second.file_path),
+        )
+        if substitution is None:
+            return None
+        whole = {id(site1.expression), id(site2.expression)} | {
+            id(getattr(block[0], "value", None)) for block in compared
+        }
+        differing = [
+            expression
+            for arguments in substitution.param_expressions.values()
+            for index, expression in arguments
+            if index == 0
+        ]
+        if any(id(expression) in whole for expression in differing):
+            return None  # the whole expression would be the argument: nothing is shared
+        # What is left in common must be able to repay a helper at two sites.
+        shared = (
+            syntax_units(site1.expression)
+            - sum(syntax_units(expression) for expression in differing)
+            + len(substitution.param_expressions)
+        )
+        if shared < MINIMUM_SYNTAX_UNITS:
+            return None
+        return block1, block2
 
     # ------------------------------------------------------------------
     # ------------------------------------------------------------------

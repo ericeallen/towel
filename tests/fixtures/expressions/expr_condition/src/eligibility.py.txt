@@ -1,0 +1,54 @@
+"""Who may post in the community forum."""
+
+from dataclasses import dataclass
+from datetime import datetime
+
+
+@dataclass
+class Member:
+    name: str
+    is_active: bool
+    is_banned: bool
+    email_verified: bool
+    created_at: datetime
+    warnings: int = 0
+
+
+def can_post(member, now):
+    if (
+        member.is_active
+        and not member.is_banned
+        and member.email_verified
+        and (now - member.created_at).days >= 7
+        and member.warnings < 3
+    ):
+        return True
+    return False
+
+
+def visible_authors(members, now):
+    return sorted(
+        member.name
+        for member in members
+        if (
+            member.is_active
+            and not member.is_banned
+            and member.email_verified
+            and (now - member.created_at).days >= 7
+            and member.warnings < 3
+        )
+    )
+
+
+def posting_summary(members, now):
+    allowed = 0
+    for member in members:
+        if (
+            member.is_active
+            and not member.is_banned
+            and member.email_verified
+            and (now - member.created_at).days >= 7
+            and member.warnings < 3
+        ):
+            allowed += 1
+    return f"{allowed} of {len(members)} members may post"

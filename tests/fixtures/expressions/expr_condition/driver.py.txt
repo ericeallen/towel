@@ -1,0 +1,29 @@
+import sys
+from datetime import datetime
+
+sys.path.insert(0, sys.argv[1])
+
+from eligibility import Member, can_post, posting_summary, visible_authors
+
+now = datetime(2026, 11, 14, 12, 0)
+old = datetime(2026, 1, 1)
+members = [
+    Member("ada", True, False, True, old),
+    Member("bob", False, False, True, old),
+    Member("cy", True, True, True, old),
+    Member("dee", True, False, False, old),
+    Member("eve", True, False, True, datetime(2026, 11, 10)),
+    Member("fay", True, False, True, old, warnings=3),
+    Member("gus", True, False, True, datetime(2026, 11, 7, 11, 59), warnings=2),
+]
+print([(m.name, can_post(m, now)) for m in members])
+print(visible_authors(members, now))
+print(posting_summary(members, now), "|", posting_summary([], now))
+
+
+class Partial:
+    is_active = False
+
+
+print(can_post(Partial(), now), visible_authors([Partial()], now), posting_summary([Partial()], now))
+print("ok")

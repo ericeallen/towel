@@ -155,6 +155,28 @@ class ArgumentHandoff:
     module_dump: str
 
 
+class ExpressionPlace(NamedTuple):
+    """Where the expression a call replaces stands, as its syntax tree node records it.
+
+    ``line_range`` and ``columns`` of the replacement may reach further, over
+    parentheses that only grouped the expression. ``exact_truth`` says the
+    helper returns ``True if E else False`` for this expression ``E``.
+
+    ``statement_line`` is the first line of the statement that holds the
+    expression (of the whole ``if`` for an ``elif``), where a type checker
+    can be asked what the expression's names are. ``comprehension_iterables``
+    gives, for each variable a comprehension around the expression binds by
+    name, the iterable it ranges over: the variable does not exist at that
+    line, and an element of its iterable has its type.
+    """
+
+    start: Tuple[int, int]
+    end: Tuple[int, int]
+    exact_truth: bool = False
+    statement_line: int = 0
+    comprehension_iterables: Tuple[Tuple[str, str], ...] = ()
+
+
 @dataclass
 class Replacement:
     """Represents a replacement call to the extracted function/method."""
@@ -174,6 +196,11 @@ class Replacement:
     # block of whole lines, as a replacement built by hand is.
     columns: Optional[BlockColumns] = None
     argument_handoff: Optional[ArgumentHandoff] = None
+    # Set when the call replaces an expression inside a statement
+    # (``expression_sites``), not statements: ``node`` is then the call as an
+    # expression statement, written where the expression stood, and its value
+    # is used there.
+    expression: Optional["ExpressionPlace"] = None
 
 
 GENERATED_HELPER_NAME = re.compile(r"_{1,2}extracted_func(?:_\d+)?")
@@ -372,6 +399,7 @@ class RejectReason(StrEnum):
     LAYOUT_NOT_KEPT = "layout_not_kept"
     FORWARDED_CALLEE = "forwarded_callee"
     THUNK_OF_POSSIBLY_UNBOUND_LOCAL = "thunk_of_possibly_unbound_local"
+    TRUTH_TEST_REPEATED = "truth_test_repeated"
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"
     LITERAL_POOL_BOUNDARY = "literal_pool_boundary"
     UNIFICATION_FAILED = "unification_failed"
@@ -437,6 +465,15 @@ class HelperTemplate:
     # What the template block's function declares ``global`` and ``nonlocal``:
     # an occurrence may join only where its function declares alike.
     declared: Tuple[FrozenSet[str], FrozenSet[str]] = (frozenset(), frozenset())
+
+
+EXPRESSION_COUNT_PREFIX = "expression "
+"""What begins the reason a declined pair of expression candidates is counted under."""
+
+
+def expression_count(counted: str) -> str:
+    """``counted``, a reason as a run counts it, for a pair of expression candidates."""
+    return EXPRESSION_COUNT_PREFIX + counted
 
 
 def span_contains(node: ast.stmt, line_range: Tuple[int, int]) -> bool:
@@ -551,7 +588,8 @@ class LeftAlone:
     """Similar code a run did not extract: where it is, and the reason it is counted under.
 
     ``reason`` is a ``RejectReason`` value, with what it names in brackets
-    when it names something (``builtin_may_differ_by_module[len]``), or a
+    when it names something (``builtin_may_differ_by_module[len]``) and
+    ``expression_count`` of that for a pair of expression candidates, or a
     ``DeclineReason`` for a proposal built and then not applied.
     """
 

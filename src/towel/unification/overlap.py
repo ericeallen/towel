@@ -76,6 +76,16 @@ def _first_span(proposal: RefactoringProposal) -> Tuple[str, int]:
     return (proposal.file_path, min(r.line_range[0] for r in proposal.replacements))
 
 
+def _kind_rank(proposal: RefactoringProposal) -> int:
+    """Statements before expressions, among proposals that are otherwise equal.
+
+    A one-statement block and the expression that is its whole value cover
+    the same lines and give the same calls; the statement's proposal is the
+    one releases before expression candidates made, and it is kept.
+    """
+    return int(any(replacement.expression is not None for replacement in proposal.replacements))
+
+
 class _Interval(NamedTuple):
     """One single-file proposal as an interval for weighted interval scheduling."""
 
@@ -83,7 +93,7 @@ class _Interval(NamedTuple):
     end: int
     weight: int
     position: int
-    tiebreak: Tuple[str, int]
+    tiebreak: Tuple[int, str, int]
 
 
 def _weighted_interval_schedule(intervals: List[_Interval]) -> Tuple[List[int], int]:
@@ -180,7 +190,7 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
                 *per_file_interval[idx][fp],
                 _proposal_size(proposals[idx]),
                 idx,
-                _first_span(proposals[idx]),
+                (_kind_rank(proposals[idx]), *_first_span(proposals[idx])),
             )
             for idx in idxs
         ]
@@ -200,7 +210,13 @@ def filter_overlapping_proposals(proposals: List[RefactoringProposal]) -> List[R
 
     # Stage 2: greedy add for the rest (multi-file or displaced), largest first
     remaining = [i for i in range(len(proposals)) if i not in selected_indices]
-    remaining.sort(key=lambda i: (-_proposal_size(proposals[i]), _first_span(proposals[i])))
+    remaining.sort(
+        key=lambda i: (
+            -_proposal_size(proposals[i]),
+            _kind_rank(proposals[i]),
+            _first_span(proposals[i]),
+        )
+    )
     selected: List[RefactoringProposal] = [proposals[i] for i in selected_indices]
     for idx in remaining:
         affected = prop_affected[idx]

@@ -121,6 +121,30 @@ def definitely_bound_before(function: FunctionNode, statement: ast.stmt) -> Set[
     return _definitely_bound_before_uncached(function, statement)
 
 
+def definitely_bound_in_header(function: FunctionNode, anchor: ast.AST) -> Set[str]:
+    """Names bound on every path to an expression in ``anchor``'s own code.
+
+    ``anchor`` is a statement, an ``except`` clause or a ``case``, and the
+    expression is part of its header, not of the statements it holds: an
+    ``if`` or ``while`` test, a loop's iterable, an assignment's value, the
+    class an ``except`` clause names, a ``case`` guard. What is bound on
+    entry to the anchor is bound there, with two corrections. A loop
+    evaluates its test, and the subscripts of its target, again after its
+    body, which may have unbound a name. A guard runs after its pattern has
+    matched and bound every capture. A name an assignment expression binds
+    earlier in the same header is not counted: under-counting only declines.
+    """
+    known = _facts(function).definite_before.get(anchor)
+    if known is None:
+        return set()
+    bound = set(known)
+    if isinstance(anchor, (ast.While, ast.For, ast.AsyncFor)):
+        bound -= _may_unbind(anchor)
+    if isinstance(anchor, ast.match_case):
+        bound |= pattern_capture_names(anchor.pattern)
+    return bound
+
+
 def _definitely_bound_before_uncached(function: FunctionNode, statement: ast.stmt) -> Set[str]:
     """The path-walking form, kept as the reference and as the fallback."""
     parents: Dict[ast.AST, ast.AST] = {

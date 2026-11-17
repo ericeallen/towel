@@ -28,11 +28,12 @@ program does.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Dict, Mapping, Optional, get_args
 
 from towel.unification.exceptions import Untypeable
-from towel.unification.models import RejectReason
+from towel.unification.models import EXPRESSION_COUNT_PREFIX, RejectReason
 
 
 @dataclass(frozen=True)
@@ -312,6 +313,12 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         " value yet; the error raised then would change from UnboundLocalError to NameError.",
         "Assign the variable on every path before the block.",
     ),
+    RejectReason.TRUTH_TEST_REPEATED: _says(
+        "With --strict: the expression decides an if or while at one place and gives a value"
+        " at another, and one helper cannot serve both: returning the value would test a"
+        " value's truth twice at the first place.",
+        "Without --strict the expression is extracted.",
+    ),
     RejectReason.UNDEFINED_NAMES_IN_CALL: _says(
         "The call replacing the block would use a name that does not exist where the call"
         " stands."
@@ -359,6 +366,94 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
     ),
 }
 """Why a candidate pair was declined, for every ``RejectReason``."""
+
+EXPRESSION_REASONS: Mapping[RejectReason, Explanation] = {
+    RejectReason.CLOSURE_CROSSES_BLOCK_BOUNDARY: _says(
+        "The expression holds a lambda or generator that reads a variable its function"
+        " assigns, or a comprehension variable named like one a closure elsewhere in the"
+        " function reads, so moving the expression could change which variable is seen.",
+        "Rename the lambda parameter or comprehension variable if it only shares the name.",
+    ),
+    RejectReason.CREATED_OBJECT_ESCAPES: _says(
+        "The expression creates a lambda or generator that is used after the expression has"
+        " been evaluated, or handed to code Towel cannot see (such as"
+        " items.sort(key=lambda ...)).",
+        "Use sorted, min or max with key=, or a list in place of the generator.",
+    ),
+    RejectReason.DIRECTIVE_ON_SHARED_LINE: _says(
+        "A tool comment (# noqa, # type: ignore) stands on a line the expression shares with"
+        " code that stays, such as the line it begins or ends on.",
+        "Move the comment off the lines where the expression begins and ends.",
+    ),
+    RejectReason.IMPURE_EAGER_PARAMETER: _says(
+        "A part that differs between the expressions would be evaluated earlier, at the call,"
+        " and it is neither a constant nor a plain variable."
+    ),
+    RejectReason.INCOMPLETE_LIFETIME_BLOCK1: _says(
+        "The first expression reads a variable that is assigned only later in its function."
+    ),
+    RejectReason.INCOMPLETE_LIFETIME_BLOCK2: _says(
+        "The second expression reads a variable that is assigned only later in its function."
+    ),
+    RejectReason.NARROWING_LOST_AT_CALL_SITE: _says(
+        "The expression holds a type test (isinstance, is None) that the code it governs, or"
+        " an argument, relies on; inside a helper the type checker would not see it."
+    ),
+    RejectReason.NONLOCAL_SAFETY_SKIP: _says("The expression reads a nonlocal variable."),
+    RejectReason.NOT_STRUCTURALLY_SIMILAR: _says(
+        "The expressions have the same outline but are less than 60% alike in detail."
+    ),
+    RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY: _says(
+        "With --strict: the expression is inside a try or with statement and reads a variable"
+        " its function assigns again, or a comprehension's variable; if the helper raised, it"
+        " would keep that variable's object until the handler is done, longer than it is kept"
+        " now.",
+        "Without --strict the expression is extracted.",
+    ),
+    RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL: _says(
+        "An argument would be wrapped in a lambda and reads a local variable that may have no"
+        " value yet, or the variable of a comprehension around the expression.",
+        "Assign the variable on every path before the expression.",
+    ),
+    RejectReason.TRIVIAL_FORWARDING_HELPER: _says(
+        "The helper would hold only a single call and no logic of its own."
+    ),
+    RejectReason.UNIFICATION_FAILED: _says(
+        "The expressions differ in something a parameter cannot stand for: an operator, text"
+        " inside an f-string, a method name, a slice, or more differences than"
+        " --max-parameters allows.",
+        "Raise --max-parameters.",
+    ),
+}
+"""The sentences that read differently for a pair of expression candidates.
+
+Every other reason says of an expression what it says of a block
+(``_of_expressions``): an expression inside a statement is declined for the
+same reasons a block of statements is.
+"""
+
+_BLOCK_WORD = re.compile(r"\b([Bb])lock(s?)\b")
+
+
+def _of_expressions(explanation: Explanation) -> Explanation:
+    """``explanation`` with "expression" where it says "block"."""
+
+    def reword(text: str) -> str:
+        return _BLOCK_WORD.sub(
+            lambda match: ("E" if match[1] == "B" else "e") + "xpression" + match[2], text
+        )
+
+    return Explanation(
+        reword(explanation.sentence),
+        None if explanation.remedy is None else reword(explanation.remedy),
+    )
+
+
+def explain_expression(reason: RejectReason) -> Explanation:
+    """Why a pair of expression candidates was declined for ``reason``."""
+    found = EXPRESSION_REASONS.get(reason)
+    return found if found is not None else _of_expressions(PAIR_REASONS[reason])
+
 
 OTHER_PAIR_REASON = _says("The pair was declined without a recorded reason.")
 """A pair declined without a traced reason, which the run counts as ``other``."""
@@ -455,7 +550,16 @@ _BY_VALUE = _by_value()
 
 
 def reason_code(counted: str) -> str:
-    """The reason a count is kept under, without what it names: ``builtin_argument[len]`` -> ``builtin_argument``."""
+    """The reason a count is kept under, without what it names: ``builtin_argument[len]`` -> ``builtin_argument``.
+
+    Nor with what marks a pair of expression candidates (``expression_count``):
+    the code is the reason's, whichever kind of code was declined for it.
+    """
+    return counted.removeprefix(EXPRESSION_COUNT_PREFIX).split("[", 1)[0]
+
+
+def without_subject(counted: str) -> str:
+    """``counted`` without what its reason names, keeping what marks an expression pair."""
     return counted.split("[", 1)[0]
 
 
@@ -470,6 +574,12 @@ def explain(counted: str) -> Explanation:
     found = _BY_VALUE.get(code)
     if found is None:
         return Explanation(f"Left alone: {counted}.")
+    if counted.startswith(EXPRESSION_COUNT_PREFIX):
+        # Counted for a pair of expression candidates, which only pair reasons are.
+        counted = counted.removeprefix(EXPRESSION_COUNT_PREFIX)
+        found = (
+            _of_expressions(found) if code == "other" else explain_expression(RejectReason(code))
+        )
     subject = counted[len(code) :]
     if subject.startswith("[") and subject.endswith("]"):
         return Explanation(f"{found.sentence} (Here: {subject[1:-1]}.)", found.remedy)

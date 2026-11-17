@@ -68,6 +68,7 @@ from .assignment_analyzer import (
 )
 from .block_analysis import (
     owned_binding_crosses_exception_boundary,
+    expression_arguments_outlive_a_handler,
     align_return_variables,
     first_assignment_order,
     guarded_resource_crosses_exception_boundary,
@@ -80,7 +81,6 @@ from .block_comments import (
     call_argument_lines,
     directive_conflict,
     merge_comments,
-    site_comments,
 )
 from .builtins import BUILTIN_NAMES, CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
@@ -160,6 +160,14 @@ from .import_graph import (
     would_create_import_cycle,
 )
 from .splicing import BlockColumns
+from .expression_sites import (
+    as_expression_call,
+    comments_at,
+    comprehension_locals,
+    expression_site,
+    is_expression_block,
+    replacement_span,
+)
 from .thunk_inlining import inline_leading_thunks, reorder_eligible_thunk_parameters
 from .typing_forms import ModuleText
 from .compiler_literals import (
@@ -878,6 +886,18 @@ class PairEvaluation(
             if unsupported is not None:
                 self._debug_reject(RejectReason.UNSUPPORTED_SYNTAX, pair, detail=unsupported)
                 return None
+        expressions = (expression_site(pair.block1_nodes), expression_site(pair.block2_nodes))
+        if (
+            expressions[0] is not None
+            and expressions[1] is not None
+            and expressions[0].exact_truth != expressions[1].exact_truth
+        ):
+            # Strict mode: one place only tests the value, where the compiler
+            # tests each operand once, and the other uses it. A helper that
+            # returns the value has the first place test an operand twice;
+            # one that returns True or False changes what the second gets.
+            self._debug_reject(RejectReason.TRUTH_TEST_REPEATED, pair)
+            return None
         ctx = self._resolve_pair_context(pair, functions)
         blocks = (
             (
@@ -934,6 +954,9 @@ class PairEvaluation(
             if (
                 self._block_rejected(
                     owned_binding_crosses_exception_boundary, nodes, function, site=site
+                )
+                or self._block_rejected(
+                    expression_arguments_outlive_a_handler, nodes, function, analyzer, site=site
                 )
                 if self.strict
                 else guarded_resource_crosses_exception_boundary(
@@ -1111,10 +1134,15 @@ class PairEvaluation(
             site, analyzer = ctx.site2, ctx.scope_analyzer2
             name, reason = pair.function2_name, RejectReason.UNSAFE_REASSIGNMENT_BLOCK2
         reassignments = self._get_assignment_reuse(func)
-        has_unsafe, problematic_vars = self._per_block(
-            "reassignments",
-            lambda: has_reassignments_without_bindings(func, nodes, reassignments),
-            site=site,
+        # An expression candidate assigns nothing in its function.
+        has_unsafe, problematic_vars = (
+            (False, set())
+            if is_expression_block(nodes)
+            else self._per_block(
+                "reassignments",
+                lambda: has_reassignments_without_bindings(func, nodes, reassignments),
+                site=site,
+            )
         )
         if has_unsafe:
             self._debug_reject(reason, pair, str(problematic_vars))
@@ -1422,8 +1450,12 @@ class PairEvaluation(
                 self._debug_reject(RejectReason.CONDITIONALLY_BOUND_RETURN, pair, str(not_definite))
                 return None
         # A free variable bound after the block would be read before it is defined.
-        if free_vars1 & analysis.snapshot1.bound_after_block:
-            incomplete_vars = free_vars1 & analysis.snapshot1.bound_after_block
+        # A comprehension's variable read by an expression inside it is the
+        # comprehension's own, whatever its function binds later by that name.
+        late1 = analysis.snapshot1.bound_after_block - comprehension_locals(pair.block1_nodes)
+        late2 = analysis.snapshot2.bound_after_block - comprehension_locals(pair.block2_nodes)
+        if free_vars1 & late1:
+            incomplete_vars = free_vars1 & late1
             if debug_enabled:
                 VALIDATION.debug(
                     f"  REJECTED: Block1 uses variables defined AFTER the block: {incomplete_vars}"
@@ -1431,8 +1463,8 @@ class PairEvaluation(
                 VALIDATION.debug("    These variables would be used before they're defined")
             self._debug_reject(RejectReason.INCOMPLETE_LIFETIME_BLOCK1, pair, str(incomplete_vars))
             return None
-        if free_vars2 & analysis.snapshot2.bound_after_block:
-            incomplete_vars = free_vars2 & analysis.snapshot2.bound_after_block
+        if free_vars2 & late2:
+            incomplete_vars = free_vars2 & late2
             if debug_enabled:
                 VALIDATION.debug(
                     f"  REJECTED: Block2 uses variables defined AFTER the block: {incomplete_vars}"
@@ -1716,6 +1748,8 @@ class PairEvaluation(
         """
         # The functions holding the blocks: two classes may each define a
         # method of the same name, so a lookup by name could find the other.
+        if is_expression_block(pair.block1_nodes):
+            return False  # an expression candidate binds nothing a later read could miss
         func1, func2 = pair.function1_node, pair.function2_node
         indices1 = self._get_block_indices(func1, pair.block1_nodes)
         indices2 = self._get_block_indices(func2, pair.block2_nodes)
@@ -1876,8 +1910,13 @@ class PairEvaluation(
                 detail=f"block{block_idx+1}: {sorted(moving)}",
             )
             return None
+        # A thunk written inside a comprehension would close over its targets,
+        # which no block of statements can ask of one; such a call is declined.
+        hidden = comprehension_locals(nodes)
         if thunk_reads_possibly_unbound_local(
-            call_node, self._own_scope_locals(function, site), free.available_names[block_idx]
+            call_node,
+            self._own_scope_locals(function, site) | hidden,
+            free.available_names[block_idx] - hidden,
         ):
             # See :func:`thunk_reads_possibly_unbound_local`.
             self._debug_reject(
@@ -1966,21 +2005,28 @@ class PairEvaluation(
                     detail=f"block{block_idx+1}: inside={sorted(ownership.inside)}, outside={sorted(ownership.outside)}",
                 )
                 return None
+        source = pair.source1 if block_idx == 0 else pair.source2
+        columns = BlockColumns.of(nodes)
+        expression = expression_site(nodes)
+        if expression is not None:
+            block_range, columns = replacement_span(source, expression)
+            safe_call = as_expression_call(safe_call)
         return Replacement(
             line_range=block_range,
-            columns=BlockColumns.of(nodes),
+            columns=columns,
             node=safe_call,
             argument_handoff=handoff,
             file_path=file_path,
             class_name=class_name,
             method_kind=method_info.kind,
             implicit_param=method_info.implicit_param,
-            comments=site_comments(
-                pair.source1 if block_idx == 0 else pair.source2,
+            comments=comments_at(
+                source,
                 nodes,
                 call_argument_lines(unified.substitution, block_idx),
                 self._coverage_exclusion(file_path).pattern,
             ),
+            expression=None if expression is None else expression.place,
         )
 
     # -- 10 --------------------------------------------------------------------

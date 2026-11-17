@@ -34,6 +34,7 @@ import dataclasses
 from pathlib import Path
 
 from typing import Dict, List, Optional, Sequence, Tuple
+from .expression_sites import is_whole_body
 from .annotation_imports import words_of
 from .block_comments import HelperComments, SiteComments
 from .exceptions import RefactoringError
@@ -133,6 +134,10 @@ class ExistingFunctionReuse(EngineState):
         function's result is then the tuple the call unpacks.
         """
         body = body_without_docstring(function.body)
+        if replacement.expression is not None:
+            # An expression is everything a function does when the function
+            # returns it and nothing else; sharing its lines is not enough.
+            return is_whole_body(replacement.expression, body)
         # Retained local lifetimes can make a full-body call an assignment,
         # even when the original function ends with an implicit None return.
         if self._block_line_span(body) == tuple(replacement.line_range):

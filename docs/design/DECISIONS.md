@@ -19,7 +19,7 @@ are finalized, by [Relaxed mode is the default; strict mode keeps exact lifetime
 
 **Contents by topic — selected entries**
 
-- [Relaxed and strict modes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes) · [Arguments by value](#2026-11-14-relaxed-mode-passes-arguments-by-value)
+- [Relaxed and strict modes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes) · [Arguments by value](#2026-11-14-relaxed-mode-passes-arguments-by-value) · [Expression candidates](#2026-11-16-expressions-are-candidates)
 - [Preservation contract](#2026-09-22-what-towel-preserves) · [Binding identity](#2026-09-23-a-name-is-its-binding-not-its-spelling)
 - [Same-class helpers](#2026-09-22-a-method-helper-lives-in-the-class-that-holds-both-duplicates) · [Class design](#2026-09-22-towel-does-not-change-externally-visible-class-design)
 - [Import names](#2026-09-22-import-names-come-from-the-program) · [Cross-module opt-in](#2026-09-23-cross-module-extraction-is-opt-in) · [Import refusals](#2026-09-24-an-import-problem-refuses-only-when-it-leaves-a-name-in-doubt)
@@ -2004,7 +2004,13 @@ here.
    Relaxed mode promises no release order and is the same on every version.
 2. **Plain values.** Reading an attribute, subscripting, comparing and
    arithmetic on the program's objects have no side effects. They can still
-   fail, and where one fails is preserved.
+   fail, and where one fails is preserved. Nor has testing a value's truth
+   (`__bool__`, or `__len__` used as truth), which also gives the same answer
+   twice: where `if a and b:` becomes `if helper(a, b):` and the helper is
+   `return a and b`, the helper tests `a` and, when `a` decided, the `if`
+   tests the value it got back a second time (extended to truth tests on
+   2026-11-16, for
+   [expression candidates](#2026-11-16-expressions-are-candidates)).
 3. **Stable module names.** A function, class or module bound at module
    level is not rebound while a helper runs.
 
@@ -2469,3 +2475,124 @@ program that compares such literals with `is`, in one module or across two,
 needs `--strict`, which keeps the tuple.
 
 *Status: implemented for 2.0, with `tests/test_cross_module_plain_case.py`.*
+
+## 2026-11-16: Expressions are candidates
+
+**Decision.** One expression repeated inside statements that otherwise differ
+is a candidate, as a run of whole statements is. The user-perspective audit
+of 1.949 (case 44) showed a five-line condition written in an `if` in two
+functions and in a generator's `if` clause in a third; Towel answered "No
+duplicates found!", and the owner asked, "Aren't repeated expressions the
+main thing we refactor?" The helper is `def helper(free variables): return E`
+and each site becomes `helper(arguments)`, standing where the expression
+stood.
+
+**Which expressions.** A complete expression of a function body, at a place
+where it is evaluated for its value, whose own text spans `--min-lines`
+lines: a condition, an argument, a returned or assigned value, a
+comprehension's element or condition. Not a candidate, each because the
+helper could not do what the expression did, or would be nothing:
+
+- one holding `yield`, `await` or an asynchronous comprehension (the helper
+  would be a generator or a coroutine);
+- one holding an assignment expression, which binds a name of the site's
+  function (every one, not only those read afterwards: none needs a liveness
+  analysis, and a codebase the size of Django loses 58 expressions);
+- one that loads `super` or `__class__`, which need the method's class cell;
+- a single call, whose helper would only forward (its arguments are still
+  candidates), and an expression of constants alone;
+- one under seven syntax units, which the
+  [cost rule](#2026-11-08-complete-extractions-must-repay-their-generated-syntax)
+  could not accept at two sites even with no argument;
+- an expression that is not a value where it stands or is evaluated at
+  another time: a callee, an assignment target, an annotation, a field of an
+  f-string, `*x`, a slice, a pattern, a `type` statement, and anything inside
+  a `lambda` or a nested definition.
+
+**Why it is sound.** The call stands exactly where the expression stood, so
+nothing outside the expression moves relative to anything else, and its
+short-circuit and conditional parts stay inside the helper. What changes is
+the frame. The expression's free variables are read at the call instead of
+where the expression read them, which differs only if a name is unassigned or
+changes in between. An expression binds nothing (no assignment expression),
+so a local can change only through a nested function's `nonlocal`, which is
+declined (`rebound_external_binding`); a module name is not passed at all,
+and the helper reads it when the expression did; a local that may be
+unassigned would be passed in a lambda, which is declined
+(`thunk_of_possibly_unbound_local`), as is a lambda that would close over the
+variable of a comprehension around the site. A site inside a comprehension
+passes the comprehension's variables that are bound by then; a later
+clause's variable is the comprehension's own and unassigned there, whatever
+the function has bound under the same name. Differing parts become
+parameters by the rules that serve statements, and every guard a block of
+statements passes is asked of the expression as the one-statement block
+`return E`.
+
+**Truth tests.** Python compiles `if a and b:` to jumps that test each
+operand once, and `return a and b` hands back an operand that the caller's
+`if` tests again. The same holds for `or`, `not`, a conditional expression
+and a chained comparison, wherever a site uses only the truth of the value:
+an `if`, `while` or `assert`, a comprehension's `if`, a conditional
+expression's test, a `case` guard, and an operand of `not`, `and` or `or`
+so used.
+
+- *Strict mode* writes the helper that tests exactly as the sites did: `return
+  True if E else False` where every site only tests the value, `return E`
+  where every site uses it, and declines a helper whose sites disagree
+  (`truth_test_repeated`). Every other expression is evaluated to a value
+  that is tested once wherever it stands, and has the one form. A traced
+  program (140 lines of truth tests, attribute reads and releases, on CPython
+  3.13 and 3.14) is identical before and after.
+- *Relaxed mode* writes `return E` everywhere, the helper a reviewer would
+  write, under assumption 2 of
+  [Relaxed mode is the default](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes):
+  a truth test has no side effect and may run twice.
+
+**Lifetimes in strict mode.** The helper binds nothing, so no object is held
+on both sides of its frame: the call needs no ownership transfer. The
+objects the expression creates and drops are created and dropped by the same
+code, inside the helper; the arguments are further references to objects the
+site's frame holds for the whole call. So strict mode extracts an expression
+whose whole assignment it declines (`owned_binding_frame_boundary`): the
+binding stays in the caller. Under a handler or a manager there is one more
+condition (the review of 2026-11-16). A helper that raises stays on the
+traceback, and its frame holds its arguments, until the handler is done or
+for as long as the program keeps the exception; `x = None` in the `except`
+clause would no longer release `x`. So there every name the expression reads
+must be a module name or a parameter its function never binds again, deletes
+or lets a nested function rebind; otherwise strict mode declines it
+(`owned_binding_exception_boundary`). A comprehension's variable never
+qualifies: the comprehension releases it when it fails. Outside a handler or
+a manager, the exception leaves the site's frame too, and that frame holds
+the same objects for as long.
+
+**Pairs.** Two expressions pair when they stand in different functions, have
+the same root (its kind, operator, number of operands, argument and clause
+layout: what no parameter can absorb) and unify with at least seven syntax
+units left in common. Unlike two runs of statements of the same kinds, most
+expressions with one root are unrelated (497 of the 655 same-root pairs in
+rich 13 at the default threshold), and an unrelated pair is neither counted
+nor reported. A key over the children's kinds was measured and rejected: it
+lost 81 of the 158 pairs that do unify.
+
+**Overlap.** The existing rule decides between an expression and the
+statements around it: the proposal covering more lines is kept. A
+one-statement candidate and the expression that is its whole value cover the
+same lines; the statement's proposal is kept, so no output of an earlier
+release changes for it.
+
+**What is given up.** Where a statement and the expression that is its whole
+value tie, the statement's helper is kept, though the expression's would be a
+line shorter. An expression inside a `lambda` is not a candidate. A lambda or
+generator inside the expression that reads a variable its function assigns is
+left to the closure guards, which decline it. In a typed run a condition
+holding a type test (`is not None`, `isinstance`) that the code it governs
+relies on is refused by the type checker: inside a helper the test no longer
+narrows what follows.
+
+*Status: implemented for 2.0, with `tests/test_expression_sites.py`
+(which expressions, and that the running interpreter tests truth where the
+engine assumes it does), `tests/test_expression_pairing.py`,
+`tests/test_expression_extraction.py` (audit case 44 in both modes),
+`tests/test_expression_guards.py` (hostile programs run before and after in
+both modes) and `tests/test_expression_reasons.py`.*
