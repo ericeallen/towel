@@ -275,22 +275,36 @@ def test_unverified_json_means_no_checker_was_available(
     assert document["types"] == "unverified"
 
 
+@pytest.mark.parametrize("strict", [False, True])
 def test_failed_checker_is_an_error_not_a_missing_checker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, strict: bool
 ) -> None:
-    """Typed round 2 finding 5: failure must not masquerade as the unverified fallback."""
+    """Typed round 2 finding 5: failure must not masquerade as a missing checker.
+
+    Strict mode refuses. Relaxed mode continues unverified, as polish made it
+    for a failed baseline check (its brief, item 7), but says the checker
+    failed and why, not that it is missing.
+    """
     from towel import cli
     from towel.type_inference import CheckFailure
     from tests.test_type_run_policy import _Oracle
 
     path = _project(tmp_path, "[tool.mypy]\n")
     monkeypatch.setattr(cli, "_type_oracle", lambda _: _Oracle(lambda _: CheckFailure("timed out")))
-    result = invoke(["preview", str(path), "--json", "--no-format", "--progress", "none"])
+    mode = "--strict" if strict else "--no-strict"
+    result = invoke(["preview", str(path), mode, "--json", "--no-format", "--progress", "none"])
     document = json.loads(result.stdout)
-    assert result.status == 1
-    assert document["status"] == "error"
-    assert "timed out" in document["error"]
-    assert "types" not in document
+    if strict:
+        assert result.status == 1
+        assert document["status"] == "error"
+        assert "timed out" in document["error"]
+        assert "types" not in document
+    else:
+        assert result.status == 0
+        assert document["types"] == "unverified"
+        assert "timed out" in result.stderr
+        assert "not installed" not in result.stderr
+        assert "Continuing without type verification" in result.stderr
 
 
 def test_types_field_is_in_the_public_schema() -> None:
