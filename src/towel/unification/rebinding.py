@@ -195,13 +195,19 @@ def _call_spelling(node: ast.expr, aliases: Mapping[str, str]) -> str:
     return ""
 
 
-def _mutation_reference(node: ast.expr, aliases: Mapping[str, str]) -> bool:
-    spelling = _call_spelling(node, aliases)
+def _mutation_spelling(spelling: str) -> bool:
     return "patch" in spelling.split(".") or spelling.rsplit(".", 1)[-1] in (
         "setattr",
         "delattr",
         "__setattr__",
         "__delattr__",
+    )
+
+
+def _mutation_reference(node: ast.expr, aliases: Mapping[str, str]) -> bool:
+    # An unrelated import cannot hide a builtin spelling used in another scope.
+    return _mutation_spelling(_call_spelling(node, aliases)) or _mutation_spelling(
+        _call_spelling(node, {})
     )
 
 
@@ -269,21 +275,39 @@ def rebinding_reason(
             writes = _BindingWrites(name, function.lineno)
             writes.visit(tree)
             line = writes.line
-        aliases = {
-            alias.asname or alias.name: alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.Import, ast.ImportFrom))
-            for alias in node.names
+        aliases: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    local = alias.asname or alias.name
+                    # Imports in separate scopes can share a local spelling.
+                    # None can erase evidence that it may name a mutator.
+                    if not _mutation_spelling(aliases.get(local, "")):
+                        aliases[local] = alias.name
+        parents = {
+            child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
         }
         for node in ast.walk(tree):
-            # An escaped mutation primitive or namespace mapping can be used
-            # under any alias. Decline at the escape instead of guessing its uses.
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and (
-                node.value is not None
-                and (
-                    _namespace_mapping(node.value, provider=provider)
-                    or _mutation_reference(node.value, aliases)
+            # A mutation primitive used as a value can escape through an
+            # argument, default, return, container or any other expression.
+            # Only a direct call lets us inspect its target name. Inspect the
+            # outermost attribute, so ``patch.object`` is one reference.
+            parent = parents.get(node)
+            if (
+                isinstance(node, (ast.Name, ast.Attribute))
+                and isinstance(node.ctx, ast.Load)
+                and _mutation_reference(node, aliases)
+                and not (
+                    isinstance(parent, ast.Attribute)
+                    and parent.value is node
+                    and _mutation_reference(parent, aliases)
                 )
+                and not (isinstance(parent, ast.Call) and parent.func is node)
+            ):
+                line = node.lineno
+            # An escaped namespace mapping can be used under any alias.
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and (
+                node.value is not None and _namespace_mapping(node.value, provider=provider)
             ):
                 line = node.lineno
             if _namespace_mapping_write(node, name, provider=provider):
