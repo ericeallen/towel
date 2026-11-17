@@ -587,29 +587,32 @@ variable ``i`` to keep its object alive, and ``i`` is unbound when the loop
 does not run (``conditionally_bound_return``; on 3.15 also the release-order
 refusal above). Relaxed mode, by its finalization assumption, returns only
 names later code reads (docs/design/DECISIONS.md, "Relaxed mode is the
-default; strict mode keeps exact lifetimes"), so it extracts first's loop.
-pkg/fast.py then recompiles ``kernels.first`` from its source, rewriting
-``i * 2``, and finds only the helper's call there: reflection, outside the
-contract in both modes, as strict mode's own extraction from
-r7d_instrumenting_call_applied_by_hand shows. Only the recompiled function's
-output may change (``_assert_only_the_recompiled_function_changed``).
+default; strict mode keeps exact lifetimes"), so it may take first's loop.
+pkg/fast.py recompiles ``kernels.first`` from its source, rewriting
+``i * 2``: reflection, outside the contract in both modes, as strict mode's
+own extraction from r7d_instrumenting_call_applied_by_hand shows, so only
+the recompiled function's output may change. Since 2.0 (shape) the shared
+code is first's whole body, so relaxed mode calls ``first`` from ``second``
+("Redirect to an existing function only within a clean consumer scope"):
+first keeps its source, the recompiled function still finds its loop, and
+the output does not change at all (``_assert_first_kept_its_source``).
 """
 
 
-def _assert_only_the_recompiled_function_changed(before: Path, after: Path) -> None:
-    """The one output line that differs is ``fast_first``, which now computes first unrewritten."""
+def _assert_first_kept_its_source(before: Path, after: Path) -> None:
+    """``second`` calls ``first``, whose source fast_first still recompiles: nothing prints otherwise."""
     code_before, out_before, err_before = _run(before)
     code_after, out_after, err_after = _run(after)
     assert (code_after, err_after) == (code_before, err_before)
     assert out_before == "first 13 second -13\nfast_first 121\n"
-    # 13 is first(4): the recompiled source holds no ``i * 2`` to rewrite.
-    assert out_after == "first 13 second -13\nfast_first 13\n"
-    first = next(
-        node
+    assert out_after == out_before
+    functions = {
+        node.name: node
         for node in ast.parse((after / "pkg" / "kernels.py").read_text()).body
-        if isinstance(node, ast.FunctionDef) and node.name == "first"
-    )
-    assert "i * 2" not in ast.unparse(first)
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert "i * 2" in ast.unparse(functions["first"])
+    assert "first(n)" in ast.unparse(functions["second"])
 
 
 @pytest.mark.parametrize(
@@ -663,7 +666,7 @@ def test_relaxed_directory_refactoring_preserves_program_output(
             assert transformed, RELAXED_REFLECTION_WHERE_PARSED[case]
             for path in (after / "pkg").rglob("*.py"):
                 compile(path.read_bytes(), str(path), "exec")
-            _assert_only_the_recompiled_function_changed(before, after)
+            _assert_first_kept_its_source(before, after)
         else:
             assert _run(after) == _run(before)
         if transformed:
