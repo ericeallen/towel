@@ -488,8 +488,10 @@ def _add_exclude_flag(options: argparse._ActionsContainer) -> None:
         metavar="NAME",
         help="Leave out every file or directory named NAME, at any depth (repeatable), e.g."
         " --exclude tests: Towel changes nothing in it. Give a name, not a path or a pattern;"
-        " by default only hidden directories, __pycache__, node_modules and virtual"
-        " environments are left out.",
+        " By default hidden directories, __pycache__, node_modules, virtual environments,"
+        " build/, dist/, site-packages/, *.egg-info directories and Git-ignored files are"
+        " left out. Use --include-ignored for Git-ignored files; to include a default-excluded"
+        " directory, target the file or directory directly.",
     )
 
 
