@@ -321,9 +321,11 @@ def test_non_returning_owned_loop_declines_and_binding_free_statements_share(
     """
     final = _fixed_point(write_module(tmp_path, body))
     assert ast.dump(ast.parse(final)) == ast.dump(ast.parse(textwrap.dedent(body)))
+    # The two appends differ in shape: polish refuses a helper holding a run
+    # of same-shaped independent statements, such as two `items[k] * 2`.
     safe = textwrap.dedent(body).replace(
         "    for i in items:\n        log.append(i * 2)",
-        "    log.append(items[0] * 2)\n    log.append(items[1] * 2)",
+        "    log.append(items[0] * 2)\n    log.append(2 * items[1])",
     )
     final = _fixed_point(write_module(tmp_path, safe, "statements.py"))
     helper = _extracted_helper(final, ("alpha", "beta"))
