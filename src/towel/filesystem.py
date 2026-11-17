@@ -320,7 +320,7 @@ def _stage_plan(
             path = directory / name
             if name.startswith(".#") or (path.is_symlink() and not path.exists()):
                 continue
-            if name.endswith(".py") and skip_nonprogram_file(path):
+            if name.endswith(".py") and skip_nonprogram_file(path, root=root):
                 continue
             if name.endswith((".py", ".pyi")):
                 python_files += 1

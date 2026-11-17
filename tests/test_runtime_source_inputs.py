@@ -295,3 +295,29 @@ def test_explicit_file_target_retains_precedence_over_its_excluded_name(
         assert "Would apply 1 refactoring" in result.stdout
         assert "Skipping " not in result.stderr
     assert target.read_text() == original
+
+
+def test_exclusion_does_not_match_the_project_root_name(tmp_path: Path) -> None:
+    """Integration 3: exclusions name project contents, not the root or its ancestors."""
+    from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
+
+    (tmp_path / "pyproject.toml").write_text("")
+    (tmp_path / "good.py").write_text(LITERAL_DUPLICATES)
+    (tmp_path / "bad.py").write_text("def broken(:\n")
+    result = invoke(
+        [
+            "preview",
+            str(tmp_path),
+            "--no-strict",
+            "--no-types",
+            "--no-format",
+            "--exclude",
+            tmp_path.name,
+            "--progress",
+            "none",
+        ]
+    )
+    assert result.status == 0, result
+    assert "Would apply 1 refactoring" in result.stdout
+    assert result.stderr.count("Skipping ") == 1
+    assert "Skipped 1 file it could not read or parse" in result.stdout

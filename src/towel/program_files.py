@@ -100,7 +100,7 @@ def program_directories(
             for name in files
             if not name.startswith(".#")
             and not _dangling_link(Path(parent, name))
-            and not (name.endswith(".py") and skip_nonprogram_file(Path(parent, name)))
+            and not (name.endswith(".py") and skip_nonprogram_file(Path(parent, name), root=root))
         )
 
 
@@ -111,14 +111,20 @@ def _dangling_link(path: Path) -> bool:
         return False
 
 
-def skip_nonprogram_file(path: Path, *, explicit: bool = False) -> bool:
+def skip_nonprogram_file(
+    path: Path, *, root: Optional[Path] = None, explicit: bool = False
+) -> bool:
     """Relaxed runs take unreadable/unparsable source to be no part of the program."""
     policy = current_source_policy()
     if path.name.startswith(".#") or _dangling_link(path):
         return True
     if policy is None or policy.strict:
         return False
-    if not explicit and policy.excluded_names.intersection(path.parts):
+    if (
+        not explicit
+        and root is not None
+        and excluded_by(path.resolve(), root.resolve(), policy.excluded_names)
+    ):
         # Excluded inputs are left out intentionally. An explicit file target
         # takes precedence over its filename appearing in --exclude.
         return False
@@ -253,7 +259,7 @@ def _unparsed_below(
     found = (
         parse_failure(path)
         for path in sorted(candidates)
-        if not skip_nonprogram_file(path, explicit=path == target)
+        if not skip_nonprogram_file(path, root=root, explicit=path == target)
     )
     return tuple(failure for failure in found if failure is not None)
 
@@ -301,7 +307,7 @@ def refuse_unparsed_file(
     file decodes, as under ``-W error`` for an invalid escape, the scan
     still could not read it, and that refuses too.
     """
-    if skip_nonprogram_file(path):
+    if skip_nonprogram_file(path, root=root):
         return
     resolved = root.resolve()
     if excluded_by(path, resolved, excluded_names):
