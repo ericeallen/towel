@@ -399,3 +399,34 @@ def test_legacy_synthetic_names_do_not_collide_or_imply_positional_only(
     after = subprocess.run([sys.executable, "-c", result + driver], capture_output=True)
     assert before.returncode == after.returncode == 0
     assert before.stdout == after.stdout
+
+
+@pytest.mark.parametrize(
+    "name,host,generated",
+    [
+        ("__param_0", "first", True),
+        ("__param_12", "__extracted_func_0", True),
+        ("_param_0", "__extracted_func_0", True),
+        ("_param_0_1", "__extracted_func_3", True),
+        ("_param_0", "first", False),
+        ("_param_1", "__extracted_func_0", False),
+        ("value", "__extracted_func_0", False),
+        ("_param_x", "__extracted_func_0", False),
+    ],
+)
+def test_legacy_parameter_spelling_is_still_a_generated_parameter(
+    name: str, host: str, generated: bool
+) -> None:
+    """Integration 3: a legacy-floor helper's ``_param_N`` must still read as generated.
+
+    Otherwise a placeholder leaking into a call site went unnoticed, and the
+    fixed point extracted from its own helpers without end
+    (test_unify_python_grammar's undeclared-floor cases never finished). A
+    user's own ``_param_0`` is not one.
+    """
+    from towel.unification.parameters import is_generated_parameter
+
+    enclosing = ast.parse(f"def {host}(value, _param_0, _param_0_1, x):\n    return value\n").body[
+        0
+    ]
+    assert is_generated_parameter(name, enclosing) is generated

@@ -15,6 +15,7 @@
 """Executable regressions from the independent shape round-two review."""
 
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -404,3 +405,60 @@ def test_nonstandard_consumers_cannot_hide_rebindings(
     output = tmp_path / "out" / "mod.py"
     dry(source / "mod.py", output, strict)
     assert observe(output.parent, driver) == before == "amount=6\n"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_consumers_outside_analysis_still_veto_redirects(tmp_path: Path, strict: bool) -> None:
+    """A build-directory consumer is left out of analysis, not out of the rebinding scan.
+
+    Integration 3: once analysis left build products out, the scan stopped
+    reading them, so a consumer there that patches the target was missed and
+    the redirect changed its output.
+    """
+    project = tmp_path / "project"
+    package = project / "pkg"
+    package.mkdir(parents=True)
+    (project / "pyproject.toml").write_text('[project]\nname="example"\nversion="0"\n')
+    (package / "__init__.py").write_text("")
+    (package / "original.py").write_text(REDIRECT_SOURCE)
+    consumer = project / "build" / "client.py"
+    consumer.parent.mkdir()
+    consumer.write_text(
+        "import sys, os\n"
+        "sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))\n"
+        "from unittest import mock\n"
+        "from pkg import original\n"
+        "with mock.patch('pkg.original.total', new=lambda o, l: l.append(0)):\n"
+        "    print(original.report([1, 2]))\n"
+    )
+    driver = f"import runpy; runpy.run_path({str(consumer)!r})"
+    before = observe(project, driver)
+    output = tmp_path / "out" / "pkg"
+    dry(package, output, strict)
+    adopted = tmp_path / "adopted"
+    shutil.copytree(project, adopted)
+    shutil.rmtree(adopted / "pkg")
+    shutil.copytree(output, adopted / "pkg")
+    after = observe(
+        adopted, f"import runpy; runpy.run_path({str(adopted / 'build' / 'client.py')!r})"
+    )
+    assert after == before == "amount=6\n"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_deliberately_omitted_inputs_do_not_block_redirects(tmp_path: Path, strict: bool) -> None:
+    """Build products the analysis leaves out are read by the rebinding scan, so they do not veto.
+
+    Integration 3: the census began listing them beside unreadable files, and
+    any listed file declined every redirect.
+    """
+    source = tmp_path / "src"
+    (source / "build").mkdir(parents=True)
+    (source / "build" / "generated.py").write_text("VALUE = 1\n")
+    (source / "pyproject.toml").write_text('[project]\nname="example"\nversion="0"\n')
+    (source / "mod.py").write_text(REDIRECT_SOURCE)
+    before = observe(source, "import mod; print(mod.report([1, 2]))")
+    output = tmp_path / "out"
+    dry(source, output, strict)
+    assert "    total(order, log)" in (output / "mod.py").read_text()
+    assert observe(output, "import mod; print(mod.report([1, 2]))") == before

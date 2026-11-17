@@ -501,6 +501,11 @@ class SkippedFile:
     path: str
     reason: str
 
+    @property
+    def omitted_on_purpose(self) -> bool:
+        """Left out by policy (a Git ignore or an excluded directory), not unavailable."""
+        return self.reason.startswith("Git ignores it") or "excluded from analysis" in self.reason
+
 
 @dataclass(frozen=True)
 class AnalysisCensus:

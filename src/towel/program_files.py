@@ -118,6 +118,9 @@ def skip_nonprogram_file(path: Path) -> bool:
         return True
     if policy is None or policy.strict:
         return False
+    if policy.excluded_names.intersection(path.parts):
+        # --exclude already leaves it out, as skip_unreadable does for walk errors.
+        return False
     failure = parse_failure(path, include_decoding_errors=True)
     if failure is None:
         return False

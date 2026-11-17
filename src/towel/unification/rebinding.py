@@ -65,7 +65,11 @@ def rebinding_scope(
     sources: dict[str, str | None] = {}
     for root in sorted(scan_roots):
         try:
-            for path in python_sources(root, excluded=excluded, include_consumers=True):
+            # Consumers, not analysis inputs: build products and Git-ignored
+            # files are left out of extraction but may still patch the target.
+            for path in python_sources(
+                root, excluded=excluded, include_consumers=True, analysis=False
+            ):
                 if path.is_symlink():
                     sources[str(path)] = None
                 else:

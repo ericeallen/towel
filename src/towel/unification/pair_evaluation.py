@@ -131,7 +131,7 @@ from .models import (
     Replacement,
 )
 from .orphan_detector import orphaned_variables
-from .parameters import fresh_parameter_name, parameter_names
+from .parameters import fresh_parameter_name, is_generated_parameter, parameter_names
 from .scope_analyzer import Scope, ScopeAnalyzer
 from .semantic_safety import (
     created_object_escapes,
@@ -1698,7 +1698,7 @@ class PairEvaluation(
             for name in _call_site_reads(call_node)
             if name != func_def.name
             and (
-                name.startswith("__param_")
+                is_generated_parameter(name, function)
                 or (name not in allowed_before and name not in CALL_ARGUMENT_BUILTINS)
             )
         }

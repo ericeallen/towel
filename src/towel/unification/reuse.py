@@ -571,7 +571,10 @@ class ExistingFunctionReuse(EngineState):
         function ends by returning exactly those names, in any order; the
         other sites then unpack the function's result in its order.
         """
-        if self._census.skipped or (self.strict and not self.complete_scope):
+        # An unavailable input may rebind the target unseen. Inputs left out on
+        # purpose are read by the rebinding scan, as consumers.
+        unavailable = any(not item.omitted_on_purpose for item in self._census.skipped)
+        if unavailable or (self.strict and not self.complete_scope):
             return None
         helper_name = proposal.extracted_function.name
         candidates: List[Tuple[int, FunctionArtifact]] = []

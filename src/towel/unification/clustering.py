@@ -104,6 +104,7 @@ from .block_analysis import BlockAnalysis
 from .function_index import FunctionIndex
 from .function_scope import function_names, identifiers
 from .annotation_wiring import declared_oldest_python
+from .parameters import is_generated_parameter
 from .models import BlockBindingSnapshot, ClusterContext, HelperTemplate, encloses
 
 
@@ -351,7 +352,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             return None
         # Validate candidate call-site does not reference undefined names
         used2 = self._used_names(call_node2)
-        if any(n.startswith("__param_") for n in used2):
+        if any(is_generated_parameter(n, candidate.function) for n in used2):
             # Skip brittle candidate that leaked placeholders
             return None
         if (
