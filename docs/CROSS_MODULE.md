@@ -10,6 +10,7 @@ towel preview shop/ --cross-module
 ```
 
 ```diff
+Note: formatting generated code with Black (project configuration).
 Would apply 2 refactoring(s).
 Analysed 3 Python files (3 functions).
 Would change 2 file(s):
@@ -35,7 +36,7 @@ Would change 2 file(s):
  def reorder(invoice):
 --- before/orders.py
 +++ after/orders.py
-@@ -1,5 +1,8 @@
+@@ -1,5 +1,9 @@
 -def order_total(order):
 -    subtotal = order.subtotal
 +def __extracted_func_0(__param_0):
@@ -43,6 +44,7 @@ Would change 2 file(s):
      tax = round(subtotal * 0.08, 2)
      shipping = 0 if subtotal >= 100 else 5
      return round(subtotal + tax + shipping, 2)
++
 +
 +def order_total(order):
 +    return __extracted_func_0(order.subtotal)

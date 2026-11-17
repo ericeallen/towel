@@ -106,7 +106,7 @@ towel preview demo
 ```
 
 ```diff
-Note: no formatter configured, so generated code is inserted unformatted. Configure Ruff or Black in the project to format generated code.
+Note: formatting generated code with Black (all analyzed files already formatted).
 Would apply 1 refactoring(s).
 Analysed 2 Python files (4 functions).
 Would change 1 file(s):
@@ -156,8 +156,11 @@ thing that differed, became its parameter `_param_0`. Each of the three
 functions now passes its own rate; the summary names the first two copies
 Towel matched. Generated names are placeholders, `_param_0` here and
 `__param_0` in some projects ([why](GENERATED_CODE.md#names-parameters-and-other-details)),
-and step 4 replaces them. The note says the inserted code is not formatted: this project
-does not configure Ruff or Black, so Towel leaves layout alone.
+and step 4 replaces them. The first line says how the inserted code is laid out. This project
+configures no formatter, but its files already match Black's defaults, so
+Towel formats with Black when Black is installed where Towel runs (the
+`format` extra installs it). With the plain install above it is not, and the
+note says instead that generated code is inserted unformatted.
 
 ## 3. Write the change to a copy
 

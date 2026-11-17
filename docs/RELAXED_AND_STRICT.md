@@ -72,6 +72,7 @@ towel preview fetch.py
 ```
 
 ```diff
+Note: formatting generated code with Black (project configuration).
 Would apply 1 refactoring(s).
 Analysed 1 Python file (2 functions).
 Would change 1 file(s):
@@ -172,6 +173,7 @@ towel preview . --summary
 
 ```text
 Note: relaxed mode assumes exact object lifetimes and function lookup timing are not observed; --strict (or strict = true under [tool.towel]) preserves them. Found handles.py:5: Handle.__del__.
+Note: formatting generated code with Black (project configuration).
 Would apply 1 refactoring(s).
 Analysed 2 Python files (4 functions).
 Would change 1 file(s):
@@ -235,6 +237,7 @@ towel preview prices.py --strict
 ```
 
 ```diff
+Note: formatting generated code with Black (project configuration).
 Would apply 1 refactoring(s).
 Analysed 1 Python file (3 functions).
 Would change 1 file(s):

@@ -13,6 +13,7 @@ towel preview src/             # show what would change; writes nothing
 ```
 
 ```diff
+Note: formatting generated code with Black (project configuration).
 Would apply 1 refactoring(s).
 ...
 +def __extracted_func_0(__param_0, __param_1):

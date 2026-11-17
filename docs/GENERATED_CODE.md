@@ -32,6 +32,7 @@ towel preview notify.py
 ```
 
 ```diff
+Note: formatting generated code with Black (project configuration).
 Would apply 1 refactoring(s).
 Analysed 1 Python file (2 functions).
 Would change 1 file(s):
@@ -102,6 +103,7 @@ towel preview weights.py
 ```
 
 ```diff
+Note: formatting generated code with Black (project configuration).
 Would apply 1 refactoring(s).
 Analysed 1 Python file (2 functions).
 Would change 1 file(s):
@@ -165,6 +167,7 @@ towel preview cart.py
 ```
 
 ```diff
+Note: formatting generated code with Black (project configuration).
 Would apply 1 refactoring(s).
 Analysed 1 Python file (3 functions).
 Would change 1 file(s):
@@ -228,6 +231,7 @@ towel preview orders.py
 ```
 
 ```diff
+Note: formatting generated code with Black (project configuration).
 Would apply 1 refactoring(s).
 Analysed 1 Python file (2 functions).
 Would change 1 file(s):
@@ -274,10 +278,12 @@ function returns it.
   annotation needs is added under `if 0 > 1:`, which never runs; type checkers
   still read it. Unlike `if TYPE_CHECKING:`, it needs no import of its own and
   tests nothing a program can change ([typed projects](TYPING.md)).
-- **Comments and formatting.** Comments in moved code move with it. With Ruff or
-  Black configured, and installed where Towel runs, inserted code is formatted;
-  otherwise Towel says so in a note and leaves layout alone. `--no-format`
-  turns formatting off.
+- **Comments and formatting.** Comments in moved code move with it. Inserted
+  code is formatted with Ruff or Black, if it is installed where Towel runs,
+  when the project configures it, when its pre-commit hooks run it, or when
+  every file the run analyses already matches its defaults; a note names the
+  formatter and the reason. Otherwise the note says so and Towel leaves layout
+  alone. `--no-format` turns formatting off.
 - **Small duplicates stay.** A helper must be smaller than the copies it
   replaces, counting the helper and every call, so a short pair is often left
   alone ([why](WHY_LEFT_ALONE.md)).

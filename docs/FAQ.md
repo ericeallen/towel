@@ -16,8 +16,8 @@ towel dry shop/ shop/               # change shop/ in place, on a branch
 
 No. It reads your code; it never imports or runs it. It does run a type
 checker (mypy or Pyright) on the changed code when one is installed where
-Towel runs, and a formatter (Ruff or Black) when the project uses one, as you
-would. One exception: mypy plugins your project configures, such as
+Towel runs, and a formatter (Ruff or Black) when the project uses one or its
+files already match one, as you would. One exception: mypy plugins your project configures, such as
 django-stubs' or pydantic's, run code your project names, as they do whenever
 you run mypy. Towel itself uses no network and no AI service.
 

@@ -14,6 +14,7 @@ towel preview shop/ --summary
 
 ```text
 Switched to a new branch 'towel'
+Note: formatting generated code with Black (project configuration).
 Would apply 3 refactoring(s).
 Analysed 4 Python files (8 functions).
 Would change 3 file(s):

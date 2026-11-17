@@ -14,6 +14,7 @@ towel preview . --check --summary   # exits 3 when Towel would change code
 ```
 
 ```text
+Note: formatting generated code with Black (project configuration).
 Would apply 3 refactoring(s).
 Analysed 5 Python files (7 functions).
 Would change 3 file(s):
@@ -87,6 +88,7 @@ towel preview . --summary
 
 ```text
 Using [tool.towel] from /home/you/pyproject.toml
+Note: formatting generated code with Black (project configuration).
 Would apply 2 refactoring(s).
 Analysed 3 Python files (5 functions). Skipped 2 files in excluded directories.
 Would change 2 file(s):
@@ -115,6 +117,7 @@ towel preview packages/billing --summary
 
 ```text
 Using [tool.towel] from /home/you/packages/billing/pyproject.toml
+Note: formatting generated code with Black (project configuration).
 Would apply 1 refactoring(s).
 Analysed 2 Python files (2 functions).
 Would change 1 file(s):

@@ -34,7 +34,7 @@ path. Both take the same options:
 | `--strict` | off | Keep exactly when objects are released and names looked up, as before 2.0 ([relaxed and strict](RELAXED_AND_STRICT.md)). |
 | `--cross-module` | off | Also share a helper between modules ([sharing across modules](CROSS_MODULE.md)). |
 | `--types` | on | Annotate helpers in annotated code and keep only changes the project's mypy or Pyright accepts ([typed projects](TYPING.md)). |
-| `--format` | on | Format inserted code with the project's Ruff or Black, and sort added imports as the project does. |
+| `--format` | on | Format inserted code with the project's Ruff or Black (configured, run by its pre-commit hooks, or already matched by every analysed file), and sort added imports as the project does. |
 | `--exclude NAME` | none | Leave out every file or directory named `NAME` (repeatable). |
 | `--include-ignored` | off | Also analyse files Git ignores. |
 | `--complete-scope` | off | Declare that the target holds every file that uses its code, when Towel cannot find the project's root. |

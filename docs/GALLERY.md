@@ -57,6 +57,7 @@ Would change 1 file(s):
 +            raise ValueError(
 +                "fractional years or months not supported" " for date calculations"
 +            )
+Early-return guards are not examined on their own: duration.py has 14 guards. Extract the shared condition into a function, keeping each return in its caller.
 Input files were not changed.
 ```
 
@@ -207,6 +208,7 @@ Would change 1 file(s):
 +            self._proxies.append((data, k, result, _obj_setvalue))
 +
 +        self._namestack.pop()
+Early-return guards are not examined on their own: unpickler.py has 16 guards. Extract the shared condition into a function, keeping each return in its caller.
 Input files were not changed.
 ```
 
@@ -300,11 +302,10 @@ Would change 1 file(s):
     - Extract common code from copy_xclip and copy_xsel
 --- before/__init__.py
 +++ after/__init__.py
-@@ -82,6 +82,24 @@
+@@ -81,6 +81,23 @@
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE) == 0
      _executable_exists = _py2_executable_exists
 
- # Exceptions
-+
 +
 +def __extracted_func_1(text, _param_0, _param_1, _param_2):
 +    p = subprocess.Popen([_param_0, _param_1, _param_2],
@@ -322,10 +323,10 @@ Would change 1 file(s):
 +    return stdout.decode(ENCODING)
 +
 +
+ # Exceptions
  class PyperclipException(RuntimeError):
      pass
-
-@@ -164,21 +182,13 @@
+@@ -164,21 +181,13 @@
          selection=DEFAULT_SELECTION
          if primary:
              selection=PRIMARY_SELECTION
@@ -349,7 +350,7 @@ Would change 1 file(s):
 
      return copy_xclip, paste_xclip
 
-@@ -192,9 +202,7 @@
+@@ -192,9 +201,7 @@
          selection_flag = DEFAULT_SELECTION
          if primary:
              selection_flag = PRIMARY_SELECTION
@@ -364,7 +365,7 @@ Would change 1 file(s):
 Input files were not changed.
 ```
 
-The copy helper takes the command's three words as arguments. The paste helper takes the command as `lambda: [...]`, because in one copy it is a list built from a variable and in the other a variable, and a parameter takes one form for every call. The helpers land after the module's `# Exceptions` comment, which now introduces them; move the comment back when you review the change.
+The copy helper takes the command's three words as arguments. The paste helper takes the command as `lambda: [...]`, because in one copy it is a list built from a variable and in the other a variable, and a parameter takes one form for every call. The helpers land before the module's `# Exceptions` comment, which stays with the class it introduces.
 
 ## Try your own
 
@@ -382,9 +383,13 @@ Analysed 1 Python file (17 functions).
 Would change 1 file(s):
   duration.py: 1 refactoring(s)
     - Extract common code from __add__ and __rsub__
+Early-return guards are not examined on their own: duration.py has 14 guards. Extract the shared condition into a function, keeping each return in its caller.
 Input files were not changed.
 ```
 
-The [quick start](QUICKSTART.md) takes a change from preview to a tested commit.
+The note about early-return guards counts code Towel does not compare on its
+own; [Why something was left alone](WHY_LEFT_ALONE.md#when-towel-finds-nothing-to-do)
+says what to do about it. The [quick start](QUICKSTART.md) takes a change from
+preview to a tested commit.
 
 [Documentation index](README.md)

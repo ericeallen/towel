@@ -47,9 +47,14 @@ A run that changes nothing ends in one of two ways.
 
 **"No repeated code found in N files."** Towel compares the bodies of functions and
 methods, and found no two alike. It does not examine code outside functions:
-statements at a module's top level, or a script's, are never extracted. When
-such statements repeat, the run says so, with their lines; to have Towel
-share them, move them into a function.
+statements at a module's top level, or a script's, are never extracted, and
+neither is an early-return guard (`if not x: return`) on its own. When a file
+holds such code, the run says "No repeated code found in the code Towel
+examined in N files." and adds a note per file with how many statements or
+guards it did not examine; every run, not only an empty one, prints these
+notes. To have Towel compare module-level statements, move them into a
+function; for guards, extract the shared condition into a function and keep
+each `return` in its caller.
 
 **"Found N places with similar code and extracted none."** Towel found code of
 the same shape and the reasons above say why it left each place alone. Similar
@@ -126,7 +131,7 @@ the run lists ([automation](COMPATIBILITY.md)).
 | `conditionally_bound_return` | A variable the helper would hand back is not assigned on every path through the block, for example only inside a loop or an if. | Assign it on every path inside the block. |
 | `conditionally_imported_host` | Only with --cross-module: the project imports the module that would hold the helper only under a condition. |  |
 | `coroutine_exception_boundary` | The block awaits, so it would become an async helper, and an exception would leave that helper changed: a StopIteration turns into a RuntimeError before a handler or with statement around the block, or in its async generator, sees it, or a GeneratorExit the block stops is raised again in its function. |  |
-| `created_object_escapes` | The block creates a function, lambda, class or generator that is used after the block, or handed to code Towel cannot see (such as items.sort(key=lambda ...)). | Use sorted, min or max with key=, or define the function at module level. |
+| `created_object_escapes` | The block creates a function, lambda, class or generator that Towel cannot prove safe to move into a helper. | Use sorted, min or max with key=, or define the function at module level. |
 | `cross_module_global_declaration` | Only with --cross-module: one of the modules involved has a function that declares a name global. |  |
 | `directive_around_block` | A tool comment outside the block (the line above, the enclosing def or if line, an open # fmt: off) covers the block and would not cover the helper. | Remove or move the comment. |
 | `directive_on_argument` | A tool comment covers an expression that would move to the call as an argument, where the comment would no longer cover it. | Remove the comment, or make the lines identical. |
@@ -136,14 +141,14 @@ the run lists ([automation](COMPATIBILITY.md)).
 | `duplicate_proposal` | Another pair of these blocks already proposed the same extraction; nothing was lost. |  |
 | `excluded_block_start` | The block starts with a statement excluded from coverage; the call replacing it would be measured and never run. |  |
 | `existing_helper_becomes_forwarder` | The extraction would turn a helper made earlier in this run into a one-line call of another helper. |  |
-| `forwarded_callee` | The blocks call different things that are not plain names, such as client.get_profile(...) and client.get_preferences(...). | Assign the method to a variable first, then call the variable. |
+| `forwarded_callee` | Passing the different callees would require a forwarding lambda that repeats their lookup on each call. | Assign the method to a variable first, then call the variable. |
 | `frame_read_in_function` | The block reads super or __class__, which gives its function the class cell that a call of super through another name, elsewhere in the function, needs. |  |
 | `frame_sensitive_block` | The block only works in its own function: it holds a break or continue for a loop outside it, an assignment expression in a comprehension, a super() call that needs its own method, or a return from an async generator. |  |
 | `generator_block` | The block holds yield or yield from: as a helper of its own it would be a separate generator, and Towel does not share code that yields. |  |
 | `host_has_stub` | Only with --cross-module: the module that would hold the helper has a .pyi stub, which type checkers read in its place and which would not list the helper. |  |
 | `import_cycle` | Only with --cross-module: whichever module held the helper, the new import would be circular. |  |
 | `import_time_effects` | Only with --cross-module: the new import could run module-level code, load a module the package had not loaded, or change the order modules load in. | Sharing works when the module that would borrow the helper already imports the module holding it, unconditionally, at its top. |
-| `impure_eager_parameter` | An expression that differs between the blocks would be evaluated earlier, at the call, and it is neither a constant nor a plain variable. |  |
+| `impure_eager_parameter` | Towel cannot pass a differing expression at the call without changing when it is evaluated or whether it can fail. |  |
 | `incomplete_lifetime_block1` | The first block reads a variable that is assigned only later in its function, or before the block's own assignment to it. |  |
 | `incomplete_lifetime_block2` | The second block reads a variable that is assigned only later in its function, or before the block's own assignment to it. |  |
 | `incomplete_return_coverage_block1` | The first block returns on some paths and carries on on others; early-return guards are not extracted. |  |
@@ -162,7 +167,7 @@ the run lists ([automation](COMPATIBILITY.md)).
 | `new_import_requirement` | Only with --cross-module: importing the module holding the helper would make the other module need a package it does not need today. |  |
 | `new_top_level_package` | Only with --cross-module: the helper would live in a top-level package the other module never imports. |  |
 | `nonlocal_safety_skip` | The block reads, assigns or declares a nonlocal variable. |  |
-| `not_structurally_similar` | The blocks have the same kinds of statements but are less than 60% alike in detail. |  |
+| `not_structurally_similar` | The blocks differ too much in size or structure to share a helper. |  |
 | `orphaned_variables` | Later code would read a variable that only the block assigns and the helper does not hand back. |  |
 | `other` | The pair was declined without a recorded reason. |  |
 | `other_distribution` | Only with --cross-module: the two modules ship in different installable distributions. |  |
@@ -179,12 +184,12 @@ the run lists ([automation](COMPATIBILITY.md)).
 | `scope_declarations_differ` | One function declares a name global or nonlocal and the other does not. |  |
 | `super_in_call` | The call replacing the block would have to evaluate super() inside a lambda, where it does not work. |  |
 | `thunk_of_possibly_unbound_local` | An argument would be wrapped in a lambda and reads a local variable that may have no value yet; the error raised then would change from UnboundLocalError to NameError. | Assign the variable on every path before the block. |
-| `trivial_forwarding_helper` | The helper would hold only a single call, raise or rename, and no logic of its own. |  |
+| `trivial_forwarding_helper` | The helper would only forward calls, raise, rename or unpack values, or call earlier helpers; it would share no new logic. |  |
 | `trivial_return_blocks` | The helper would compute nothing: it would return what it was given. |  |
 | `truth_test_repeated` | With --strict: the expression decides an if or while at one place and gives a value at another, and one helper cannot serve both: returning the value would test a value's truth twice at the first place. | Without --strict the expression is extracted. |
 | `unbinds_external_name` | The block deletes (with del or except ... as) a variable assigned before it. |  |
 | `undefined_names_in_call` | The call replacing the block would use a name that does not exist where the call stands. |  |
-| `unification_failed` | The blocks differ in something a parameter cannot stand for: an operator, text inside an f-string, a variable named differently inside a loop or branch, a method name, a slice, or more differences than --max-parameters allows. | Raise --max-parameters, use the same local names, or build the string with + or format. |
+| `unification_failed` | The blocks differ in something a parameter cannot stand for, such as an operator or variable bindings that do not correspond, or need more parameters than --max-parameters allows. | If the blocks need more parameters, raise --max-parameters. |
 | `unprofitable_helper` | The shared code does not repay the helper: the helper and the calls that replace the blocks would not be smaller than the blocks themselves (counted in syntax, not lines). |  |
 | `unproven_import` | Only with --cross-module: no existing import in the project shows how one of the modules can import the other. | See 'Resolving import refusals' in docs/CROSS_MODULE.md. |
 | `unsafe_reassignment_block1` | The first block reassigns a variable first assigned before it, such as total += x with total = 0 above. |  |
@@ -206,7 +211,7 @@ the run lists ([automation](COMPATIBILITY.md)).
 | `not judged: the type checker could not run` | The type checker could not run for this change, so it was not judged (see the warnings above). | To proceed without type verification, use --no-types. |
 | `not representable in its file's encoding` | The changed file would hold a character its declared encoding cannot represent. |  |
 | `not verifiable: its file holds a name the type checker cannot type` | The type checker could not verify the proposed refactoring(s), so those blocks were left unchanged. | To proceed without type verification, use --no-types; for a typed run, install the project's dependencies where Towel runs (including their type stubs). |
-| `not verifiable: the type checker does not look at the code it changes` | The type checker takes this code to be unreachable on the platform and Python version it checks for, so a change to it could not be checked. | To proceed without type verification, use --no-types. |
+| `not verifiable: the type checker does not look at the code it changes` | Towel could not establish that the type checker examines the changed code, so the change could not be verified. | To proceed without type verification, use --no-types. |
 | `not writable in place: its file is hard-linked` | Its file has more than one hard link, and an in-place run would leave the other links holding the old text. | Write the result to a new output, or give the file a single link. |
 | `refused by the type checker` | The project's type checker reported a new error with the helper in place. | To proceed without type verification, use --no-types. |
 | `the configured Ruff check failed or introduced diagnostics` | The project's Ruff check failed on the changed file, or reported something new there. |  |

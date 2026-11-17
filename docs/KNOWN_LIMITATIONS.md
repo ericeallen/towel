@@ -27,6 +27,7 @@ towel preview audit.py
 ```
 
 ```diff
+Note: formatting generated code with Black (project configuration).
 Would apply 1 refactoring(s).
 Analysed 1 Python file (2 functions).
 Would change 1 file(s):
