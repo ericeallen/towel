@@ -560,7 +560,7 @@ def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
     # signature; the helper is placed after the class, so the return is bare.
     if strict_lifetime_refusal():
         assert engine.declined_pairs["lifetime_order_uncertified"] > 0
-        assert _signature(result) == "def __extracted_func_0(box: Box, flag: bool) -> Box:"
+        assert _signature(result) == "def __extracted_func_0(flag: bool, box: Box) -> Box:"
     else:
         assert (
             _signature(result)

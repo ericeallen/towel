@@ -224,7 +224,15 @@ def _validation_proposal(
     with monkeypatch.context() as fixture:
         for module in ("block_analysis", "pair_evaluation"):
             fixture.setattr(f"towel.unification.{module}.caller_narrowing_leaves_with_block", keep)
-        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+        # Shape extracts each repeated cache-fill statement independently.
+        # Select the one whose removal loses the caller's narrowing of self.
+        (proposal,) = [
+            p
+            for p in engine.analyze_file(str(path))
+            if "__lt__" in p.description
+            and isinstance(p.extracted_function.body[0], ast.If)
+            and ast.unparse(p.extracted_function.body[0].test) == "self._key_cache is None"
+        ]
     return proposal
 
 
@@ -261,7 +269,10 @@ def test_a_prior_refusal_is_checked_again_before_and_after_dependency_changes(
 
         first = hear()
         assert "it narrows what its caller reads after the call" in first, first
-        assert "Unsupported operand types for <" in first, first
+        assert "the block narrows self._key_cache" in first, first
+        # Only the left cache lost its narrowing; mypy diagnoses tuple's
+        # reflected comparison against that possibly-None value.
+        assert 'Unsupported operand types for > ("tuple[int, int]" and "None")' in first, first
         assert hear() == first
         (tmp_path / "unrelated.py").write_text("VALUE = 2\n")
         assert hear() == first
@@ -315,8 +326,8 @@ def test_the_type_the_block_saw_replaces_a_wider_declared_one(tmp_path: Path) ->
     )
     assert outcome.error is None, outcome.error
     assert outcome.signature() in {
-        "(self, length: int, text: 'Text') -> None",
-        "(self, length: int, text: Text) -> None",
+        "(self, text: 'Text', length: int) -> None",
+        "(self, text: Text, length: int) -> None",
     }
     assert outcome.prospective_checks == 1, outcome.checked_helpers
 

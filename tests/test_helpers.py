@@ -299,6 +299,7 @@ class EngineOptions(TypedDict, total=False):
     skip_trivial_helpers: bool
     reuse_existing_functions: bool
     annotate_helpers: bool
+    strict: bool
     snippet_formatter: Callable[[str], str]
 
 

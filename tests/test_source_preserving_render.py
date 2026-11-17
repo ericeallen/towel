@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -104,6 +105,14 @@ def second(y):
 \tresult = amount + y
 \treturn result * 3
 """
+    if strict and not _supported_runtime():
+        path = tmp_path / "m.py"
+        path.write_text(source)
+        engine = UnificationRefactorEngine(min_lines=2, skip_trivial_helpers=False, strict=True)
+        assert engine.analyze_file(str(path)) == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+        return
     result = render(tmp_path, source, strict=strict)
     helper = ast.parse(result).body[0]
     assert isinstance(helper, ast.FunctionDef)
@@ -188,14 +197,22 @@ last"""
 '''
     result = render(tmp_path, source, strict=strict)
     owner = ast.parse(result).body[0]
-    assert isinstance(owner, ast.ClassDef)
-    helper = next(
-        node
-        for node in owner.body
-        if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func")
-    )
-    assert result.splitlines()[helper.lineno - 1].startswith("\tdef ")
-    assert result.splitlines()[helper.body[0].lineno - 1].startswith("\t\t")
+    if strict and not _supported_runtime():
+        # Only the constant prefix moves; it needs no receiver or transfer, so
+        # its helper belongs at module scope and still uses the file's tabs.
+        assert isinstance(owner, ast.FunctionDef)
+        assert owner.name == "_extracted_func_0"
+        assert owner.args.args == owner.args.posonlyargs == []
+        assert result.splitlines()[owner.body[0].lineno - 1].startswith("\t")
+    else:
+        assert isinstance(owner, ast.ClassDef)
+        helper = next(
+            node
+            for node in owner.body
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func")
+        )
+        assert result.splitlines()[helper.lineno - 1].startswith("\tdef ")
+        assert result.splitlines()[helper.body[0].lineno - 1].startswith("\t\t")
     assert '"""first\n\t\tinside\nlast"""' in result
     before: dict[str, object] = {}
     after: dict[str, object] = {}

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 PAIR = """def total(value):
@@ -278,6 +279,11 @@ def report():
         min_lines=1, strict=True, complete_scope=True, skip_trivial_helpers=False
     )
     proposals = engine.analyze_file(str(path))
+    if not _supported_runtime():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+        return
     assert proposals and all(p.reused_function is None for p in proposals)
 
 

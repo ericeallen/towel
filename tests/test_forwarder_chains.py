@@ -14,12 +14,12 @@
 
 """Repeated extraction never stacks helpers into a chain of forwarders.
 
-Two mechanisms keep a run flat. A helper that returns live variables now
-admits every further same-file occurrence whose call assigns them, so twelve
-identical functions become one helper with twelve calls on the first pass
-rather than a pair per pass; a function whose body is such a block followed
-by a plain ``return`` of the block's live names takes the same helper, and
-is never made to call another existing function instead. And when a site is
+Two mechanisms keep a run flat. A helper that returns live variables admits
+every further same-file occurrence whose call assigns them, so twelve
+identical functions share one implementation on the first pass rather than
+a pair per pass. Relaxed mode can retain an existing implementation with
+eleven callers; strict mode can instead require a fresh helper with twelve
+callers to preserve ownership. And when a site is
 the whole body of a helper an earlier pass inserted while another site is
 not a whole body, the proposal is declined: the helper would keep only the
 new call, one more layer with no logic of its own.
@@ -142,12 +142,8 @@ def _chain(count: int) -> str:
 def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) -> None:
     source = textwrap.dedent(_chain(12))
     final, applied = refactor_to_fixed_point_silently(write_module(tmp_path, source))
-    if strict_lifetime_refusal():
-        assert applied == 0
-        _assert_lifetime_refusal(tmp_path / "m.py", final, min_lines=1)
-        names = [f"f{index}" for index in range(12)]
-        assert _summaries(final, names) == _summaries(source, names)
-        return
+    # The shared block now includes the final f-string and has no incoming
+    # owned arguments, so strict mode needs no certified ownership transfer.
     functions = module_functions(final)
     helpers = [name for name in functions if name.startswith("__extracted_func")]
     assert helpers == ["__extracted_func_0"], "one helper serves every site"
@@ -185,11 +181,6 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
         ),
         3,
     )
-    if strict_lifetime_refusal():
-        assert _applied == 0
-        _assert_lifetime_refusal(tmp_path / "m.py", final)
-        _assert_runtime_values(tmp_path, final, ["a", "b", "c"])
-        return
     functions = module_functions(final)
     assert [name for name in functions if name.startswith("__extracted_func")] == [
         "__extracted_func_0"
@@ -365,7 +356,10 @@ def _literal_cluster_field(index: int) -> str:
     return ("{" + ("amount" if index % 2 else "total") + "}") * (index + 1)
 
 
-def test_literal_cluster_returns_live_names_without_forwarder_chains(tmp_path: Path) -> None:
+@pytest.mark.parametrize("strict", [False, True])
+def test_literal_cluster_returns_live_names_without_forwarder_chains(
+    tmp_path: Path, strict: bool
+) -> None:
     source = "\n".join(
         f"def f{index}():\n"
         f"    {'step' if index % 2 else 'tmp'} = 6\n"
@@ -378,26 +372,28 @@ def test_literal_cluster_returns_live_names_without_forwarder_chains(tmp_path: P
         )
         for index in range(12)
     )
-    final, applied = refactor_to_fixed_point_silently(write_module(tmp_path, source), 3)
+    final, applied = refactor_to_fixed_point_silently(
+        write_module(tmp_path, source), 3, strict=strict
+    )
     assert applied == 1
     functions = module_functions(final)
-    assert [name for name in functions if name.startswith("__extracted_func")] == [
-        "__extracted_func_0"
-    ]
-    assert (
-        len(
-            [
-                node
-                for function in functions.values()
-                for node in ast.walk(function)
-                if isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "__extracted_func_0"
-            ]
-        )
-        == 12
+    helper_name = "__extracted_func_0" if strict else "f11"
+    assert [name for name in functions if name.startswith("__extracted_func")] == (
+        [helper_name] if strict else []
     )
+    assert len(
+        [
+            node
+            for function in functions.values()
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == helper_name
+        ]
+    ) == (12 if strict else 11)
     assert unparsed_body(functions["f11"]).endswith("return (amount, step)")
+    if not strict:
+        assert unparsed_body(functions["f11"]) == unparsed_body(module_functions(source)["f11"])
     _assert_runtime_values(tmp_path, final, [f"f{index}" for index in range(12)])
 
 

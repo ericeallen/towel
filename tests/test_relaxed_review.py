@@ -24,6 +24,8 @@ from typing import NotRequired, TypedDict, cast
 
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
+
 
 class ReviewCase(TypedDict):
     source: str
@@ -126,4 +128,9 @@ def test_review_program(tmp_path: Path, name: str, strict: bool) -> None:
     assert before[0] == 0, before
     assert after == before, (name, result.stdout, output.read_text(), before, after)
     if strict and case["strict"] is not None:
-        assert output.read_text() == _strict_output(name, case["strict"])
+        if name == "ext_long_fstring" and not _supported_runtime():
+            # This archived extraction transfers ownership of x, which strict
+            # mode declines on runtimes whose frame-release order is uncertified.
+            assert output.read_text() == case["source"]
+        else:
+            assert output.read_text() == _strict_output(name, case["strict"])

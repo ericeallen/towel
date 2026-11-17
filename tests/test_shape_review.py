@@ -14,6 +14,7 @@
 
 """Executable regressions from the independent shape round-two review."""
 
+import ast
 from pathlib import Path
 import shutil
 import subprocess
@@ -80,14 +81,15 @@ def report():
 """)
     driver = "import mod; mod.report(); print(mod.events)"
     before = observe(source, driver)
-    assert before == "['built', 'after block', 'del 1', 'del 2']\n"
+    finalizers = ["del 1", "del 2"] if sys.version_info < (3, 14) else ["del 2", "del 1"]
+    assert ast.literal_eval(before) == ["built", "after block", *finalizers]
     output = tmp_path / "out"
     dry(source, output, strict, "--complete-scope")
     after = observe(output, driver)
     if strict:
         assert after == before
     else:
-        assert "built" in after and "after block" in after
+        assert sorted(ast.literal_eval(after)) == sorted(ast.literal_eval(before))
 
 
 @pytest.mark.parametrize("strict", [False, True])

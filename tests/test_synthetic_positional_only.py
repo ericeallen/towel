@@ -29,6 +29,7 @@ import pytest
 from tests.test_generated_helper_reuse import BODY, _helpers, _package, _runtime, _staged_proposal
 from tests.test_helpers import function_def
 from towel.type_inference import CheckSuccess, MypyInferrer
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.instantiation import instantiation_mismatch
 from towel.unification.placement import HelperPlacement
@@ -390,9 +391,21 @@ def test_legacy_synthetic_names_do_not_collide_or_imply_positional_only(
         if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func_")
     )
     names = [parameter.arg for parameter in helper.args.args]
-    assert names == ["value", "_param_0", "_param_0_1"] + (
-        ["_towel_owner"] if engine.strict else []
-    )
+    if engine.strict and not _supported_runtime():
+        # The whole body transfers owned parameters. The print/return suffix
+        # needs no transfer, leaving both user parameter lists intact.
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert names == ["answer"]
+        assert ast.unparse(ast.Module(body=helper.body, type_ignores=[])) == (
+            "print(answer)\nreturn answer"
+        )
+        for function in ast.parse(result).body:
+            if isinstance(function, ast.FunctionDef) and function.name in {"first", "second"}:
+                assert [parameter.arg for parameter in function.args.args] == ["value", "_param_0"]
+    else:
+        assert names == ["value", "_param_0", "_param_0_1"] + (
+            ["_towel_owner"] if engine.strict else []
+        )
     ast.parse(result, feature_version=(3, 7))
     driver = "\nprint(first(3, 7), second(5, 11))\n"
     before = subprocess.run([sys.executable, "-c", source + driver], capture_output=True)
