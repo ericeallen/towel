@@ -164,6 +164,58 @@ def _namespace_mapping(node: ast.expr, *, provider: bool) -> bool:
     )
 
 
+# Methods that only read a namespace mapping. Writes are located by
+# ``_namespace_mapping_write``; any other use lets the mapping escape.
+_NAMESPACE_READS = frozenset(
+    ("get", "items", "keys", "values", "copy", "__contains__", "__getitem__", "__len__", "__iter__")
+)
+_NAMESPACE_WRITES = frozenset(
+    ("clear", "popitem", "update", "__ior__", "pop", "setdefault", "__setitem__", "__delitem__")
+)
+_NAMESPACE_FUNCTIONS = frozenset(("globals", "vars", "builtins.globals", "builtins.vars"))
+
+
+def _namespace_function_reference(node: ast.expr, aliases: Mapping[str, str]) -> bool:
+    """``globals`` or ``vars`` itself, under any import alias, or named by a string."""
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        return isinstance(node.ctx, ast.Load) and (
+            _call_spelling(node, aliases) in _NAMESPACE_FUNCTIONS
+            or _call_spelling(node, {}) in _NAMESPACE_FUNCTIONS
+        )
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) > 1
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value in ("globals", "vars")
+    )
+
+
+def _namespace_escapes(node: ast.expr, parents: Mapping[ast.AST, ast.AST]) -> bool:
+    """Whether a namespace mapping is used other than by direct reads and writes.
+
+    Subscripts, comparisons, iteration and the dict's own read and write
+    methods are inspected where they stand. Passed, stored, returned or bound
+    to a method value, the mapping may be written anywhere under any name.
+    """
+    parent = parents.get(node)
+    if isinstance(parent, ast.Subscript) and parent.value is node:
+        return False
+    if isinstance(parent, ast.Compare):
+        return False
+    if isinstance(parent, (ast.For, ast.AsyncFor, ast.comprehension)) and parent.iter is node:
+        return False
+    if isinstance(parent, ast.Attribute) and parent.value is node:
+        method = parents.get(parent)
+        return not (
+            isinstance(method, ast.Call)
+            and method.func is parent
+            and parent.attr in _NAMESPACE_READS | _NAMESPACE_WRITES
+        )
+    return True
+
+
 def _possibly_target_key(node: ast.expr, name: str) -> bool:
     return not isinstance(node, ast.Constant) or node.value == name
 
@@ -305,9 +357,22 @@ def rebinding_reason(
                 and not (isinstance(parent, ast.Call) and parent.func is node)
             ):
                 line = node.lineno
-            # An escaped namespace mapping can be used under any alias.
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and (
-                node.value is not None and _namespace_mapping(node.value, provider=provider)
+            # An escaped namespace mapping can be written under any alias,
+            # and ``globals`` itself, called anywhere, returns the caller's.
+            if (
+                isinstance(node, ast.expr)
+                and _namespace_mapping(node, provider=provider)
+                and _namespace_escapes(node, parents)
+            ):
+                line = node.lineno
+            # Only a direct call by name is inspected; ``getattr`` returns one.
+            if (
+                isinstance(node, ast.expr)
+                and _namespace_function_reference(node, aliases)
+                and (
+                    isinstance(node, ast.Call)
+                    or not (isinstance(parent, ast.Call) and parent.func is node)
+                )
             ):
                 line = node.lineno
             if _namespace_mapping_write(node, name, provider=provider):
