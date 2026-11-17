@@ -488,14 +488,14 @@ class TestExampleThreeCrossFile:
             if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
         )
         parameters = [arg.arg for arg in helper.args.posonlyargs + helper.args.args]
-        assert parameters == ["__param_0", "customer", "price", "_towel_owner"]
+        assert parameters == ["price", "customer", "_param_0", "_towel_owner"]
         assert len(parameters) <= 5
         projections = [
             node.slice.value
             for node in ast.walk(helper)
             if isinstance(node, ast.Subscript)
             and isinstance(node.value, ast.Name)
-            and node.value.id == parameters[0]
+            and node.value.id == parameters[2]
             and isinstance(node.slice, ast.Constant)
         ]
         assert set(projections) == {0, 1, 2}
@@ -513,8 +513,8 @@ class TestExampleThreeCrossFile:
             expected = ast.parse(
                 "_towel_arguments = [(customer, price)]\n"
                 "del price\ndel customer\n"
-                "return __extracted_func_0((0.1, 0.05, 1000), _towel_arguments[0][0], "
-                "_towel_arguments[0][1], _towel_arguments.pop())"
+                "return __extracted_func_0(_towel_arguments[0][1], _towel_arguments[0][0], "
+                "(0.1, 0.05, 1000), _towel_arguments.pop())"
             ).body
             assert [canonical_dump(node) for node in function.body[1:]] == [
                 canonical_dump(node) for node in expected

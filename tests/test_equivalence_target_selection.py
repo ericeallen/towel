@@ -30,8 +30,9 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 BODY = "    a = x + 1\n    b = a * 2\n    c = b + 3\n    return c\n"
 # Target selection needs a real clustered proposal independently of argument
 # ownership certification, so each function supplies its own literal input.
+# A decorator prevents a redirect from removing the first replacement site.
 THREE_FUNCTIONS = "".join(
-    f"def {name}():\n    x = 1\n" + BODY for name in ("first", "second", "third")
+    f"@staticmethod\ndef {name}():\n    x = 1\n" + BODY for name in ("first", "second", "third")
 )
 
 
@@ -53,7 +54,7 @@ def test_clustered_third_occurrence_is_verified_despite_two_name_description(
     source.write_text(THREE_FUNCTIONS)
     # Keep the three-site helper: reusing ``first`` would leave two sites.
     # Target selection must exercise every small semantic site, including the third.
-    engine = UnificationRefactorEngine(reuse_existing_functions=False, skip_trivial_helpers=False)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     proposal = engine.analyze_file(str(source))[0]
     assert len(proposal.replacements) == 3
     assert "third" not in proposal.description
