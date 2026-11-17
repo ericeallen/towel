@@ -52,6 +52,7 @@ from .static_positions import (
     TypingForms,
     statically_read,
 )
+from .async_helpers import suspends
 from .substitution import LiteralPool, Substitution, structural_text
 from .visitors import all_instances
 
@@ -78,6 +79,10 @@ def _dotted_chain(expression: ast.AST) -> Optional[Tuple[ast.Name, List[str]]]:
     if not isinstance(expression, ast.Name):
         return None
     return expression, attributes[::-1]
+
+
+def _yields(node: ast.AST) -> bool:
+    return any(isinstance(inner, (ast.Yield, ast.YieldFrom)) for inner in ast.walk(node))
 
 
 class Unifier(Parameterization, LiteralPromotion):
@@ -520,6 +525,10 @@ class Unifier(Parameterization, LiteralPromotion):
     ) -> bool:
         """Parameterize differing expressions; inside a pattern, only where ``_unify_pattern`` allows."""
         if self._pattern_depth and not self._pattern_parameters_allowed:
+            return False
+        # An expression that awaits or yields cannot be a parameter: no
+        # ``lambda:`` may hold it, and an argument would suspend at the call.
+        if any(suspends(expr) or _yields(expr) for expr in exprs):
             return False
         return super()._try_parameterize(exprs, substitution, block_indices)
 

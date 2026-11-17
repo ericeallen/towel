@@ -1,0 +1,32 @@
+"""Settings for the static site server, read from an INI file."""
+
+import configparser
+
+
+def load_settings(path):
+    parser = configparser.ConfigParser()
+    parser.read(path, encoding="utf-8")
+    settings = {}
+
+    if parser.has_option("server", "host"):
+        settings["host"] = parser.get("server", "host").strip()
+    else:
+        settings["host"] = "127.0.0.1"
+
+    if parser.has_option("server", "root"):
+        settings["root"] = parser.get("server", "root").strip()
+    else:
+        settings["root"] = "/srv/www"
+
+    if parser.has_option("logging", "file"):
+        settings["log_file"] = parser.get("logging", "file").strip()
+    else:
+        settings["log_file"] = "server.log"
+
+    if parser.has_option("server", "port"):
+        settings["port"] = parser.getint("server", "port")
+    else:
+        settings["port"] = 8000
+
+    settings["debug"] = parser.getboolean("server", "debug", fallback=False)
+    return settings

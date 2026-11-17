@@ -10,7 +10,17 @@ statement can still move into a helper.
 import asyncio
 
 
-def __extracted_func_0(size, values):
+async def __extracted_func_2(items):
+    seen = 0
+    for item in items:
+        await asyncio.sleep(0)
+        seen += 1
+        if item is None:
+            break
+    return seen
+
+
+def __extracted_func_1(size, values):
     if size <= 0:
         raise ValueError('size must be positive')
     cleaned = [value for value in values if value is not None]
@@ -19,11 +29,16 @@ def __extracted_func_0(size, values):
     return (limit, window)
 
 
+def __extracted_func_0(__param_0, size, values):
+    limit, window = __extracted_func_1(size, values)
+    total = __param_0
+    count = 0
+    return (window, total, count)
+
+
 def batched_totals(values, size):
     """Sum each full run of ``size`` values, one total per run."""
-    limit, window = __extracted_func_0(size, values)
-    total = 0
-    count = 0
+    window, total, count = __extracted_func_0(0, size, values)
     for value in window:
         total += value
         count += 1
@@ -35,9 +50,7 @@ def batched_totals(values, size):
 
 def batched_peaks(values, size):
     """The largest value of each full run of ``size`` values."""
-    limit, window = __extracted_func_0(size, values)
-    peak = None
-    count = 0
+    window, peak, count = __extracted_func_0(None, size, values)
     for value in window:
         peak = value if peak is None or value > peak else peak
         count += 1
@@ -67,35 +80,25 @@ def numbered_words(text):
 
 async def settle_totals(values, size):
     """Batch totals after yielding to the event loop once."""
-    limit, window = __extracted_func_0(size, values)
+    limit, window = __extracted_func_1(size, values)
     await asyncio.sleep(0)
     return [sum(window[start : start + size]) for start in range(0, limit, size)]
 
 
 async def settle_peaks(values, size):
     """Batch peaks after yielding to the event loop once."""
-    limit, window = __extracted_func_0(size, values)
+    limit, window = __extracted_func_1(size, values)
     await asyncio.sleep(0)
     return [max(window[start : start + size]) for start in range(0, limit, size)]
 
 
 async def drain_counts(items):
     """Count items, pausing after each so other tasks can run."""
-    seen = 0
-    for item in items:
-        await asyncio.sleep(0)
-        seen += 1
-        if item is None:
-            break
+    seen = await __extracted_func_2(items)
     return seen
 
 
 async def drain_lengths(items):
     """Twice the count of items drained, pausing after each."""
-    seen = 0
-    for item in items:
-        await asyncio.sleep(0)
-        seen += 1
-        if item is None:
-            break
+    seen = await __extracted_func_2(items)
     return seen * 2

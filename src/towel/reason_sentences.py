@@ -98,6 +98,12 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         _CROSS_MODULE + "the project imports the module that would hold the helper only"
         " under a condition."
     ),
+    RejectReason.COROUTINE_EXCEPTION_BOUNDARY: _says(
+        "The block awaits, so it would become an async helper, and an exception would leave"
+        " that helper changed: a StopIteration turns into a RuntimeError before a handler or"
+        " with statement around the block, or in its async generator, sees it, or a"
+        " GeneratorExit the block stops is raised again in its function."
+    ),
     RejectReason.CREATED_OBJECT_ESCAPES: _says(
         "The block creates a function, lambda, class or generator that is used after the block,"
         " or handed to code Towel cannot see (such as items.sort(key=lambda ...)).",
@@ -124,9 +130,13 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         " call of super through another name, elsewhere in the function, needs."
     ),
     RejectReason.FRAME_SENSITIVE_BLOCK: _says(
-        "The block only works in its own function: it holds yield, await, async for or async"
-        " with, a break or continue for a loop outside it, an assignment expression in a"
-        " comprehension, or a super() call that needs its own method."
+        "The block only works in its own function: it holds a break or continue for a loop"
+        " outside it, an assignment expression in a comprehension, a super() call that needs"
+        " its own method, or a return from an async generator."
+    ),
+    RejectReason.GENERATOR_BLOCK: _says(
+        "The block holds yield or yield from: as a helper of its own it would be a separate"
+        " generator, and Towel does not share code that yields."
     ),
     RejectReason.HOST_HAS_STUB: _says(
         _CROSS_MODULE + "the module that would hold the helper has a .pyi stub, which type"

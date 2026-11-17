@@ -312,10 +312,11 @@ def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
 
 
 def requires_original_frame(nodes: Iterable[ast.AST], aliases: FrameAliases = NO_ALIASES) -> bool:
-    """Reject control flow, suspension and aliased ``super`` that cannot move.
+    """Reject control flow, ``yield`` and aliased ``super`` that cannot move.
 
     Generator delegation needs a separate transformation preserving send/throw
-    and return values. An aliased zero-argument ``super`` needs the original
+    and return values (``holds_yield``). A block that awaits moves into an
+    ``async def`` helper that its site awaits, and is not refused here. An aliased zero-argument ``super`` needs the original
     class cell and receiver. Reflection is outside the preservation contract.
     Each statement's verdict is memoized: it is a property of that statement
     and its module alone, and a statement belongs to every block that spans it.
@@ -339,8 +340,36 @@ def block_requires_original_frame(
     its function's ``super()`` could mean something else in a helper of that
     class (``_super_differs_in_a_helper``): no home at all would keep it.
     """
-    return requires_original_frame(nodes, frame_aliases(analyzer.analyzed_tree)) or (
-        needs_class_body(nodes) and _super_differs_in_a_helper(function)
+    return (
+        requires_original_frame(nodes, frame_aliases(analyzer.analyzed_tree))
+        or (needs_class_body(nodes) and _super_differs_in_a_helper(function))
+        or _returns_from_an_async_generator(function, nodes)
+    )
+
+
+def holds_yield(nodes: Iterable[ast.AST]) -> bool:
+    """Whether the block holds ``yield`` or ``yield from``, which no helper of its own can share."""
+    return any(
+        isinstance(node, (ast.Yield, ast.YieldFrom))
+        for statement in nodes
+        for node in ast.walk(statement)
+    )
+
+
+def _returns_from_an_async_generator(function: FunctionNode, nodes: Sequence[ast.stmt]) -> bool:
+    """A ``return`` in an async generator, whose call would be ``return await helper()``.
+
+    An async generator's ``return`` takes no value, so the call that stands
+    for a block that returns could not be written.
+    """
+    if not isinstance(function, ast.AsyncFunctionDef) or not any(
+        isinstance(node, (ast.Yield, ast.YieldFrom))
+        for statement in function.body
+        for node in walk_own_scope(statement)
+    ):
+        return False
+    return any(
+        isinstance(node, ast.Return) for statement in nodes for node in walk_own_scope(statement)
     )
 
 
@@ -510,10 +539,10 @@ def _statement_requires_original_frame(statement: ast.AST, aliases: FrameAliases
     if has_external_loop_control(block) or _has_comprehension_assignment(block):
         return True
     for node in ast.walk(statement):
-        if isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await, ast.AsyncFor, ast.AsyncWith)):
-            return True
-        if isinstance(node, ast.comprehension) and node.is_async:
-            # An async comprehension is only valid inside an async function.
+        # ``await``, ``async for``, ``async with`` and async comprehensions
+        # move into an ``async def`` helper that each site awaits
+        # (``async_helpers``); a generator's ``yield`` cannot move.
+        if isinstance(node, (ast.Yield, ast.YieldFrom)):
             return True
         if isinstance(node, ast.Call) and _is_aliased_super_call(node, aliases):
             return True
@@ -1216,6 +1245,114 @@ def stable_module_names(module: ast.Module) -> FrozenSet[str]:
     keeps strict mode's treatment.
     """
     return frozenset(_stable_bindings(module))
+
+
+def modules_imported_alike(modules: Sequence[ast.Module]) -> FrozenSet[str]:
+    """The names every module binds only to one and the same module by ``import``, and never otherwise.
+
+    What an ``import`` binds is compared, not how it is spelled: ``import
+    os.path`` binds ``os`` to the package ``os``, as ``import os`` does, while
+    ``import os.path as osp`` binds ``osp`` to the submodule ``os.path``. So
+    ``import a.b`` in one module and ``import a.b as a`` in another bind the
+    same name to different modules, and do not count. A name that qualifies
+    is the object ``sys.modules`` holds under one module name in all of them. Each module must also agree with relaxed mode's assumption
+    of stable module names (``stable_module_names``): nothing in it rebinds,
+    deletes or declares ``global`` the name. ``from`` imports do not count;
+    what they bind is an attribute read once, not a module.
+    """
+    common: Optional[Dict[str, str]] = None
+    for module in modules:
+        targets: Dict[str, Set[str]] = {}
+        others: Set[str] = set()
+        for item in walk_own_scope(module):
+            if isinstance(item, ast.Import):
+                for alias in item.names:
+                    # ``import a.b`` binds ``a`` to the package ``a``;
+                    # ``import a.b as c`` binds ``c`` to the submodule ``a.b``.
+                    package = alias.name.split(".", 1)[0]
+                    bound, module_name = (
+                        (alias.asname, alias.name) if alias.asname else (package, package)
+                    )
+                    targets.setdefault(bound, set()).add(module_name)
+            elif isinstance(item, ast.ImportFrom):
+                others.update(import_binding_names(item))
+            elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                others.add(item.name)
+        stable = stable_module_names(module)
+        alike = {
+            name: next(iter(found))
+            for name, found in targets.items()
+            if len(found) == 1 and name in stable and name not in others
+        }
+        common = (
+            alike
+            if common is None
+            else {name: target for name, target in common.items() if alike.get(name) == target}
+        )
+    return frozenset(common or ())
+
+
+def module_names_bound_before_definition(
+    function: FunctionNode, module: ast.Module
+) -> FrozenSet[str]:
+    """Module names bound on every path before the top-level statement that defines ``function``.
+
+    Nothing can call the function before that statement has run, so each of
+    these names is bound whenever the function reads it
+    (``_module_names_bound_before``).
+    """
+    return _module_names_bound_before(
+        module, _top_level_statement(_module_parents(module), function)
+    )
+
+
+def module_binds(module: ast.Module, names: AbstractSet[str]) -> FrozenSet[str]:
+    """Which of ``names`` the module binds in its own namespace, as its code is written.
+
+    A definition, a class, an import, an assignment, a ``del`` or any other
+    binding at module scope, and a ``global`` declaration in any function.
+    A star import at module scope could bind any of them, so all count.
+    """
+    bound: Set[str] = set()
+    for item in walk_own_scope(module):
+        if isinstance(item, ast.ImportFrom) and any(alias.name == "*" for alias in item.names):
+            return frozenset(names)
+        if isinstance(item, (ast.Import, ast.ImportFrom)):
+            bound.update(import_binding_names(item))
+        elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(item.name)
+        elif isinstance(item, ast.Name) and not isinstance(item.ctx, ast.Load):
+            bound.add(item.id)
+        elif isinstance(item, ast.ExceptHandler) and item.name:
+            bound.add(item.name)
+        elif isinstance(item, (ast.MatchAs, ast.MatchStar)) and item.name:
+            bound.add(item.name)
+        elif isinstance(item, ast.MatchMapping) and item.rest:
+            bound.add(item.rest)
+        elif _namespace_subscript_store(item) is not None:
+            # ``globals()["len"] = …`` or ``vars()["len"] = …`` at module scope.
+            bound.add(cast(str, _namespace_subscript_store(item)))
+    for item in ast.walk(module):
+        if isinstance(item, ast.Global):
+            bound.update(item.names)
+    return frozenset(bound & names)
+
+
+def _namespace_subscript_store(node: ast.AST) -> Optional[str]:
+    """The key of a store or deletion into ``globals()`` or ``vars()`` by a constant string."""
+    if not (isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load)):
+        return None
+    namespace, key = node.value, node.slice
+    if (
+        isinstance(namespace, ast.Call)
+        and isinstance(namespace.func, ast.Name)
+        and namespace.func.id in {"globals", "vars"}
+        and not namespace.args
+        and isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+    ):
+        return key.value
+    return None
 
 
 def _stable_bindings(module: ast.Module) -> Mapping[str, int]:

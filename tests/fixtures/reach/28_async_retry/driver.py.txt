@@ -1,0 +1,45 @@
+import asyncio
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import ajobs
+
+
+class Flaky:
+    def __init__(self, failures):
+        self.failures = failures
+        self.calls = 0
+
+    def _maybe_fail(self):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise ConnectionError(f"attempt {self.calls} refused")
+
+    async def publish(self, payload):
+        await asyncio.sleep(0)
+        self._maybe_fail()
+        return {"offset": len(payload)}
+
+    async def put(self, key, data, checksum):
+        await asyncio.sleep(0)
+        self._maybe_fail()
+        return {"etag": f"{key}-{len(data)}"}
+
+
+async def main():
+    for failures in (0, 1, 2, 3, 5):
+        bus = Flaky(failures)
+        try:
+            print("publish", failures, await ajobs.publish_event(bus, {"b": 1, "a": [2]}), bus.calls)
+        except ConnectionError as exc:
+            print("publish", failures, "ConnectionError", exc, bus.calls)
+        bucket = Flaky(failures)
+        try:
+            print("store", failures, await ajobs.store_blob(bucket, "k", b"payload"), bucket.calls)
+        except ConnectionError as exc:
+            print("store", failures, "ConnectionError", exc, bucket.calls)
+
+
+asyncio.run(main())
+print("ok")

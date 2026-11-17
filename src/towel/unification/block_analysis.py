@@ -388,6 +388,11 @@ def lifetime_order_preserved(
     return original == [name for name in returned if name in owned]
 
 
+def _awaited(value: Optional[ast.expr]) -> Optional[ast.expr]:
+    """What ``await`` awaits, or ``value`` itself."""
+    return value.value if isinstance(value, ast.Await) else value
+
+
 class BlockAnalysis(EngineState):
     """See the module docstring."""
 
@@ -1271,7 +1276,7 @@ class BlockAnalysis(EngineState):
             if not (
                 isinstance(first, ast.Assign)
                 and len(first.targets) == 1
-                and isinstance(first.value, ast.Call)
+                and isinstance(_awaited(first.value), ast.Call)
                 and isinstance(second, ast.Return)
                 and second.value is not None
             ):
@@ -1282,9 +1287,10 @@ class BlockAnalysis(EngineState):
         statement = body[0]
         if isinstance(statement, ast.Raise):
             return True
-        if isinstance(statement, ast.Return) and isinstance(statement.value, ast.Call):
+        # ``await call(...)`` forwards just as ``call(...)`` does.
+        if isinstance(statement, ast.Return) and isinstance(_awaited(statement.value), ast.Call):
             return True
-        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+        if isinstance(statement, ast.Expr) and isinstance(_awaited(statement.value), ast.Call):
             return True
         return False
 

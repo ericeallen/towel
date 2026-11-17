@@ -1,0 +1,16 @@
+"""Contacts."""
+
+
+def unique_emails(emails):
+    seen = set()
+    result = []
+    for email in emails:
+        normalized = email.strip().lower()
+        if not normalized:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    result.sort()
+    return result

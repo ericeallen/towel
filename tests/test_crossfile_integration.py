@@ -38,6 +38,8 @@ from typing import List
 
 import pytest
 
+import towel.cli
+
 from tests.test_helpers import lifetime_order_certified
 from towel.canonical_ast import canonical_dump
 from towel.unification.models import RefactoringProposal
@@ -408,6 +410,11 @@ EXAMPLE3_HELPER = (
     "calculate_discount_for_premium_customer (example3_file2.py)"
 )
 
+EXAMPLE3_ORDERS = (
+    "Extract common code from process_regular_order (example3_file1.py) and "
+    "process_premium_order (example3_file2.py)"
+)
+
 
 class TestExampleThreeCrossFile:
     """The example3 pair: a duplicate that lives in two modules.
@@ -448,8 +455,13 @@ class TestExampleThreeCrossFile:
         proposals = engine.analyze_files([file1, file2])
 
         if lifetime_order_certified():
-            assert [p.description for p in proposals] == [EXAMPLE3_HELPER]
-            assert _participating_files(proposals[0]) == {file1, file2}
+            # Since 2.0 relaxed mode also shares the two order functions'
+            # shorter common run, whose literals now move into the helper
+            # (docs/design/DECISIONS.md, "Relaxed mode moves equal literals
+            # into a shared helper"); strict mode keeps them in each module.
+            expected = [EXAMPLE3_HELPER] + ([] if towel.cli.DEFAULT_STRICT else [EXAMPLE3_ORDERS])
+            assert [p.description for p in proposals] == expected
+            assert all(_participating_files(proposal) == {file1, file2} for proposal in proposals)
         else:
             assert not proposals
             assert "lifetime_order_uncertified" in engine.declined_pairs

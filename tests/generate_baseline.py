@@ -153,9 +153,10 @@ def main():
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Regenerate the strict-mode single-file goldens "
-        "(test_examples_strict_expected_output/) instead of the default, relaxed-mode "
-        "ones. Strict mode is 1.949's behaviour, so these change only with a decision.",
+        help="Regenerate the strict-mode goldens (test_examples_strict_expected_output/ "
+        "and test_examples_crossfile_strict_expected_output/) instead of the default, "
+        "relaxed-mode ones. Strict mode is 1.949's behaviour, so these change only with "
+        "a decision.",
     )
     args = parser.parse_args()
 
@@ -191,9 +192,13 @@ def main():
     output_single = project_root / (
         "test_examples_strict_expected_output" if args.strict else "test_examples_expected_output"
     )
-    # The cross-file projects render the same in both modes, so they have one
-    # set of goldens, which the regression test holds both modes to.
-    output_crossfile = project_root / "test_examples_crossfile_expected_output"
+    # Relaxed mode shares more across modules than strict mode, so the
+    # cross-file projects have a set of goldens for each mode too.
+    output_crossfile = project_root / (
+        "test_examples_crossfile_strict_expected_output"
+        if args.strict
+        else "test_examples_crossfile_expected_output"
+    )
 
     # Only strict mode's output depends on the compiler's parameter cells:
     # check eligibility before creating or writing any output.

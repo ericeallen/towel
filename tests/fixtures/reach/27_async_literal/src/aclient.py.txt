@@ -1,0 +1,19 @@
+"""Async client for the directory service."""
+
+
+async def fetch_user(client, user_id):
+    response = await client.get(f"/users/{user_id}")
+    if response.status == 404:
+        return None
+    response.raise_for_status()
+    data = await response.json()
+    return data["user"]
+
+
+async def fetch_team(client, team_id):
+    response = await client.get(f"/teams/{team_id}")
+    if response.status == 404:
+        return None
+    response.raise_for_status()
+    data = await response.json()
+    return data["team"]

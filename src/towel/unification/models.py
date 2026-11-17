@@ -316,6 +316,7 @@ class RejectReason(StrEnum):
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
     CONDITIONALLY_IMPORTED_HOST = "conditionally_imported_host"
+    COROUTINE_EXCEPTION_BOUNDARY = "coroutine_exception_boundary"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"
     RESOURCE_LIFETIME_UNPROVEN = "resource_lifetime_unproven"
     OWNED_BINDING_EXCEPTION_BOUNDARY = "owned_binding_exception_boundary"
@@ -324,6 +325,7 @@ class RejectReason(StrEnum):
     EXISTING_HELPER_BECOMES_FORWARDER = "existing_helper_becomes_forwarder"
     FRAME_READ_IN_FUNCTION = "frame_read_in_function"
     FRAME_SENSITIVE_BLOCK = "frame_sensitive_block"
+    GENERATOR_BLOCK = "generator_block"
     HOST_HAS_STUB = "host_has_stub"
     IMPORT_CYCLE = "import_cycle"
     IMPORT_TIME_EFFECTS = "import_time_effects"
@@ -502,12 +504,33 @@ class SkippedFile:
 
 
 @dataclass(frozen=True)
+class NotExamined:
+    """Code in one analysed file that is never a candidate, counted (``unexamined``).
+
+    ``module_statements`` counts the module's own executable statements
+    (not definitions, imports or docstrings; a ``__main__`` block's body
+    statement by statement). ``early_return_guards`` counts ``if``
+    statements in functions that return on some of their paths only.
+    """
+
+    path: str
+    module_statements: int
+    early_return_guards: int
+
+
+@dataclass(frozen=True)
 class AnalysisCensus:
-    """What one analysis looked at: the files it read, their functions, and the files it skipped."""
+    """What one analysis looked at: the files it read, their functions, and the files it skipped.
+
+    ``not_examined`` lists, per file that holds any, the code no candidate is
+    drawn from, so that a run which finds nothing can say what it did not
+    look at.
+    """
 
     files: int = 0
     functions: int = 0
     skipped: Tuple[SkippedFile, ...] = ()
+    not_examined: Tuple[NotExamined, ...] = ()
 
 
 @dataclass(frozen=True)

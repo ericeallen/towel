@@ -25,6 +25,7 @@ rest.
 from __future__ import annotations
 
 import logging
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -164,21 +165,25 @@ def test_no_pair_across_modules_is_formed_or_budgeted_by_default(
     across = UnificationRefactorEngine(
         min_lines=3, cross_module_helpers=True, settings=SERIAL
     ).find_block_pairs(functions, progress="none")
-    assert across and all(pair.is_cross_file for pair in across)
-    assert UnificationRefactorEngine(min_lines=3, settings=SERIAL).find_block_pairs(
+    # Since 2.0 each function's repeated statements also pair inside it.
+    assert any(pair.is_cross_file for pair in across)
+    assert all(pair.is_cross_file or pair.function1_node is pair.function2_node for pair in across)
+    within = UnificationRefactorEngine(min_lines=3, settings=SERIAL).find_block_pairs(
         functions, progress="none"
-    ) == [pair for pair in across if not pair.is_cross_file]
-    # The budget counts only the pairs a run can form: none here by default.
+    )
+    assert within == [pair for pair in across if not pair.is_cross_file]
+    # The budget counts only the pairs a run can form: those within a module by default.
+    budget = len(within)
     with caplog.at_level(logging.WARNING, logger="towel"):
         UnificationRefactorEngine(
-            min_lines=3, max_candidate_pairs=1, settings=SERIAL
+            min_lines=3, max_candidate_pairs=budget, settings=SERIAL
         ).find_block_pairs(functions, progress="none")
     assert "exceed the budget" not in caplog.text
     with caplog.at_level(logging.WARNING, logger="towel"):
         UnificationRefactorEngine(
-            min_lines=3, max_candidate_pairs=1, cross_module_helpers=True, settings=SERIAL
+            min_lines=3, max_candidate_pairs=budget, cross_module_helpers=True, settings=SERIAL
         ).find_block_pairs(functions, progress="none")
-    assert "exceed the budget of 1" in caplog.text
+    assert f"exceed the budget of {budget}" in caplog.text
 
 
 def test_a_duplicate_across_modules_is_shared_only_when_asked(tmp_path: Path) -> None:
@@ -191,8 +196,10 @@ def test_a_duplicate_across_modules_is_shared_only_when_asked(tmp_path: Path) ->
 
     alone = tmp_path / "alone"
     log = _dry(root / "zzshared", alone / "zzshared")
-    # 2.0: without --cross-module the modules' blocks are never compared (audit finding 3).
-    assert "No repeated code found in 3 files." in log, log
+    # 2.0: without --cross-module the modules' blocks are never compared (audit finding 3);
+    # each function's repetition inside itself is, and is left alone here.
+    assert not re.search(r"first\.py:\d+-\d+ and second\.py", log), log
+    assert "extracted none" in log, log
     for name, text in originals.items():
         assert (alone / "zzshared" / name).read_text(encoding="utf-8") == text
 

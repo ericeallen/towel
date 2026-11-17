@@ -2279,3 +2279,193 @@ item 2.
 audit's cases 06, 07, 21, 24 and 42, the shapes it quoted from microblog,
 csvkit and dirty-equals, and hostile programs run before and after in both
 modes.*
+
+## 2026-11-16: A block that awaits becomes an async helper that each site awaits
+
+Through 1.949 a block holding `await`, `async for`, `async with` or an async
+comprehension was declined as `frame_sensitive_block`, with `yield`. The
+design record had already found the refusal over-broad: "An `async def` helper
+awaited at each site would be sound", for 904 of 1,168 such pairs on anyio,
+httpcore and starlette ([decline capabilities](proposals/decline-capabilities.md)).
+The user-perspective audit of 1.949 met it in its two async scenarios.
+
+Since 2.0, in both modes, such a block is extracted into an `async def` helper,
+and each site awaits it: `response = await helper(…)`, `return await
+helper(…)`, or `await helper(…)` alone. A method helper is an `async def`
+method awaited as `await self.helper(…)`.
+
+**Why this preserves behaviour.** Awaiting a coroutine runs it in the task
+that awaits it, at once and without a scheduling point of its own: control
+reaches the event loop only where the helper's body suspends, and its body is
+the block. So the task suspends at the same `await`s, in the same order, with
+nothing in between. Everything delivered to a task is delivered at the `await`
+where it is suspended, which is now inside the helper: a cancellation, a
+timeout from `asyncio.timeout` or a cancel scope entered outside the block
+(they cancel the task), and an exception thrown in by `throw()`. It is raised
+there, runs the `finally` and handlers the block holds, which moved with it,
+and crosses the helper's boundary into the caller's handlers as any exception
+leaves a function, with the two exceptions below, which a coroutine's boundary
+changes. `asyncio.current_task()` is the same task, the context
+variables are the same context (an awaited coroutine runs in its awaiter's
+context), and a task group or timeout entered outside the block is entered
+around the call. Strict mode's lifetimes hold as well: a coroutine's frame
+releases its locals when the coroutine returns, in the order a function's
+frame does (measured on 2026-11-16 on CPython 3.11, 3.12 and 3.13: arguments,
+then locals, for both), and the coroutine itself is released as the `await`
+completes. Strict mode's certificate for handing a whole body's arguments over
+to its helper is written for a plain `def` only, so a whole coroutine body it
+would certify as a function is declined there as
+`owned_binding_frame_boundary`; every other pair is judged as its synchronous
+twin is.
+
+**What is outside the contract.** What changes is one more frame: on the
+stack `sys._getframe()` and `inspect.stack()` walk, in a traceback, and in the
+coroutine chain `Task.get_stack()` and `cr_await` expose. Reading those is
+reflection, outside the contract as it is for every helper.
+
+**What is checked, what is refused.**
+
+- A candidate is a run of whole statements of one suite, so an `async with`
+  or `async for` is either wholly inside the block, with its enter and exit,
+  or wholly around it. Duplicates that straddle one, from inside its body to
+  after it, form no candidate.
+- An expression that awaits is never made a parameter: a `lambda:` cannot
+  hold `await`, and passing it by value would move the suspension to the call.
+  Such a pair is `unification_failed`.
+- No call is written as `return await helper(…)` in an async generator, where
+  `return` takes no value; a block that returns from one is
+  `frame_sensitive_block`.
+- **Exceptions a coroutine's boundary changes.** A `StopIteration` that
+  leaves a coroutine becomes `RuntimeError("coroutine raised StopIteration")`
+  (PEP 479). In the original it reached the function's own handlers as
+  itself, and became a `RuntimeError` only at the function's boundary. Any
+  call, attribute or operator can let one out of the block (`next(items)` on
+  an empty iterator is enough), and Towel does not try to show that the block
+  cannot. So a block that awaits is declined, as
+  `coroutine_exception_boundary`, where its function would see the
+  exception's type: under a `try` whose handler may catch `StopIteration` or
+  `RuntimeError`, under a `with` or `async with`, whose exit receives it, or
+  in an async generator, whose boundary words the `RuntimeError` differently.
+  A handler is known not to catch them only when it names builtin exception
+  classes that the module never rebinds, or classes the module defines with
+  an undecorated `class` statement, which can never be a base of a builtin
+  exception. Second, a `GeneratorExit` that `close()` delivers at an `await`
+  inside the helper is raised again in the caller once the helper returns
+  (PEP 380), even where the block stopped it and went on; a block is
+  declined for the same reason where, inside it, an `await` stands under a
+  handler that may catch `GeneratorExit`, a `finally` that may return,
+  break, continue or suspend, or a `with` or `async with`. A
+  `StopAsyncIteration`, and a `GeneratorExit` the block raises itself, leave
+  a coroutine unchanged (measured on CPython 3.13). The independent review of
+  this lane found the first of these on 2026-11-16.
+- **Generators stay refused.** A block holding `yield` or `yield from` is
+  declined with its own reason, `generator_block`: as a helper of its own it
+  would be a separate generator, and sharing it would need `yield from` with
+  every value sent, thrown and returned forwarded, which Towel does not write.
+
+*Status: implemented for 2.0, with `tests/test_async_helpers.py`: the audit's
+scenarios 27 and 28, and hostile programs run before and after in both modes
+(a cancellation delivered inside the helper, an exception crossing its
+boundary, a timeout and a task group entered outside the block, the running
+task's identity, an awaiting body strict mode leaves alone, duplicates straddling an
+`async with`, an awaiting difference, an async generator's early
+`return`, and the exceptions a coroutine's boundary changes).*
+
+## 2026-11-16: Relaxed mode reads a module both modules import alike
+
+With `--cross-module`, a helper in one module replaces code in another, and a
+name the code read in its own module is read in the host's. Through 1.949 every
+such module name became a parameter (a `lambda: re` in strict mode, `re` itself
+in relaxed mode since [Relaxed mode passes arguments by value](#2026-11-14-relaxed-mode-passes-arguments-by-value)).
+A function copied character for character into two modules that each begin
+`import re` came out as `helper(…, re)`, which no reviewer would merge.
+
+In relaxed mode a name that every participating module binds only by one and
+the same absolute import (`import re` in each, or `import os.path as osp` in
+each) is read bare in the helper; the host already holds the import. What
+each import binds is compared, not its spelling: `import os.path` binds `os`
+to the package, as `import os` does, while `import os.path as os` binds it to
+the submodule, so those two do not count as alike. Each module's `re` is then
+the object `sys.modules` holds under that name, so the two lookups give the
+same module. Each module must also have run its import before the statement
+that defines the function holding its block, on every path: the helper reads
+the host's binding, which exists whenever it runs, and a borrower that calls
+its function before its own `import` would otherwise succeed where it raised
+`NameError`. A module that imports later keeps passing the name. This rests on the third assumption of
+[Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes),
+taken for module names bound by an import: the module's own code never rebinds
+the name (checked as `stable_module_names` checks it), and nothing outside it
+does either. A program that patches one module's import (`mock.patch("pkg.b.re")`)
+while the other keeps the real one needs `--strict`, which passes the lookup
+to the helper as before.
+
+*Status: implemented for 2.0, with `tests/test_cross_module_plain_case.py`.*
+
+## 2026-11-16: Relaxed mode reads a builtin bare across modules
+
+*This extends the owner's decisions of 2026-11-14 in one place he has not
+approved in so many words; it is a single commit so that it can be dropped.*
+
+[Cross-module callables retain caller-side lookups](#2026-10-02-cross-module-callables-retain-caller-side-lookups)
+(2026-10-02) refused a cross-module helper that reads a builtin such as `len`,
+because a module's `len` could be rebound by code Towel cannot see, and
+`--parameterize-builtins` turned the refusal into `lambda: len` arguments. That
+refusal was the commonest reason `--cross-module` shared nothing: nearly every
+block of real code calls a builtin.
+
+In relaxed mode a builtin means the same in every module unless something in
+the project could give one participating module its own binding of the name:
+
+- the module binds it: a definition, an assignment, an import, a `global`
+  declaration, a `del`, a star import, or a store into `globals()` or
+  `vars()` by a constant key;
+- the project's files write it into one of the modules, as the scan of
+  [A helper never takes a builtin as a parameter](#2026-09-23-a-helper-never-takes-a-builtin-as-a-parameter)
+  finds (`pkg.b.len = fake`);
+- or any file of the project stores an attribute of that name on anything
+  (`module.len = fake` in a function handed the module, `for x.len in …`,
+  `setattr(x, "len", …)`, `monkeypatch.setattr(x, "len", …)`,
+  `mock.patch("pkg.b.len")`), since the receiver may be the module. This is
+  coarse on purpose: a class whose instances have a `len` attribute keeps
+  `len` a refusal across modules in that project.
+
+The project is the host's (its `pyproject.toml` or `setup.cfg`, or the
+directory its packages are imported from); a project too large to read whole
+counts as writing every name. Otherwise the helper reads `len` bare in its
+host, as any function there does. Strict mode keeps the 2026-10-02 refusal,
+and `--parameterize-builtins` passes every builtin in both modes.
+
+**What relaxed mode gives up.** Code the project does not contain that
+rebinds a builtin in one module: a dependency or plugin that sets
+`pkg.b.len`, including one the block itself calls while it runs
+(`tests/test_cross_module_plain_case.py` pins that counterexample: the original
+sees the new `len`, the helper in the other module does not). This is not
+reflection; it is the case the 2026-10-02 entry was written for, and the
+reason this rule needs the owner's approval. Such a program needs `--strict`.
+
+*Status: implemented for 2.0, with `tests/test_cross_module_plain_case.py`.*
+
+## 2026-11-16: Relaxed mode moves equal literals into a shared helper
+
+*Like the builtin rule above, this is a single commit so that it can be
+dropped.*
+
+Separately compiled modules have separate pools of constants, so an equal
+string literal in two modules may be two objects, and a literal moved into a
+helper in another module is a different object from the one its site held.
+Through 1.949 a cross-module helper therefore received every literal its
+sites had in common as a tuple argument (`helper(("[^a-z0-9]+",), …)`), so that
+each literal stayed in its own module's pool.
+
+In relaxed mode the literals move into the helper with the code around them,
+as they do within one module, and the refusal of a helper that would hold
+them in another module (`literal_pool_boundary`) applies in strict mode only. Whether two equal immutable values are one
+object is the implementation's choice: the language reference says that for
+immutable types "operations that compute new values may actually return a
+reference to any existing object with the same type and value". The moved
+literal is the host's object, so its identity changes against every other
+equal constant of the borrowing module too, not only against the host's: a
+program that compares such literals with `is`, in one module or across two,
+needs `--strict`, which keeps the tuple.
+
+*Status: implemented for 2.0, with `tests/test_cross_module_plain_case.py`.*

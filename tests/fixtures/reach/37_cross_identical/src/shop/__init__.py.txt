@@ -1,0 +1,1 @@
+"""Order and invoice handling for the shop."""

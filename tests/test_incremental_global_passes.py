@@ -32,6 +32,8 @@ from unittest.mock import patch
 
 import pytest
 
+import towel.cli
+
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.models import CodeBlockPair
 from tests.test_progress_modes import _two_round_project as _write_two_round_project
@@ -142,7 +144,11 @@ def test_a_restricted_pass_still_pairs_a_rewritten_file_with_an_untouched_one(
     _write_two_round_project(source)
     full, applied_full = _fixed_point(source, tmp_path / "full", False)
     restricted, applied_restricted = _fixed_point(source, tmp_path / "restricted", True)
-    assert applied_full == applied_restricted == 4  # two helpers, each rewriting two files
+    # Two helpers each rewrite two files; since 2.0 relaxed mode shares the
+    # arithmetic each function repeats inside itself as well, with
+    # profitability off. Strict mode declines those for the order the
+    # function releases its objects in (owned_binding_frame_boundary), as 1.949 did.
+    assert applied_full == applied_restricted == (4 if towel.cli.DEFAULT_STRICT else 10)
     assert full == restricted
     assert full["c.py"].startswith(b"import a\nfrom a import ")
     assert full["b.py"].startswith(b"import a\nfrom a import ")

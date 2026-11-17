@@ -228,15 +228,15 @@ STRICT_UNCHANGED_EXAMPLES = frozenset(
     }
 )
 
-# class_hierarchy's duplicated statistics read len/sum/min/max in different modules. The
-# default mode preserves those caller lookups by declining; the opt-in corpus
-# exercises the corresponding thunked extraction separately.
 # multi_level and nested_structure import package members, which may already
 # be ordinary attributes. Those imports do not guarantee that the child
 # module has loaded; adding a helper import could overwrite the attribute.
-EXPECTED_UNCHANGED_CROSSFILE_PROJECTS = frozenset(
-    {"class_hierarchy", "multi_level", "nested_structure"}
-)
+EXPECTED_UNCHANGED_CROSSFILE_PROJECTS = frozenset({"multi_level", "nested_structure"})
+# class_hierarchy's duplicated statistics read len/sum/min/max in different
+# modules. Strict mode preserves those caller lookups by declining, as 1.949
+# did; relaxed mode reads a builtin bare across modules (docs/design/DECISIONS.md)
+# and shares the method.
+STRICT_UNCHANGED_CROSSFILE_PROJECTS = EXPECTED_UNCHANGED_CROSSFILE_PROJECTS | {"class_hierarchy"}
 
 
 if lifetime_refusal_profile():
@@ -272,7 +272,7 @@ class TestCompilerGoldenSelection(unittest.TestCase):
         for profile, names, select in (
             ("test_examples_strict_expected_output", LIFETIME_REFUSAL_GOLDENS, _compiler_baseline),
             (
-                "test_examples_crossfile_expected_output",
+                "test_examples_crossfile_strict_expected_output",
                 LIFETIME_REFUSAL_CROSSFILE_GOLDENS,
                 crossfile_baseline,
             ),
@@ -645,9 +645,9 @@ class TestCrossFileRegression(unittest.TestCase):
     """
     Regression tests for cross-file refactorings.
 
-    Ensures cross-file refactorings remain stable and correct. The projects
-    render the same in both modes, so TestStrictCrossFileRegression holds
-    strict mode to the same goldens.
+    Ensures cross-file refactorings remain stable and correct. Relaxed mode
+    shares more across modules than strict mode, so each mode has its own
+    goldens: TestStrictCrossFileRegression holds strict mode to 1.949's.
     """
 
     engine: UnificationRefactorEngine
@@ -656,6 +656,8 @@ class TestCrossFileRegression(unittest.TestCase):
     expected_output: Path
 
     strict = False
+    golden_directory = "test_examples_crossfile_expected_output"
+    unchanged_projects = EXPECTED_UNCHANGED_CROSSFILE_PROJECTS
 
     @classmethod
     def setUpClass(cls):
@@ -665,7 +667,7 @@ class TestCrossFileRegression(unittest.TestCase):
         )
         cls.tester = CrossFileEquivalenceTester(cls.engine)
         cls.crossfile_examples = project_root / "test_examples_crossfile"
-        cls.expected_output = project_root / "test_examples_crossfile_expected_output"
+        cls.expected_output = project_root / cls.golden_directory
 
     def test_expected_output_exists(self):
         """Verify that expected cross-file output directory exists."""
@@ -757,7 +759,7 @@ class TestCrossFileRegression(unittest.TestCase):
                     str(source), str(out), progress="none"
                 )
                 self.assertEqual(reason, "fixed_point", project_dir.name)
-                unchanged = project_dir.name in EXPECTED_UNCHANGED_CROSSFILE_PROJECTS
+                unchanged = project_dir.name in self.unchanged_projects
                 self.assertEqual(bool(results), not unchanged, project_dir.name)
                 if unchanged:
                     for original in source.rglob("*.py"):
@@ -845,9 +847,11 @@ class TestCrossFileRegression(unittest.TestCase):
 
 
 class TestStrictCrossFileRegression(TestCrossFileRegression):
-    """Strict mode against the same cross-file goldens, which 1.949 shipped."""
+    """Strict mode against its own cross-file goldens, which are 1.949's."""
 
     strict = True
+    golden_directory = "test_examples_crossfile_strict_expected_output"
+    unchanged_projects = STRICT_UNCHANGED_CROSSFILE_PROJECTS
 
 
 def main():

@@ -9,14 +9,7 @@ from admin_service import __extracted_func_0
 def validate_user_email(email):
     """Validate user email format."""
     # Validation logic (DUPLICATE across files!)
-    if not email:
-        return False
-    if "@" not in email:
-        return False
-    parts = email.split("@")
-    if len(parts) != 2:
-        return False
-    return __extracted_func_0(parts)
+    return __extracted_func_0(email)
 
 
 def create_user(name, email):

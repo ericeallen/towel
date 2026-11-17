@@ -1,0 +1,22 @@
+"""Orders."""
+
+import re
+
+
+def _reference(prefix, number, customer):
+    slug = re.sub(r"[^a-z0-9]+", "-", customer.lower()).strip("-")
+    if not slug:
+        slug = "anonymous"
+    if len(slug) > 12:
+        slug = slug[:12].rstrip("-")
+    return f"{prefix}-{number:06d}-{slug}"
+
+
+def new_order(number, customer, lines):
+    total = sum(quantity * price for _, quantity, price in lines)
+    return {
+        "reference": _reference("ORD", number, customer),
+        "customer": customer,
+        "lines": list(lines),
+        "total": round(total, 2),
+    }

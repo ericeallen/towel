@@ -132,6 +132,7 @@ from .models import (
 )
 from .orphan_detector import orphaned_variables
 from .parameters import fresh_parameter_name
+from .async_helpers import exception_changes_at_coroutine_boundary
 from .scope_analyzer import Scope, ScopeAnalyzer
 from .semantic_safety import (
     created_object_escapes,
@@ -139,10 +140,17 @@ from .semantic_safety import (
     nested_bindings_escape,
     nested_scopes_cross_block_boundary,
     block_requires_original_frame,
+    holds_yield,
+    module_binds,
+    modules_imported_alike,
+    module_names_bound_before_definition,
     frame_read_outside_block,
     needs_class_body,
     unbinds_external_name,
 )
+from .attribute_writes import attribute_stores
+from .namespace_writes import ANY_NAME, scan_project_writes
+from ..project_layout import find_project_root
 from .import_graph import (
     ImportChange,
     host_has_stub,
@@ -396,6 +404,27 @@ def _module_namespace_names(
 
 
 # How a refused host is reported, by what its import would change.
+def _dotted_name(path: Path) -> str:
+    """The module name a file's package directories give it: ``pkg/contacts.py`` is ``pkg.contacts``."""
+    parts = [path.stem] if path.stem != "__init__" else []
+    directory = path.parent
+    while (directory / "__init__.py").is_file():
+        parts.insert(0, directory.name)
+        directory = directory.parent
+    return ".".join(parts) or path.name
+
+
+def _import_change_subject(borrower: str, host: str, change: ImportChange) -> str:
+    """Which module would import which, and what that import would change, in words."""
+    if change is ImportChange.PACKAGE_BINDING and "." in host:
+        package, attribute = host.rsplit(".", 1)
+        return (
+            f"{borrower} does not import {host} at its top, and loading {host} there"
+            f" would replace the attribute {attribute} of package {package}"
+        )
+    return f"{borrower} would import {host}, and {change.value}"
+
+
 _IMPORT_CHANGE_REASONS = {
     ImportChange.UNKNOWN: RejectReason.IMPORT_TIME_EFFECTS,
     ImportChange.RUNS_CODE: RejectReason.IMPORT_TIME_EFFECTS,
@@ -555,6 +584,13 @@ def _fresh_parameter_name(
     return name
 
 
+def _exception_changes_in_an_async_helper(
+    analyzer: ScopeAnalyzer, function: FunctionNode, nodes: Sequence[ast.stmt]
+) -> bool:
+    """``exception_changes_at_coroutine_boundary`` for a block of ``analyzer``'s module."""
+    return exception_changes_at_coroutine_boundary(analyzer.analyzed_tree, function, nodes)
+
+
 class PairEvaluation(
     Clustering, HelperPlacement, BlockAnalysis, ExistingFunctionReuse, HelperAnnotationWiring
 ):
@@ -690,6 +726,21 @@ class PairEvaluation(
             self._debug_reject(RejectReason.BARE_NAME_DIFFERS_BY_MODULE, pair)
             return None
         differing, builtin_reads = reads
+        if differing and not self.strict:
+            # Relaxed mode: a module every participating module imports alike
+            # is the same object in each, and the host holds the import.
+            # Each site's module has run that import before defining the
+            # site's function (``_bound_before_both_sites``).
+            differing = differing - (
+                self._modules_imported_alike(placement, functions)
+                & self._bound_before_both_sites(ctx)
+            )
+        if builtin_reads and not self.strict and not self.parameterize_builtins:
+            # Relaxed mode: a builtin means the same in every module unless a
+            # participating module binds the name (docs/design/DECISIONS.md,
+            # "Relaxed mode reads a builtin bare across modules"). Asked to
+            # pass builtins, it passes every one, as strict mode does.
+            builtin_reads = self._bound_by_a_participant(placement, functions, builtin_reads)
         if builtin_reads and not self.parameterize_builtins:
             self._debug_reject(
                 RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE,
@@ -701,6 +752,90 @@ class PairEvaluation(
         # builtin spelling. Preserve each lookup at its caller; absence of a
         # write in the project's source cannot establish equal namespaces.
         return _Placed(unified, rendered, placement, differing | builtin_reads)
+
+    @staticmethod
+    def _participating_modules(
+        placement: _Placement, functions: FunctionIndex
+    ) -> Optional[List[ast.Module]]:
+        """The module of the helper's host and of every site, or None when one is not at hand."""
+        host = placement.home.file_path
+        paths = sorted(
+            {host} | {replacement.file_path or host for replacement in placement.replacements}
+        )
+        modules = []
+        for path in paths:
+            artifacts = functions.in_file(path)
+            tree = artifacts[0].scope_analyzer.analyzed_tree if artifacts else None
+            if not isinstance(tree, ast.Module):
+                return None
+            modules.append(tree)
+        return modules
+
+    def _bound_by_a_participant(
+        self, placement: _Placement, functions: FunctionIndex, names: FrozenSet[str]
+    ) -> FrozenSet[str]:
+        """Those of ``names`` some participating module binds; all of them when one is unknown."""
+        modules = self._participating_modules(placement, functions)
+        if modules is None:
+            return names
+        bound = frozenset().union(*(module_binds(module, names) for module in modules))
+        return bound | self._written_into_a_participant(placement, names)
+
+    def _written_into_a_participant(
+        self, placement: _Placement, names: FrozenSet[str]
+    ) -> FrozenSet[str]:
+        """Those of ``names`` the project's own files visibly write into a participating module.
+
+        ``pkg.exports.len = fake`` in a test, or ``mock.patch("pkg.exports.len")``
+        (``scan_project_writes``), and a store to an attribute of that name on
+        any receiver (``attribute_stores``), over the files of the host's
+        project (``find_project_root``). When the participating modules do not all
+        stand in that project, or it is a whole filesystem or home directory,
+        what writes them is not known, and every name counts as written.
+        """
+        host = placement.home.file_path
+        paths = {
+            os.path.abspath(path)
+            for path in {host} | {r.file_path or host for r in placement.replacements}
+        }
+        root = find_project_root(Path(host))
+        # Without a packaging marker that is the host's directory: climb out
+        # of its packages to the directory they are imported from, where
+        # the project's tests stand beside them.
+        while (root / "__init__.py").is_file() and root.parent != root:
+            root = root.parent
+        if (
+            root == Path(root.anchor)
+            or root == Path.home()
+            or not all(Path(path).resolve().is_relative_to(root) for path in paths)
+        ):
+            return names
+        writes = self._project_writes.get(root)
+        if writes is None:
+            writes = self._project_writes.setdefault(root, scan_project_writes(root))
+        # Any receiver may be the module: ``install(exports)`` setting
+        # ``module.len`` is a write into it no module resolution can see.
+        if root not in self._attribute_stores:
+            self._attribute_stores[root] = attribute_stores(root, BUILTIN_NAMES)
+        stored = self._attribute_stores[root]
+        if stored is None:
+            return names
+        found: Set[str] = set(stored & names)
+        for path in paths:
+            for write in writes.into(Path(path).resolve()):
+                if write.name == ANY_NAME:
+                    return names
+                if write.name in names:
+                    found.add(write.name)
+        return frozenset(found)
+
+    @classmethod
+    def _modules_imported_alike(
+        cls, placement: _Placement, functions: FunctionIndex
+    ) -> FrozenSet[str]:
+        """The names every participating module binds by one and the same ``import``."""
+        modules = cls._participating_modules(placement, functions)
+        return frozenset() if modules is None else modules_imported_alike(modules)
 
     @staticmethod
     def _host_namespace_reads(
@@ -814,7 +949,19 @@ class PairEvaluation(
                 analyzer,
                 site=site,
             ):
-                self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
+                self._debug_reject(
+                    (
+                        RejectReason.GENERATOR_BLOCK
+                        if holds_yield(nodes)
+                        else RejectReason.FRAME_SENSITIVE_BLOCK
+                    ),
+                    pair,
+                )
+                return None
+            if self._block_rejected(
+                _exception_changes_in_an_async_helper, nodes, function, analyzer, site=site
+            ):
+                self._debug_reject(RejectReason.COROUTINE_EXCEPTION_BOUNDARY, pair)
                 return None
             if self._block_rejected(
                 frame_read_outside_block,
@@ -1098,8 +1245,11 @@ class PairEvaluation(
             blocks,
             hygienic_renames,
             (ModuleText(pair.file_path, pair.source1), ModuleText(pair.file_path2, pair.source2)),
-            thread_literal_pools=os.path.abspath(pair.file_path)
-            != os.path.abspath(pair.file_path2),
+            # Strict mode keeps each common literal in its own module's pool;
+            # relaxed mode moves it with the code (docs/design/DECISIONS.md,
+            # "Relaxed mode moves equal literals into a shared helper").
+            thread_literal_pools=self.strict
+            and os.path.abspath(pair.file_path) != os.path.abspath(pair.file_path2),
         )
         if not substitution:
             self._reject(
@@ -1451,14 +1601,50 @@ class PairEvaluation(
         and the helper reads it where the block did, as late and as
         conditionally. Passing it instead would snapshot module data at the
         call. Across files the other module's same-named binding may differ,
-        so the name stays a parameter there.
+        so the name stays a parameter there, except in relaxed mode a module
+        both modules bind by one and the same ``import`` (``modules_imported_alike``),
+        and each module has executed that import before the statement that
+        defines the function holding its block. The helper reads the host's
+        binding, which exists whenever it runs; the borrower's original read
+        raised ``NameError`` if the borrower called its function before its
+        own import ran.
         """
-        if pair.is_cross_file or not free_vars:
+        if not free_vars or (pair.is_cross_file and self.strict):
             return frozenset()
         # A shared free name is spelled the same at both sites: hygienic
         # renaming touches only the names a block binds.
         kept = module_resolved_names(ctx.func1, ctx.scope_analyzer, free_vars)
-        return module_resolved_names(ctx.func2, ctx.scope_analyzer2, kept)
+        kept = module_resolved_names(ctx.func2, ctx.scope_analyzer2, kept)
+        if not pair.is_cross_file:
+            return kept
+        modules = [
+            tree
+            for tree in (ctx.scope_analyzer.analyzed_tree, ctx.scope_analyzer2.analyzed_tree)
+            if isinstance(tree, ast.Module)
+        ]
+        if len(modules) != 2:
+            return frozenset()
+        return kept & modules_imported_alike(modules) & self._bound_before_both_sites(ctx)
+
+    @staticmethod
+    def _bound_before_both_sites(ctx: "_PairContext") -> FrozenSet[str]:
+        """Module names each site's module binds before the statement defining the site's function.
+
+        A module name the helper reads bare from its host must already have
+        been bound in the borrower whenever the borrower's own code read it:
+        otherwise the original raised ``NameError`` where the helper succeeds.
+        Nothing calls a function before its definition runs, so a binding on
+        every path before that statement suffices.
+        """
+        bound: List[FrozenSet[str]] = []
+        for function, tree in (
+            (ctx.func1, ctx.scope_analyzer.analyzed_tree),
+            (ctx.func2, ctx.scope_analyzer2.analyzed_tree),
+        ):
+            if not isinstance(tree, ast.Module):
+                return frozenset()
+            bound.append(module_names_bound_before_definition(function, tree))
+        return bound[0] & bound[1]
 
     # -- 7 ---------------------------------------------------------------------
 
@@ -1856,10 +2042,16 @@ class PairEvaluation(
         projection = (
             None if literal_pool is None else (literal_pool.parameter, len(literal_pool.keys))
         )
-        if retained_literal_pool(helper.body, trusted_projection=projection) and any(
-            os.path.abspath(replacement.file_path or home.file_path)
-            != os.path.abspath(canonical_file)
-            for replacement in replacements
+        # Relaxed mode lets equal literals move into a helper in another
+        # module ("Relaxed mode moves equal literals into a shared helper").
+        if (
+            self.strict
+            and retained_literal_pool(helper.body, trusted_projection=projection)
+            and any(
+                os.path.abspath(replacement.file_path or home.file_path)
+                != os.path.abspath(canonical_file)
+                for replacement in replacements
+            )
         ):
             self._debug_reject(RejectReason.LITERAL_POOL_BOUNDARY, pair)
             return None
@@ -1969,32 +2161,55 @@ class PairEvaluation(
                 for borrower in participating - {candidate}
             )
         ]
+
+        def name(path: str) -> str:
+            return program.module_name(Path(path)) or _dotted_name(Path(path))
+
         if not importable:
-            self._debug_reject(RejectReason.UNPROVEN_IMPORT, pair)
+            borrower = next(
+                other
+                for other in sorted(participating - {canonical_file})
+                if program.spelling(Path(other), Path(canonical_file)) is None
+            )
+            self._debug_reject(
+                RejectReason.UNPROVEN_IMPORT,
+                pair,
+                subject=f"no import of {name(canonical_file)} is known to work in {name(borrower)}",
+            )
             return None
         refusal: Optional[RejectReason] = None
+        subject: Optional[str] = None
         for candidate in importable:
             if would_create_import_cycle(candidate, participating, self.import_graph):
+                if subject is None:
+                    others = ", ".join(name(path) for path in sorted(participating - {candidate}))
+                    subject = (
+                        f"{name(candidate)} imports {others}, so importing it back closes a cycle"
+                    )
                 continue
             # The other modules would import the helper through the host's
             # stub, which a type checker reads in its place and lacks it.
             if host_has_stub(candidate, self.import_graph):
-                refusal = refusal or RejectReason.HOST_HAS_STUB
+                if refusal is None:
+                    refusal, subject = RejectReason.HOST_HAS_STUB, f"{name(candidate)} has a stub"
                 continue
             # The new import must not change what importing a borrower does: a
             # host that prints or registers at import time would do so wherever
             # the borrower is imported, one that needs an absent package or one
             # that does not ship with the borrower would stop its import.
             changes = [
-                change
+                (borrower, change)
                 for borrower in sorted(participating - {candidate})
                 if (change := import_change(candidate, borrower, self.import_graph)) is not None
             ]
             if changes:
-                refusal = refusal or _IMPORT_CHANGE_REASONS[changes[0]]
+                if refusal is None:
+                    borrower, change = changes[0]
+                    refusal = _IMPORT_CHANGE_REASONS[change]
+                    subject = _import_change_subject(name(borrower), name(candidate), change)
                 continue
             return candidate
-        self._debug_reject(refusal or RejectReason.IMPORT_CYCLE, pair)
+        self._debug_reject(refusal or RejectReason.IMPORT_CYCLE, pair, subject=subject)
         return None
 
     # -- 11 --------------------------------------------------------------------
@@ -2019,7 +2234,9 @@ class PairEvaluation(
         """
         is_cross_file = pair.is_cross_file
         desc = f"Extract common code from {pair.function1_name}"
-        if is_cross_file:
+        if pair.function1_node is pair.function2_node:
+            desc = f"Extract code repeated in {pair.function1_name}"
+        elif is_cross_file:
             desc += f" ({Path(pair.file_path).name}) and {pair.function2_name} ({Path(pair.file_path2).name})"
         else:
             desc += f" and {pair.function2_name}"

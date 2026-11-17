@@ -182,8 +182,40 @@ def test_the_reproducer_is_declined_and_keeps_its_behaviour(tmp_path: Path) -> N
     assert "10001" in _run(after, "check.py")
 
 
+@pytest.mark.strict_mode
 def test_no_visible_write_does_not_make_modules_share_a_builtin_lookup(tmp_path: Path) -> None:
+    """Strict mode keeps the 2026-10-02 rule: a module's ``len`` may be rebound unseen."""
     _assert_declined(tmp_path, _project(), "builtin_may_differ_by_module")
+
+
+def test_relaxed_mode_shares_a_builtin_no_module_binds(tmp_path: Path) -> None:
+    """Since 2.0 relaxed mode reads ``len`` bare in the host when no participating module
+    binds it and the project writes it into neither (audit finding 2, engine map F)."""
+    files = _project()
+    before, after = tmp_path / "before", tmp_path / "after"
+    _write(before, files)
+    _write(after, files)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False,
+        min_lines=3,
+        max_parameters=6,
+        cross_module_helpers=True,
+        strict=False,
+    )
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        results, _ = engine.refactor_directory_to_fixed_point(
+            str(after / "pkg"), str(after / "pkg"), progress="none"
+        )
+    assert sum(applied for applied, _ in results.values()) > 0
+    assert "builtin_may_differ_by_module" not in engine.declined_pairs
+    helper = next(
+        node
+        for path in (after / "pkg").glob("*.py")
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+    )
+    assert "len" not in [argument.arg for argument in helper.args.args]
+    assert "len(name)" in ast.unparse(helper)
 
 
 # Evidence in a participating module, and the reason the pair is declined for.

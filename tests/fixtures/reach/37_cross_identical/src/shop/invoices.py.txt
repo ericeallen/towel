@@ -1,0 +1,28 @@
+"""Invoices."""
+
+import re
+
+from shop.orders import new_order
+
+
+def _reference(prefix, number, customer):
+    slug = re.sub(r"[^a-z0-9]+", "-", customer.lower()).strip("-")
+    if not slug:
+        slug = "anonymous"
+    if len(slug) > 12:
+        slug = slug[:12].rstrip("-")
+    return f"{prefix}-{number:06d}-{slug}"
+
+
+def invoice_for(order, number, due_days=30):
+    return {
+        "reference": _reference("INV", number, order["customer"]),
+        "order": order["reference"],
+        "amount_due": order["total"],
+        "due_days": due_days,
+    }
+
+
+def quick_invoice(number, customer, amount):
+    order = new_order(number, customer, [("misc", 1, amount)])
+    return invoice_for(order, number, due_days=14)

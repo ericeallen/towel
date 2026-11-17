@@ -101,8 +101,9 @@ regenerate-baseline:
     echo "This OVERWRITES test_examples_expected_output/ and"
     echo "test_examples_crossfile_expected_output/. Run only after verifying new"
     echo "output is correct and all observational-equivalence tests pass."
-    echo "(The strict-mode goldens in test_examples_strict_expected_output/ are"
-    echo "left alone; tests/generate_baseline.py --confirm --strict rewrites them.)"
+    echo "(The strict-mode goldens in test_examples_strict_expected_output/ and"
+    echo "test_examples_crossfile_strict_expected_output/ are left alone;"
+    echo "tests/generate_baseline.py --confirm --strict rewrites them.)"
     read -p "Type YES to continue: " response
     [ "$response" = "YES" ] || { echo "Aborted."; exit 1; }
     uv run --frozen python tests/generate_baseline.py --confirm

@@ -186,9 +186,8 @@ def _reference_requires_original_frame(block: Sequence[ast.AST]) -> bool:
         return True
     for statement in block:
         for node in ast.walk(statement):
-            if isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await, ast.AsyncFor, ast.AsyncWith)):
-                return True
-            if isinstance(node, ast.comprehension) and node.is_async:
+            # Since 2.0 a block that awaits moves into an awaited async helper.
+            if isinstance(node, (ast.Yield, ast.YieldFrom)):
                 return True
             if isinstance(node, ast.Call):
                 if _is_aliased_super_call(node, NO_ALIASES):

@@ -1,0 +1,13 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+from shop import invoices, orders
+
+order = orders.new_order(42, "Ada Lovelace & Sons, Ltd.", [("towel", 2, 12.5), ("soap", 1, 3.0)])
+print(order)
+print(invoices.invoice_for(order, 7))
+print(invoices.quick_invoice(8, "  ", 19.99))
+print(orders.new_order(1, "Zoë", []))
+print(orders._reference("X", 3, "abc"), invoices._reference("Y", 4, "A--B"))
+print("ok")

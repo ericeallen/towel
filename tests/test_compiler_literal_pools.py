@@ -240,6 +240,7 @@ def _cross_observe(project: Path) -> str:
     return result.stdout
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize(
     "literal",
     [
@@ -487,6 +488,7 @@ def test_complete_cli_preserves_distinct_nan_compiler_occurrences(
     assert observe(generated) == before
 
 
+@pytest.mark.strict_mode
 def test_default_typed_carrier_preserves_float_operand_and_outside_identity(tmp_path: Path) -> None:
     pytest.importorskip("mypy")
     project = tmp_path / "project"
@@ -565,6 +567,7 @@ print(a.f(1)[0] is b.g(1)[0], events)
     assert checked.returncode == 0, checked.stdout + checked.stderr
 
 
+@pytest.mark.strict_mode
 def test_default_typed_heterogeneous_carrier_keeps_precise_selectors(tmp_path: Path) -> None:
     pytest.importorskip("mypy")
     project = tmp_path / "project"

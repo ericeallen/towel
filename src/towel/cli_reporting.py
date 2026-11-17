@@ -24,11 +24,14 @@ from typing import (
     TYPE_CHECKING,
     Callable,
     Dict,
+    Iterable,
     List,
     Literal,
     NotRequired,
     Optional,
     Sequence,
+    Set,
+    Tuple,
     TypedDict,
 )
 
@@ -40,6 +43,7 @@ from towel.source_text import decode_source
 
 if TYPE_CHECKING:
     from towel.unification.fixed_point import RunReport
+    from towel.unification.models import AppliedChange
     from towel.unification.models import LeftAlone, ParameterKind
 
 Outcome = Literal["no_python_files", "no_repeated_code", "all_left_alone", "applied"]
@@ -431,6 +435,53 @@ def left_alone_lines(
         where = spans[0] if len(spans) == 1 else ", ".join(spans[:-1]) + " and " + spans[-1]
         lines.append(f"  {where}: {explain(site.reason).sentence}")
     return lines
+
+
+CROSS_MODULE_PREFIX = "Only with --cross-module: "
+"""How the sentence of every reason that only a cross-module pair can meet begins."""
+
+CROSS_MODULE_REMEDY = (
+    "A module can share a helper with another only if one of them already imports the other,"
+    " unconditionally, at its top, before its first definition; the helper then goes into the"
+    " module imported. Adding that import is the one change that lets Towel share such code."
+)
+
+
+def shared_across_modules(changes: Iterable["AppliedChange"]) -> bool:
+    """Whether a run's applied changes call one helper from two modules."""
+    paths: Dict[str, Set[str]] = {}
+    for change in changes:
+        paths.setdefault(change.helper, set()).add(change.path)
+    return any(len(where) > 1 for where in paths.values())
+
+
+def cross_module_lines(report: "RunReport", relative: Callable[[str], str]) -> List[str]:
+    """When ``--cross-module`` shared nothing: what each pair of modules lacked, and the remedy.
+
+    One line per pair of modules and condition, however many pairs of
+    blocks met it; nothing when no pair across modules was declined for a
+    reason only such a pair can meet.
+    """
+    found: Dict[Tuple[str, str, str], None] = {}
+    for site in report.left_alone:
+        paths = sorted({relative(block.path) for block in site.blocks})
+        code = reason_code(site.reason)
+        sentence = explain(code).sentence
+        if len(paths) < 2 or not sentence.startswith(CROSS_MODULE_PREFIX):
+            continue
+        # The reason's subject names the modules and what failed; without
+        # one, the reason's own sentence says what failed.
+        subject = site.reason[len(code) + 1 : -1] if site.reason != code else ""
+        condition = subject or sentence[len(CROSS_MODULE_PREFIX) :].rstrip(".")
+        found[(paths[0], " and ".join(paths[1:]), condition)] = None
+    if not found:
+        return []
+    return [
+        "",
+        "--cross-module shared nothing between modules. What each pair of modules lacked:",
+        *(f"  {first} and {others}: {condition}." for first, others, condition in found),
+        CROSS_MODULE_REMEDY,
+    ]
 
 
 def analysed_record(report: "RunReport", relative: Callable[[str], str]) -> AnalysedRecord:

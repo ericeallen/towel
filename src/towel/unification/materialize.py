@@ -47,6 +47,7 @@ from .annotation_imports import (
     respelled_helper,
     words_of,
 )
+from .async_helpers import awaits_in_own_frame, with_coroutine_helper
 from .block_comments import excluded_lines, weave_comments
 from .argument_ownership import (
     argument_handoff_fits,
@@ -202,6 +203,8 @@ class Materialization(
         directive stands beside the code it was written for.
         """
         preserve_ast = any(r.argument_handoff is not None for r in proposal.replacements)
+        if awaits_in_own_frame(proposal.extracted_function.body):
+            node = with_coroutine_helper(node, proposal.extracted_function.name)
         if not proposal.helper_comments.carried:
             return self._render(node, proposal.file_path, prefix, preserve_ast=preserve_ast)
         helper = node.body[-1] if isinstance(node, ast.Module) else node

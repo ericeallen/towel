@@ -306,8 +306,10 @@ strict's sixteen are `STRICT_UNCHANGED_EXAMPLES`). The goldens for the
 cross-file packages in `test_examples_crossfile/` (`simple_crossfile`,
 `nested_structure`, `multi_level`, and `class_hierarchy`, a subclass in a
 second module repeating its base class's method body),
-`test_examples_crossfile_expected_output/`, are the same in both modes;
-regenerate goldens only after
+`test_examples_crossfile_expected_output/`, have a strict set beside them,
+`test_examples_crossfile_strict_expected_output/`, because relaxed mode shares
+more across modules (it reads builtins and shared imports bare and moves equal
+literals); regenerate goldens only after
 verifying the new output (`just regenerate-baseline`) and review the diff,
 since regeneration is not validation.
 
