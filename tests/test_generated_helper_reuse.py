@@ -39,6 +39,10 @@ from towel.unification.pipeline import analyze_scopes, collect_functions, parse_
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.typed_fixtures import requires_mypy
 
+# These fixtures pin 1.949 binding independence and ownership guarantees.
+pytestmark = pytest.mark.strict_mode
+
+
 BODY = (
     "    acc = n * 2\n    acc = acc - 11\n    msg = 'value %d' % acc\n"
     "    msg = msg.strip()\n"
@@ -81,7 +85,9 @@ def _package(
         signature = f"(n: {annotation}) -> {annotation}:" if typed else "(n):"
         (package / f"{name}.py").write_text(
             ("import pkg.a\n\n" if name != "a" else "")
-            + f"def {name}_one{signature}\n"
+            + "from typing import TypeVar\n_F = TypeVar('_F')\n"
+            + "def _identity(function: _F) -> _F:\n    return function\n\n"
+            + f"@_identity\ndef {name}_one{signature}\n"
             + (BINDING_FREE_BODY if binding_free else BODY)
         )
     return package
@@ -444,7 +450,7 @@ def test_owned_cross_module_bodies_keep_fresh_holder_abi(tmp_path: Path) -> None
         handed = 0
         for path in sorted((output / "pkg").glob("*.py")):
             for node in ast.parse(path.read_text()).body:
-                if isinstance(node, ast.FunctionDef) and not is_generated_helper_name(node.name):
+                if isinstance(node, ast.FunctionDef) and node.name.endswith("_one"):
                     if any(isinstance(statement, ast.Delete) for statement in node.body):
                         handed += 1
                         assert isinstance(node.body[0], ast.Assign) and isinstance(

@@ -22,10 +22,11 @@ in a run that printed "No refactorings found!", so ``rename-helpers`` offered
 before/after pairs for code that does not exist.
 
 The dropped proposal here is the most direct one there is: a Latin-1 module
-whose duplicated blocks bind ``µ`` (MICRO SIGN, which Latin-1 holds). Python
+whose duplicated blocks read parameter ``µ`` (MICRO SIGN, which Latin-1 holds). Python
 reads that identifier as ``μ`` (GREEK SMALL LETTER MU), which Latin-1 does
-not hold and no escape can spell in a name, so the rendered helper cannot be
-written back to its file.
+not hold and no escape can spell in a name. The new helper signature must
+spell the normalized parameter, even though copied statements retain their
+original source, so the rendered helper cannot be written back to its file.
 """
 
 from __future__ import annotations
@@ -42,10 +43,10 @@ from tests.test_cli_integration import invoke
 
 LATIN1_MODULE = (
     "# -*- coding: latin-1 -*-\n\n\n"
-    'def first(value):\n    print("first")\n    \u00b5 = value + 1\n'
-    "    scaled = \u00b5 * 2\n    label = str(scaled)\n    return label\n\n\n"
-    'def second(value):\n    print("second")\n    \u00b5 = value + 1\n'
-    '    scaled = \u00b5 * 2\n    label = str(scaled)\n    return label + "!"\n'
+    'def first(\u00b5):\n    print("first")\n    adjusted = \u00b5 + 1\n'
+    "    scaled = adjusted * 2\n    label = str(scaled)\n    return label\n\n\n"
+    'def second(\u00b5):\n    print("second")\n    adjusted = \u00b5 + 1\n'
+    '    scaled = adjusted * 2\n    label = str(scaled)\n    return label + "!"\n'
 ).encode("latin-1")
 
 
@@ -58,10 +59,10 @@ def _module(root: Path) -> Path:
 
 @pytest.mark.parametrize("directory", [False, True])
 def test_a_proposal_dropped_after_rendering_leaves_no_record(
-    tmp_path: Path, directory: bool
+    tmp_path: Path, directory: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     path = _module(tmp_path / "project")
-    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(min_lines=3, strict=False)
     with contextlib.redirect_stdout(io.StringIO()):
         if directory:
             results, _ = engine.refactor_directory_to_fixed_point(
@@ -71,6 +72,7 @@ def test_a_proposal_dropped_after_rendering_leaves_no_record(
         else:
             _code, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     assert applied == 0
+    assert "cannot represent" in caplog.text
     assert path.read_bytes() == LATIN1_MODULE
     assert engine.change_log == ()
 
@@ -86,6 +88,7 @@ def test_the_command_line_writes_no_sidecar_for_a_run_that_applied_nothing(
             target,
             target,
             "--no-interactive",
+            "--no-strict",
             "--no-types",
             "--no-format",
             "--progress",

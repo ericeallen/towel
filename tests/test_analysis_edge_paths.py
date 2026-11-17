@@ -137,7 +137,12 @@ def test_validation_debugging_traces_both_blocks_of_a_pair(
     ):
         proposals = engine.analyze_file(str(path))
     if lifetime_order_certified():
-        assert [p.description for p in proposals] == ["Extract common code from first and second"]
+        expected = (
+            "Extract common code from first and second"
+            if engine.strict
+            else "Reuse first (m.py) for duplicated code in second"
+        )
+        assert [p.description for p in proposals] == [expected]
     else:
         assert not proposals
         assert "lifetime_order_uncertified" in engine.declined_pairs

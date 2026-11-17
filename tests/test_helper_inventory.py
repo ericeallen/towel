@@ -233,9 +233,10 @@ def test_the_sidecar_spells_each_file_relative_to_an_output_reached_through_a_li
 
     real = tmp_path.resolve() / "real"
     (real / "src").mkdir(parents=True)
+    # Decorated functions require a fresh helper, which creates the sidecar.
     (real / "src" / "m.py").write_text(
-        "def f(a):\n    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\n"
-        "def g(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n"
+        "@staticmethod\ndef f(a):\n    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\n"
+        "@staticmethod\ndef g(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n"
         "def compute(v):\n    return v\n"
     )
     if not argument_ownership._supported_runtime():
@@ -247,9 +248,7 @@ def test_the_sidecar_spells_each_file_relative_to_an_output_reached_through_a_li
         )
     linked = tmp_path / "linked"
     linked.symlink_to(real, target_is_directory=True)
-    engine = UnificationRefactorEngine(
-        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
-    )
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(
             str(linked / "src"), str(linked / "src"), progress="none"

@@ -23,19 +23,44 @@ too, so the unifier and the engine cannot drift apart on what a fresh
 """
 
 import ast
+import re
 from typing import Container, Iterator, Tuple
+
+from .models import is_generated_helper_name
 
 GENERATED_PARAMETER_PREFIX = "__param_"
 """The spelling of generated helper parameters; ``rename-helpers`` names them later."""
+
+_LEGACY_GENERATED_PARAMETER = re.compile(r"_param_\d+(?:_\d+)?")
+
+
+def is_generated_parameter(name: str, enclosing: ast.AST) -> bool:
+    """Whether ``name``, read at a site in ``enclosing``, is a generated helper parameter.
+
+    ``__param_N`` is one wherever it appears. A helper for a project older
+    than Python 3.8 renames a ``__param_N`` that follows an ordinary
+    parameter to ``_param_N`` (``Materialization``), a spelling user code may
+    use too, so it counts only as a parameter of the generated helper the
+    site is in. Missing it let a placeholder leak into a call site unnoticed,
+    and extraction fed on its own helpers without end.
+    """
+    if name.startswith(GENERATED_PARAMETER_PREFIX):
+        return True
+    return (
+        isinstance(enclosing, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and is_generated_helper_name(enclosing.name)
+        and _LEGACY_GENERATED_PARAMETER.fullmatch(name) is not None
+        and name in {parameter.arg for parameter in parameter_nodes(enclosing.args)}
+    )
 
 
 def parameter_nodes(args: ast.arguments) -> Iterator[ast.arg]:
     """Yield every ``ast.arg`` of an arguments block, in declaration order."""
     yield from args.posonlyargs
     yield from args.args
-    yield from args.kwonlyargs
     if args.vararg:
         yield args.vararg
+    yield from args.kwonlyargs
     if args.kwarg:
         yield args.kwarg
 

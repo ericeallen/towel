@@ -6,73 +6,75 @@ collide with variables in the surrounding scope or in the calling context.
 """
 
 
-def __extracted_func_3(__param_0, data, result):
+def __extracted_func_3(data, result, _param_0):
     for item in data:
         # This block should be extracted, but 'x' might collide
         # Same block - extracted function must avoid collision with 'result'
-        x = item * __param_0
+        x = item * _param_0
         y = x + 10
-        z = y ** 2
+        z = y**2
         result.append(z)
     return result
 
 
-def __extracted_func_2(__param_0, values, x, y):
+def __extracted_func_2(values, x, y, _param_0):
     output = []
     for val in values:
         # This block references outer 'x' and 'y'
         # Same structure but different constant
         a = val + x
         b = a * y
-        c = b - __param_0
+        c = b - _param_0
         output.append(c)
     return output
 
 
-def __extracted_func_1(__param_0, __param_1, data):
+def __extracted_func_1(data, _param_0, _param_1):
     results = []
     for item in data:
         # This block could have naming conflicts with nested functions
         # Different computation, same structure
-        a = item ** __param_0
-        b = a + __param_1
+        a = item**_param_0
+        b = a + _param_1
         c = b * 3
         results.append(c)
+
     return results
 
 
-def __extracted_func_0(__param_0, __param_1, cache, data, temp):
+def __extracted_func_0(data, temp, cache, _param_0, _param_1):
     for key, value in data.items():
         # Block that modifies outer 'temp' and 'cache'
         # Same pattern, different validation condition
-        processed = __param_0(value)
-        validated = len(processed) > __param_1
+        processed = _param_0(value)
+        validated = len(processed) > _param_1
         if validated:
             temp.append(processed)
             cache[key] = processed
-    return (temp, cache)
+
+    return temp, cache
 
 
 def process_with_temp_var_v1(data, result):
     """Version 1: Uses 'result' in outer scope, 'x' in duplicate block."""
     result = []
-    return __extracted_func_3(2, data, result)
+    return __extracted_func_3(data, result, 2)
 
 
 def process_with_temp_var_v2(data, result):
     """Version 2: Same pattern but 'result' is a parameter name."""
     result = []
-    return __extracted_func_3(3, data, result)
+    return __extracted_func_3(data, result, 3)
 
 
 def calculate_nested_scope_a(values, x, y):
     """Uses x and y as parameters - extracted function must avoid these."""
-    return __extracted_func_2(5, values, x, y)
+    return __extracted_func_2(values, x, y, 5)
 
 
 def calculate_nested_scope_b(values, x, y):
     """Same outer variable names - extracted function needs hygienic naming."""
-    return __extracted_func_2(10, values, x, y)
+    return __extracted_func_2(values, x, y, 10)
 
 
 def transform_with_shadowing_v1(data, temp, cache):
@@ -80,7 +82,7 @@ def transform_with_shadowing_v1(data, temp, cache):
     temp = []
     cache = {}
 
-    return __extracted_func_0(lambda value: value.upper(), 5, cache, data, temp)
+    return __extracted_func_0(data, temp, cache, lambda value: value.upper(), 5)
 
 
 def transform_with_shadowing_v2(data, temp, cache):
@@ -88,7 +90,7 @@ def transform_with_shadowing_v2(data, temp, cache):
     temp = []
     cache = {}
 
-    return __extracted_func_0(lambda value: value.lower(), 3, cache, data, temp)
+    return __extracted_func_0(data, temp, cache, lambda value: value.lower(), 3)
 
 
 def compute_with_param_collision_a(items, param1, param2, param3):
@@ -126,7 +128,7 @@ def nested_function_scope_v1(data, helper, processor):
     def processor(x):
         return x + 5
 
-    return __extracted_func_1(2, 100, data)
+    return __extracted_func_1(data, 2, 100)
 
 
 def nested_function_scope_v2(data, helper, processor):
@@ -138,4 +140,4 @@ def nested_function_scope_v2(data, helper, processor):
     def processor(x):
         return x + 5
 
-    return __extracted_func_1(3, 200, data)
+    return __extracted_func_1(data, 3, 200)

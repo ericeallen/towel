@@ -12,6 +12,7 @@ def __extracted_func_0(__param_0, __param_1):
         raise ValueError('User name is required')
     if len(__param_0.get('name', '')) < 2:
         raise ValueError('User name too short')
+
     print(f"Processing {__param_1}: {__param_0['name']}")
     return __param_0
 

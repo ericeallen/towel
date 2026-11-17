@@ -6,187 +6,204 @@ data validation, ETL pipelines, error handling, and logging.
 """
 
 
-def __extracted_func_5(__param_0, auth, logger, rate_limiter, request):
-    if not auth.verify_token(request.headers.get('Authorization')):
-        logger.warn('Invalid token')
-        return ({'error': 'Unauthorized'}, 401)
-    if not rate_limiter.check(request.user_id, limit=__param_0):
-        logger.warn(f'Rate limit exceeded for user {request.user_id}')
-        return ({'error': 'Too many requests'}, 429)
+def __extracted_func_5(request, auth, rate_limiter, logger, _param_0):
+    if not auth.verify_token(request.headers.get("Authorization")):
+        logger.warn("Invalid token")
+        return {"error": "Unauthorized"}, 401
+
+    if not rate_limiter.check(request.user_id, limit=_param_0):
+        logger.warn(f"Rate limit exceeded for user {request.user_id}")
+        return {"error": "Too many requests"}, 429
     # Validate and process
     data = request.json()
     validated = auth.validate_payload(data)
+
     if not validated:
-        logger.error('Invalid payload')
-        return ({'error': 'Bad request'}, 400)
-    logger.info(f'Processing request for user {request.user_id}')
-    return ({'status': 'success'}, 200)
+        logger.error("Invalid payload")
+        return {"error": "Bad request"}, 400
+
+    logger.info(f"Processing request for user {request.user_id}")
+    return {"status": "success"}, 200
 
 
-def __extracted_func_4(__param_0, cache, database, key):
+def __extracted_func_4(key, cache, database, _param_0):
     cached = cache.get(key)
     if cached is not None:
         cache.increment_hits()
         return cached
+
     cache.increment_misses()
     # Fallback to database
     try:
         data = database.query(key)
         if data:
             # Cache for 3600 seconds
-            # Cache for 7200 seconds
-            cache.set(key, data, ttl=__param_0)
+            cache.set(key, data, ttl=_param_0)
             cache.record_fill(key)
             return data
     except Exception as e:
         cache.record_error(e)
         raise
+
     return None
 
 
-def __extracted_func_3(__param_0, config, logger, source):
-    logger.info('Starting extract phase')
+def __extracted_func_3(source, config, logger, _param_0):
+    logger.info("Starting extract phase")
     # Extract with retry logic
     # Same retry logic, different timeout
     max_retries = 3
     retry_count = 0
     data = None
+
     while retry_count < max_retries:
         try:
-            data = source.fetch(endpoint=config['endpoint'], params=config['params'], timeout=__param_0)
-            logger.info(f'Extracted {len(data)} records')
+            data = source.fetch(endpoint=config["endpoint"], params=config["params"], timeout=_param_0)
+            logger.info(f"Extracted {len(data)} records")
             break
         except Exception as e:
             retry_count += 1
-            logger.warn(f'Extract failed (attempt {retry_count}): {e}')
+            logger.warn(f"Extract failed (attempt {retry_count}): {e}")
             if retry_count >= max_retries:
-                logger.error('Extract phase failed')
+                logger.error("Extract phase failed")
                 raise
+
     return data
 
 
-def __extracted_func_2(__param_0, audit_log, data, rules_engine):
+def __extracted_func_2(data, rules_engine, audit_log, _param_0):
     errors = []
     warnings = []
     # Validate required fields
-    required = ['customer_id', 'amount', 'currency']
+    required = ["customer_id", "amount", "currency"]
     for field in required:
         if field not in data or not data[field]:
-            errors.append(f'Missing required field: {field}')
-            audit_log.record('validation_error', field=field)
+            errors.append(f"Missing required field: {field}")
+            audit_log.record("validation_error", field=field)
     # Business rules
     # Business rules (different threshold)
-    if data.get('amount', 0) > __param_0:
+    if data.get("amount", 0) > _param_0:
         if not rules_engine.check_approval(data):
-            errors.append('Amount requires approval')
-            audit_log.record('approval_required', amount=data['amount'])
+            errors.append("Amount requires approval")
+            audit_log.record("approval_required", amount=data["amount"])
     # Warnings
-    if data.get('currency') not in ['USD', 'EUR', 'GBP']:
+    if data.get("currency") not in ["USD", "EUR", "GBP"]:
         warnings.append(f"Unusual currency: {data.get('currency')}")
-    return {'valid': len(errors) == 0, 'errors': errors, 'warnings': warnings}
+
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
 
-def __extracted_func_1(__param_0, __param_1, __param_2, error_handler, items, metrics, processor):
+def __extracted_func_1(items, processor, error_handler, metrics, _param_0, _param_1, _param_2):
     processed = []
     failed = []
     for i, item in enumerate(items):
         try:
             # Process item
-            # Same pattern
             validated = processor.validate(item)
             if not validated:
-                failed.append({'index': i, 'error': 'Validation failed', 'item': item})
-                metrics.increment(__param_0)
+                failed.append({"index": i, "error": "Validation failed", "item": item})
+                metrics.increment(_param_0)
                 continue
+
             result = processor.transform(item)
             processor.enrich(result)
             processed.append(result)
-            metrics.increment(__param_1)
+            metrics.increment(_param_1)
+
         except Exception as e:
-            error_handler.log(e, context={'index': i, 'item': item})
-            failed.append({'index': i, 'error': str(e), 'item': item})
-            metrics.increment(__param_2)
-    return {'processed': processed, 'failed': failed, 'total': len(items)}
+            error_handler.log(e, context={"index": i, "item": item})
+            failed.append({"index": i, "error": str(e), "item": item})
+            metrics.increment(_param_2)
+
+    return {"processed": processed, "failed": failed, "total": len(items)}
 
 
-def __extracted_func_0(__param_0, events, time_window):
+def __extracted_func_0(events, time_window, _param_0):
     buckets = {}
     for event in events:
         # Bucket by time window
         # Same bucketing
-        timestamp = event['timestamp']
-        bucket_key = timestamp // time_window * time_window
+        timestamp = event["timestamp"]
+        bucket_key = (timestamp // time_window) * time_window
+
         if bucket_key not in buckets:
-            buckets[bucket_key] = {'count': 0, 'sum': 0, 'values': []}
+            buckets[bucket_key] = {"count": 0, "sum": 0, "values": []}
         # Aggregate
         # Different multiplier
-        value = event['value'] * __param_0
-        buckets[bucket_key]['count'] += 1
-        buckets[bucket_key]['sum'] += value
-        buckets[bucket_key]['values'].append(value)
+        value = event["value"] * _param_0
+        buckets[bucket_key]["count"] += 1
+        buckets[bucket_key]["sum"] += value
+        buckets[bucket_key]["values"].append(value)
     # Calculate statistics per bucket
-    return {k: {'count': v['count'], 'sum': v['sum'], 'avg': v['sum'] / v['count'] if v['count'] > 0 else 0} for k, v in buckets.items()}
+    return {
+        k: {
+            "count": v["count"],
+            "sum": v["sum"],
+            "avg": v["sum"] / v["count"] if v["count"] > 0 else 0,
+        }
+        for k, v in buckets.items()
+    }
 
 
 def handle_api_request_v1(request, auth, rate_limiter, logger):
     """Version 1: Complete API request handling."""
     # Authentication and rate limiting
-    return __extracted_func_5(100, auth, logger, rate_limiter, request)
+    return __extracted_func_5(request, auth, rate_limiter, logger, 100)
 
 
 def handle_api_request_v2(request, auth, rate_limiter, logger):
     """Version 2: Different rate limit, same handling pattern."""
     # Same pattern, different limit
-    return __extracted_func_5(200, auth, logger, rate_limiter, request)
+    return __extracted_func_5(request, auth, rate_limiter, logger, 200)
 
 
 def etl_pipeline_extract_a(source, config, logger):
     """Version A: ETL extract phase."""
-    return __extracted_func_3(30, config, logger, source)
+    return __extracted_func_3(source, config, logger, 30)
 
 
 def etl_pipeline_extract_b(source, config, logger):
     """Version B: Different timeout, same extraction pattern."""
-    return __extracted_func_3(60, config, logger, source)
+    return __extracted_func_3(source, config, logger, 60)
 
 
 def validate_business_rules_v1(data, rules_engine, audit_log):
     """Version 1: Business rule validation."""
-    return __extracted_func_2(10000, audit_log, data, rules_engine)
+    return __extracted_func_2(data, rules_engine, audit_log, 10000)
 
 
 def validate_business_rules_v2(data, rules_engine, audit_log):
     """Version 2: Different amount threshold, same validation."""
-    return __extracted_func_2(5000, audit_log, data, rules_engine)
+    return __extracted_func_2(data, rules_engine, audit_log, 5000)
 
 
 def process_batch_with_errors_a(items, processor, error_handler, metrics):
     """Version A: Batch processing with error handling."""
-    return __extracted_func_1('validation_failures', 'processed', 'processing_errors', error_handler, items, metrics, processor)
+    return __extracted_func_1(items, processor, error_handler, metrics, "validation_failures", "processed", "processing_errors")
 
 
 def process_batch_with_errors_b(items, processor, error_handler, metrics):
     """Version B: Different metric names, same pattern."""
-    return __extracted_func_1('invalid_items', 'success_count', 'error_count', error_handler, items, metrics, processor)
+    return __extracted_func_1(items, processor, error_handler, metrics, "invalid_items", "success_count", "error_count")
 
 
 def cache_with_fallback_v1(key, cache, database, ttl):
     """Version 1: Cache with database fallback."""
     # Try cache first
-    return __extracted_func_4(3600, cache, database, key)
+    return __extracted_func_4(key, cache, database, 3600)
 
 
 def cache_with_fallback_v2(key, cache, database, ttl):
     """Version 2: Different TTL, same caching pattern."""
     # Same pattern, different TTL
-    return __extracted_func_4(7200, cache, database, key)
+    return __extracted_func_4(key, cache, database, 7200)
 
 
 def aggregate_metrics_a(events, time_window, aggregator):
     """Version A: Time-series aggregation."""
-    return __extracted_func_0(2, events, time_window)
+    return __extracted_func_0(events, time_window, 2)
 
 
 def aggregate_metrics_b(events, time_window, aggregator):
     """Version B: Different multiplier, same aggregation."""
-    return __extracted_func_0(3, events, time_window)
+    return __extracted_func_0(events, time_window, 3)

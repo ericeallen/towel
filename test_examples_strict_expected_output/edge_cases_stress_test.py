@@ -10,53 +10,64 @@ Combines multiple challenging patterns to really stress test the unifier:
 """
 
 
-def __extracted_func_6(e, errors, fallback, i, logger, results):
-    logger.error(f'Unexpected error at index {i}: {e}')
-    errors['other'].append((i, str(e)))
+def __extracted_func_6(logger, fallback, i, e, errors, results):
+    logger.error(f"Unexpected error at index {i}: {e}")
+    errors["other"].append((i, str(e)))
     results.append(fallback.get_generic_default())
 
 
-def __extracted_func_5(e, errors, fallback, i, logger, results):
-    logger.error(f'RuntimeError at index {i}: {e}')
-    errors['runtime'].append((i, str(e)))
+def __extracted_func_5(logger, fallback, i, e, errors, results):
+    logger.error(f"RuntimeError at index {i}: {e}")
+    errors["runtime"].append((i, str(e)))
     results.append(fallback.get_runtime_default())
 
 
-def __extracted_func_4(e, errors, fallback, i, logger, results):
-    logger.error(f'TypeError at index {i}: {e}')
-    errors['type'].append((i, str(e)))
+def __extracted_func_4(logger, fallback, i, e, errors, results):
+    logger.error(f"TypeError at index {i}: {e}")
+    errors["type"].append((i, str(e)))
     results.append(fallback.get_type_default())
 
 
-def __extracted_func_3(e, errors, fallback, i, logger, results):
-    logger.error(f'ValueError at index {i}: {e}')
-    errors['value'].append((i, str(e)))
+def __extracted_func_3(logger, fallback, i, e, errors, results):
+    logger.error(f"ValueError at index {i}: {e}")
+    errors["value"].append((i, str(e)))
     results.append(fallback.get_value_default())
 
 
 def __extracted_func_2(handlers, transformed):
     if transformed > 100:
-        handlers['high'].handle(transformed)
+        handlers["high"].handle(transformed)
     elif transformed > 50:
-        handlers['medium'].handle(transformed)
+        handlers["medium"].handle(transformed)
     else:
-        handlers['low'].handle(transformed)
+        handlers["low"].handle(transformed)
 
 
-def __extracted_func_1(computed, inner_item, logger, metrics, normalized, results, validated):
+def __extracted_func_1(logger, metrics, validated, normalized, results, inner_item, computed):
     if validated:
-        logger.debug(f'Validated: {normalized}')
-        metrics.record('validated', normalized)
-        results.append({'original': inner_item['value'], 'computed': computed, 'normalized': normalized})
+        logger.debug(f"Validated: {normalized}")
+        metrics.record("validated", normalized)
+        results.append(
+            {
+                "original": inner_item["value"],
+                "computed": computed,
+                "normalized": normalized,
+            }
+        )
 
 
-def __extracted_func_0(__param_0, data, filters, mappers, _towel_owner):
-    list_comp = [x * __param_0 for x in data if filters['positive'](x)]
-    dict_comp = {k: v * __param_0 for k, v in enumerate(list_comp) if v > 10}
+def __extracted_func_0(data, filters, mappers, _param_0, _towel_owner):
+    list_comp = [x * _param_0 for x in data if filters["positive"](x)]
+    dict_comp = {k: v * _param_0 for k, v in enumerate(list_comp) if v > 10}
     set_comp = {v for v in dict_comp.values() if v < 1000}
     # Nested comprehension
-    nested = [[mappers['inner'](y) for y in row if y is not None] for row in [list_comp[i:i + 5] for i in range(0, len(list_comp), 5)] if len(row) > 0]
-    return {'list': list_comp, 'dict': dict_comp, 'set': set_comp, 'nested': nested}
+    nested = [
+        [mappers["inner"](y) for y in row if y is not None]
+        for row in [list_comp[i : i + 5] for i in range(0, len(list_comp), 5)]
+        if len(row) > 0
+    ]
+
+    return {"list": list_comp, "dict": dict_comp, "set": set_comp, "nested": nested}
 
 
 def deeply_nested_computation_v1(data, config, cache, logger, metrics):
@@ -77,7 +88,7 @@ def deeply_nested_computation_v1(data, config, cache, logger, metrics):
                             normalized = computed / config["normalizer"]
                             validated = cache.check(normalized)
 
-                            __extracted_func_1(computed, inner_item, logger, metrics, normalized, results, validated)
+                            __extracted_func_1(logger, metrics, validated, normalized, results, inner_item, computed)
 
     return results
 
@@ -100,7 +111,7 @@ def deeply_nested_computation_v2(data, config, cache, logger, metrics):
                             normalized = computed / config["normalizer"]
                             validated = cache.check(normalized)
 
-                            __extracted_func_1(computed, inner_item, logger, metrics, normalized, results, validated)
+                            __extracted_func_1(logger, metrics, validated, normalized, results, inner_item, computed)
 
     return results
 
@@ -166,7 +177,7 @@ def mixed_comprehensions_v1(data, filters, mappers):
     del data
     del filters
     del mappers
-    return __extracted_func_0(2, _towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
+    return __extracted_func_0(_towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments[0][0], 2, _towel_arguments.pop())
 
 
 def mixed_comprehensions_v2(data, filters, mappers):
@@ -176,7 +187,7 @@ def mixed_comprehensions_v2(data, filters, mappers):
     del data
     del filters
     del mappers
-    return __extracted_func_0(3, _towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
+    return __extracted_func_0(_towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments[0][0], 3, _towel_arguments.pop())
 
 
 def exception_heavy_processing_a(items, processor, logger, fallback):
@@ -195,16 +206,16 @@ def exception_heavy_processing_a(items, processor, logger, fallback):
             results.append(normalized)
 
         except ValueError as e:
-            __extracted_func_3(e, errors, fallback, i, logger, results)
+            __extracted_func_3(logger, fallback, i, e, errors, results)
 
         except TypeError as e:
-            __extracted_func_4(e, errors, fallback, i, logger, results)
+            __extracted_func_4(logger, fallback, i, e, errors, results)
 
         except RuntimeError as e:
-            __extracted_func_5(e, errors, fallback, i, logger, results)
+            __extracted_func_5(logger, fallback, i, e, errors, results)
 
         except Exception as e:
-            __extracted_func_6(e, errors, fallback, i, logger, results)
+            __extracted_func_6(logger, fallback, i, e, errors, results)
 
     return {"results": results, "errors": errors}
 
@@ -225,16 +236,16 @@ def exception_heavy_processing_b(items, processor, logger, fallback):
             results.append(normalized)
 
         except ValueError as e:
-            __extracted_func_3(e, errors, fallback, i, logger, results)
+            __extracted_func_3(logger, fallback, i, e, errors, results)
 
         except TypeError as e:
-            __extracted_func_4(e, errors, fallback, i, logger, results)
+            __extracted_func_4(logger, fallback, i, e, errors, results)
 
         except RuntimeError as e:
-            __extracted_func_5(e, errors, fallback, i, logger, results)
+            __extracted_func_5(logger, fallback, i, e, errors, results)
 
         except Exception as e:
-            __extracted_func_6(e, errors, fallback, i, logger, results)
+            __extracted_func_6(logger, fallback, i, e, errors, results)
 
     return {"results": results, "errors": errors}
 

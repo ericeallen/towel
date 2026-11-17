@@ -190,6 +190,9 @@ def test_lint_refusal_does_not_hide_a_useful_neighbor(tmp_path: Path) -> None:
     labels = DUPLICATED_LABELS
     (source / "labels.py").write_text(labels)
     neighbors = 'def first(x):\n    print(x)\n    print("hello")\n\ndef second(y):\n    print(y)\n    print("hello")\n'
+    neighbors = "def identity(function):\n    return function\n\n" + neighbors.replace(
+        "def first(", "@identity\ndef first("
+    ).replace("def second(", "@identity\ndef second(")
     (source / "neighbors.py").write_text(neighbors)
     engine = UnificationRefactorEngine(
         # The minimal neighbor isolates continued processing after a lint

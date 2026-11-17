@@ -719,6 +719,11 @@ def _add_shared_options(sections: _Sections) -> None:
     _add_limit_flags(sections.limits)
     _add_tool_flags(sections.advanced)
     _add_strict_flag(sections.advanced)
+    sections.scope.add_argument(
+        "--complete-scope",
+        action="store_true",
+        help="Declare that the target contains every ordinary consumer (default: infer from project metadata or package ancestry)",
+    )
     _add_parameterize_builtins_flag(sections.advanced)
 
 
@@ -1263,9 +1268,13 @@ def _generated_code_formatter(
             return
         reported.add(choice.note)
         if choice.tool is None:
+            remedy = (
+                "Configure Ruff or Black in the project to format generated code."
+                if choice.note == "no formatter configured"
+                else 'Install the format extra (pip install "code-towel[format]") to format it.'
+            )
             write_note(
-                f"Note: {choice.note}, so generated code is inserted unformatted. "
-                'Install the format extra (pip install "code-towel[format]") to format it.',
+                f"Note: {choice.note}, so generated code is inserted unformatted. {remedy}",
             )
         elif "not installed" in choice.note:
             write_note(
@@ -1338,6 +1347,7 @@ class DryOptions:
     diff: bool = False
     inventory: bool = False
     strict: bool = DEFAULT_STRICT
+    complete_scope: bool = False
     explain: bool = False
     quiet: bool = False
     jobs: Optional[int] = None
@@ -1359,6 +1369,7 @@ class DryOptions:
             progress=normalize_progress(args.progress),
             types=bool(args.types),
             strict=bool(args.strict),
+            complete_scope=bool(args.complete_scope),
             format=bool(args.format),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
@@ -1399,6 +1410,7 @@ class PreviewOptions:
     diff: bool = False
     inventory: bool = False
     strict: bool = DEFAULT_STRICT
+    complete_scope: bool = False
     explain: bool = False
     quiet: bool = False
     jobs: Optional[int] = None
@@ -1417,6 +1429,7 @@ class PreviewOptions:
             max_refactorings=int(args.max_refactorings),
             types=bool(args.types),
             strict=bool(args.strict),
+            complete_scope=bool(args.complete_scope),
             format=bool(args.format),
             quick=bool(args.quick),
             check=bool(getattr(args, "check", False)),
@@ -1448,6 +1461,7 @@ class PreviewOptions:
             progress=self.progress,
             types=self.types,
             strict=self.strict,
+            complete_scope=self.complete_scope,
             format=self.format,
             exclude=self.exclude,
             cross_module=self.cross_module,
@@ -1621,6 +1635,7 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
             min_lines=options.min_lines,
             parameterize_builtins=options.parameterize_builtins,
             strict=options.strict,
+            complete_scope=options.complete_scope,
             max_candidate_pairs=options.max_pairs,
             settings=_execution_settings(options.jobs),
             include_ignored=options.include_ignored,
@@ -2531,6 +2546,7 @@ def _run_quick_preview_with_policy(options: PreviewOptions) -> None:
         min_lines=options.min_lines,
         parameterize_builtins=options.parameterize_builtins,
         strict=options.strict,
+        complete_scope=options.complete_scope,
         max_candidate_pairs=options.max_pairs,
         settings=_execution_settings(options.jobs),
         include_ignored=options.include_ignored,
@@ -2554,7 +2570,11 @@ def _run_quick_preview_with_policy(options: PreviewOptions) -> None:
             )
 
         print(f"Analyzing file: {target}")
-        all_proposals = engine.analyze_files([target], progress=options.progress)
+        from towel.project_layout import find_project_root
+
+        all_proposals = engine.analyze_files(
+            [target], progress=options.progress, program_root=find_project_root(Path(target))
+        )
     else:
         print(f"Analyzing directory: {target}")
         all_proposals = engine.analyze_directory(target, recursive=True, progress=options.progress)

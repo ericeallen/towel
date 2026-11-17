@@ -326,7 +326,8 @@ def test_ordered_cli_arguments_preserve_complete_observations(
             assert len(store_helpers) == 1
             helper = store_helpers[0]
             assert not _thunks(helper)
-            assert [argument.arg for argument in helper.args.posonlyargs[:2]] == [
+            assert [argument.arg for argument in helper.args.posonlyargs] == [
+                "d",
                 "__param_1",
                 "__param_0",
             ]
@@ -339,7 +340,7 @@ def test_ordered_cli_arguments_preserve_complete_observations(
             ]
             assert len(calls) == len(case.statements)
             assert all(
-                not isinstance(argument, ast.Lambda) for call in calls for argument in call.args[:2]
+                not isinstance(argument, ast.Lambda) for call in calls for argument in call.args
             )
         if case.name == "unsafe_cluster":
             optimized = [helper for helper in store_helpers if not _thunks(helper)]

@@ -361,7 +361,7 @@ def test_an_unannotated_test_the_projects_mypy_never_checks_does_not_refuse_the_
     written = (tmp_path / "pkg" / "core.py").read_text(encoding="utf-8")
     if argument_ownership._supported_runtime():
         assert (
-            "def __extracted_func_0(delta: int, values: 'list[int]', _towel_owner: 'object') -> int:"
+            "def __extracted_func_0(values: 'list[int]', delta: int, _towel_owner: 'object') -> int:"
             in written
         ), written
     else:
@@ -387,7 +387,7 @@ def test_an_error_the_projects_mypy_reports_in_the_package_is_left_as_it_was(
     written = (tmp_path / "pkg" / "core.py").read_text(encoding="utf-8")
     if argument_ownership._supported_runtime():
         assert (
-            "def __extracted_func_0(delta: int, values: 'list[int]', _towel_owner: 'object') -> int:"
+            "def __extracted_func_0(values: 'list[int]', delta: int, _towel_owner: 'object') -> int:"
             in written
         ), written
     else:

@@ -5,7 +5,7 @@ Tests: Same-file duplicate detection with loops and complex logic.
 """
 
 
-def __extracted_func_0(key, result, value):
+def __extracted_func_0(value, result, key):
     if isinstance(value, str):
         result[key] = value.strip().lower()
     elif isinstance(value, (int, float)):
@@ -21,7 +21,7 @@ def process_json_data(data):
     # Data processing logic
     result = {}
     for key, value in data.items():
-        __extracted_func_0(key, result, value)
+        __extracted_func_0(value, result, key)
 
     return result
 
@@ -31,7 +31,7 @@ def process_xml_data(data):
     # Data processing logic (DUPLICATE!)
     result = {}
     for key, value in data.items():
-        __extracted_func_0(key, result, value)
+        __extracted_func_0(value, result, key)
 
     return result
 
@@ -41,6 +41,6 @@ def process_csv_data(data):
     # Data processing logic (DUPLICATE!)
     result = {}
     for key, value in data.items():
-        __extracted_func_0(key, result, value)
+        __extracted_func_0(value, result, key)
 
     return result

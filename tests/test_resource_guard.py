@@ -268,8 +268,8 @@ def _refactored(tmp_path: Path, source: str, *, strict: bool = False) -> Tuple[s
 def test_a_temporary_directory_outlives_the_helper_that_made_it(tmp_path: Path) -> None:
     """The caller binds ``tmp`` under its own name, so the directory is there when it is listed."""
     generated, original, changed = _refactored(tmp_path, REPORTS)
-    assert "tmp, path, size = __extracted_func_0('report.txt', rows)" in generated
-    assert "tmp, path, size = __extracted_func_0('summary.txt', rows)" in generated
+    assert 'tmp, path, size = __extracted_func_0(rows, "report.txt")' in generated
+    assert 'tmp, path, size = __extracted_func_0(rows, "summary.txt")' in generated
     assert "return (tmp, path, size)" in generated
     assert "_towel_" not in generated
     assert _run(changed) == _run(original)
@@ -282,7 +282,7 @@ def test_without_the_guard_the_directory_would_be_gone(
     """The control: with the list emptied, the same run deletes the directory under its caller."""
     monkeypatch.setattr("towel.unification.resource_guard.RESOURCE_CONSTRUCTORS", frozenset[str]())
     generated, original, changed = _refactored(tmp_path, REPORTS)
-    assert "path, size = __extracted_func_0('report.txt', rows)" in generated
+    assert 'path, size = __extracted_func_0(rows, "report.txt")' in generated
     assert "tmp" not in generated.split("def write_report")[1].split("def write_summary")[0]
     status, output = _run(changed)
     assert status != 0 and (status, output) != _run(original)
@@ -328,7 +328,7 @@ if __name__ == "__main__":
 def test_a_weak_reference_still_finds_its_referent_after_the_block(tmp_path: Path) -> None:
     """The caller keeps ``target``, which nothing reads again, so ``watcher()`` answers as before."""
     generated, original, changed = _refactored(tmp_path, WATCHED)
-    assert "target, watcher, label = __extracted_func_0('first')" in generated
+    assert 'target, watcher, label = __extracted_func_0("first")' in generated
     assert _run(changed) == _run(original)
     assert _run(original) == (0, "first True\nsecond True\nTrue True\n")
 
@@ -341,7 +341,7 @@ def test_without_the_guard_the_reference_would_be_dead(
         "towel.unification.resource_guard.WEAK_REFERENCE_CONSTRUCTORS", frozenset[str]()
     )
     generated, original, changed = _refactored(tmp_path, WATCHED)
-    assert "watcher, label = __extracted_func_0('first')" in generated
+    assert 'watcher, label = __extracted_func_0("first")' in generated
     assert _run(changed) == (0, "first False\nsecond False\nFalse False\n")
 
 
@@ -374,7 +374,7 @@ if __name__ == "__main__":
 def test_a_block_that_ends_its_function_returns_no_resource(tmp_path: Path) -> None:
     """Nothing runs between the helper's return and the function's: the directory lives as long."""
     generated, original, changed = _refactored(tmp_path, WHOLE_BODY)
-    assert "    return __extracted_func_0('first.txt', rows)\n" in generated
+    assert '    return __extracted_func_0(rows, "first.txt")\n' in generated
     assert "tmp" not in generated.split("def first")[1]
     assert _run(changed) == _run(original)
 

@@ -6,17 +6,21 @@ lists, dicts, comprehensions, and deeply nested expressions.
 """
 
 
-def __extracted_func_1(category, output, value):
-    output['data'].append({'cat': category, 'val': value})
-    output['meta']['total'] += value
-    if category not in output['meta']['categories']:
-        output['meta']['categories'][category] = 0
-    output['meta']['categories'][category] += 1
+def __extracted_func_1(output, category, value):
+    output["data"].append({"cat": category, "val": value})
+    output["meta"]["total"] += value
+    if category not in output["meta"]["categories"]:
+        output["meta"]["categories"][category] = 0
+    output["meta"]["categories"][category] += 1
 
 
-def __extracted_func_0(__param_0, __param_1, __param_2, dict1, dict2, key, merger, result):
+def __extracted_func_0(dict1, dict2, merger, key, result, _param_0, _param_2, _param_1):
     if key in dict2:
-        result[key] = {__param_0: dict1[key][__param_2], __param_1: dict2[key][__param_2], 'merged': merger(dict1[key][__param_2], dict2[key][__param_2])}
+        result[key] = {
+            _param_0: dict1[key][_param_2],
+            _param_1: dict2[key][_param_2],
+            "merged": merger(dict1[key][_param_2], dict2[key][_param_2]),
+        }
     else:
         result[key] = dict1[key]
 
@@ -71,7 +75,7 @@ def build_complex_structure_v1(items, metadata):
         # Builds nested structure
         category = item["category"]
         value = item["value"] * 2
-        __extracted_func_1(category, output, value)
+        __extracted_func_1(output, category, value)
 
     return output
 
@@ -84,7 +88,7 @@ def build_complex_structure_v2(items, metadata):
         # Same structure, different multiplier
         category = item["category"]
         value = item["value"] * 3
-        __extracted_func_1(category, output, value)
+        __extracted_func_1(output, category, value)
 
     return output
 
@@ -119,7 +123,7 @@ def merge_nested_dicts_v1(dict1, dict2, merger):
 
     for key in dict1.keys():
         # Complex nested merge
-        __extracted_func_0('a', 'b', 'values', dict1, dict2, key, merger, result)
+        __extracted_func_0(dict1, dict2, merger, key, result, "a", "values", "b")
 
     return result
 
@@ -130,7 +134,7 @@ def merge_nested_dicts_v2(dict1, dict2, merger):
 
     for key in dict1.keys():
         # Same pattern, different keys
-        __extracted_func_0('first', 'second', 'data', dict1, dict2, key, merger, result)
+        __extracted_func_0(dict1, dict2, merger, key, result, "first", "data", "second")
 
     return result
 

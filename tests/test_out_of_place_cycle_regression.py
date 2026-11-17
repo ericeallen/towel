@@ -184,13 +184,11 @@ class TestOutOfPlaceCycleRegression(unittest.TestCase):
         self.assertEqual(expected, "[4, 4, 4, 4]\n")
         a_source = (self.pkg / "a.py").read_text(encoding="utf-8")
         b_source = (self.pkg / "b.py").read_text(encoding="utf-8")
-        # The cross-file duplicate is still deduplicated (not declined): the
-        # helper both modules share lives in ``b``, which ``a`` already
-        # imports, so no back-edge is introduced, and no function is made to
-        # call another existing one.
-        self.assertRegex(a_source, r"from (?:app\.|\.)b import __extracted_func_\d+")
-        self.assertNotIn("b1(", a_source)
-        self.assertIn("def __extracted_func", b_source)
+        # The cross-file duplicate redirects to the existing b1 in ``b``,
+        # which ``a`` already imports, so sharing introduces no back-edge.
+        self.assertRegex(a_source, r"from (?:app\.|\.)b import b1")
+        self.assertIn("return b1(seq, factor)", a_source)
+        self.assertIn("def b1(seq, factor):\n" + shared.rstrip(), b_source)
         self.assertNotRegex(b_source, r"from (?:app\.|\.)a import")
 
     def test_shared_helper_preserves_results_after_adoption(self) -> None:

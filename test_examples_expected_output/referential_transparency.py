@@ -6,7 +6,7 @@ and don't accidentally capture or modify variables incorrectly.
 """
 
 
-def __extracted_func_5(accumulator, multiplier, value):
+def __extracted_func_5(value, multiplier, accumulator):
     processed = value * multiplier
     validated = processed > 0
     if validated:
@@ -14,14 +14,15 @@ def __extracted_func_5(accumulator, multiplier, value):
     return processed
 
 
-def __extracted_func_4(__param_0, counter, items):
+def __extracted_func_4(items, counter, _param_0):
     for item in items:
         # This block modifies mutable state
         # Same pattern of mutation
-        counter['total'] += __param_0(item)
-        counter['processed'] += 1
-        result = counter['total'] / counter['processed']
-        print(f'Current average: {result}')
+        counter["total"] += _param_0(item)
+        counter["processed"] += 1
+        result = counter["total"] / counter["processed"]
+        print(f"Current average: {result}")
+
     return counter
 
 
@@ -35,68 +36,73 @@ def __extracted_func_3(data, outer_var, processor):
         processor.add(step3)
 
 
-def __extracted_func_2(__param_0, cache, data, metrics):
+def __extracted_func_2(data, cache, metrics, _param_0):
     for key, value in data.items():
         # Modifies both cache and metrics
         # Same pattern, different multiplier
-        processed = value * __param_0
+        processed = value * _param_0
         cache[key] = processed
-        metrics['count'] += 1
-        metrics['total'] += processed
+        metrics["count"] += 1
+        metrics["total"] += processed
         if processed > 100:
-            metrics['high_value'] += 1
-    return (cache, metrics)
+            metrics["high_value"] += 1
+
+    return cache, metrics
 
 
-def __extracted_func_1(__param_0, data, logger):
+def __extracted_func_1(data, logger, _param_0):
     total = 0
     for value in data:
         # Block with side effects
         # Different normalization, same structure
-        normalized = __param_0(value)
+        normalized = _param_0(value)
         total += len(normalized)
-        logger.info(f'Processed: {normalized}')
-        logger.debug(f'Total so far: {total}')
+        logger.info(f"Processed: {normalized}")
+        logger.debug(f"Total so far: {total}")
+
     return total
 
 
-def __extracted_func_0(__param_0, data, validator):
+def __extracted_func_0(data, validator, _param_0):
     for item in data:
         # Block with early returns
         # Same structure, different processing
         cleaned = item.strip()
         if not cleaned:
             return None
+
         validated = validator.check(cleaned)
         if not validated:
             return None
-        processed = __param_0(cleaned)
+
+        processed = _param_0(cleaned)
         return processed
-    return 'default'
+
+    return "default"
 
 
 def update_mutable_state_v1(items, counter):
     """Version 1: Modifies mutable state within block."""
     counter = {"total": 0, "processed": 0}
 
-    return __extracted_func_4(lambda item: item, counter, items)
+    return __extracted_func_4(items, counter, lambda item: item)
 
 
 def update_mutable_state_v2(items, counter):
     """Version 2: Same mutable modifications, different initialization."""
     counter = {"total": 0, "processed": 0}
 
-    return __extracted_func_4(lambda item: item * 2, counter, items)
+    return __extracted_func_4(items, counter, lambda item: item * 2)
 
 
 def process_with_side_effects_a(data, logger):
     """Version A: Side effects in duplicate block."""
-    return __extracted_func_1(lambda value: value.strip().lower(), data, logger)
+    return __extracted_func_1(data, logger, lambda value: value.strip().lower())
 
 
 def process_with_side_effects_b(data, logger):
     """Version B: Different normalization, same logging pattern."""
-    return __extracted_func_1(lambda value: value.strip().upper(), data, logger)
+    return __extracted_func_1(data, logger, lambda value: value.strip().upper())
 
 
 def accumulate_with_closure_v1(items, accumulator):
@@ -105,7 +111,7 @@ def accumulate_with_closure_v1(items, accumulator):
 
     def add_processed(value, multiplier):
         # Closure captures 'accumulator'
-        return __extracted_func_5(accumulator, multiplier, value)
+        return __extracted_func_5(value, multiplier, accumulator)
 
     results = [add_processed(item, 2) for item in items]
     return accumulator, results
@@ -117,7 +123,7 @@ def accumulate_with_closure_v2(items, accumulator):
 
     def add_processed(value, multiplier):
         # Same closure pattern
-        return __extracted_func_5(accumulator, multiplier, value)
+        return __extracted_func_5(value, multiplier, accumulator)
 
     results = [add_processed(item, 3) for item in items]
     return accumulator, results
@@ -125,12 +131,12 @@ def accumulate_with_closure_v2(items, accumulator):
 
 def transform_with_early_return_a(data, validator):
     """Version A: Early returns in duplicate block."""
-    return __extracted_func_0(lambda cleaned: cleaned.upper(), data, validator)
+    return __extracted_func_0(data, validator, lambda cleaned: cleaned.upper())
 
 
 def transform_with_early_return_b(data, validator):
     """Version B: Same early return pattern, different processing."""
-    return __extracted_func_0(lambda cleaned: cleaned.lower(), data, validator)
+    return __extracted_func_0(data, validator, lambda cleaned: cleaned.lower())
 
 
 def nested_scope_capture_v1(outer_data, processor):
@@ -219,9 +225,9 @@ def nested_scope_capture_valid_v2(outer_data, processor):
 
 def modify_external_state_a(data, cache, metrics):
     """Version A: Modifies multiple external objects."""
-    return __extracted_func_2(2, cache, data, metrics)
+    return __extracted_func_2(data, cache, metrics, 2)
 
 
 def modify_external_state_b(data, cache, metrics):
     """Version B: Different multiplier, same modification pattern."""
-    return __extracted_func_2(3, cache, data, metrics)
+    return __extracted_func_2(data, cache, metrics, 3)

@@ -465,6 +465,7 @@ class HelperTemplate:
     # What the template block's function declares ``global`` and ``nonlocal``:
     # an occurrence may join only where its function declares alike.
     declared: Tuple[FrozenSet[str], FrozenSet[str]] = (frozenset(), frozenset())
+    source_parameters: Tuple[str, ...] = ()
 
 
 EXPRESSION_COUNT_PREFIX = "expression "
@@ -538,6 +539,11 @@ class SkippedFile:
 
     path: str
     reason: str
+
+    @property
+    def omitted_on_purpose(self) -> bool:
+        """Left out by policy (a Git ignore or an excluded directory), not unavailable."""
+        return self.reason.startswith("Git ignores it") or "excluded from analysis" in self.reason
 
 
 @dataclass(frozen=True)
@@ -626,3 +632,5 @@ class PairVerdict:
     counted: Optional[str]
     before_identity: Tuple[str, ...] = ()
     after_identity: Tuple[str, ...] = ()
+    rebindings: Tuple[str, ...] = ()
+    """Redirect warnings, emitted and deduplicated only by the settling parent."""

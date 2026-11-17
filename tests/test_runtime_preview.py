@@ -28,8 +28,9 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
 @pytest.mark.parametrize("directory", [False, True])
+@pytest.mark.parametrize("strict", [False, True])
 def test_timeout_preview_shows_unconfirmed_applied_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory: bool, strict: bool
 ) -> None:
     """R4: a deadline after one application has a partial diff, never a complete diff."""
     project = tmp_path / "project"
@@ -41,14 +42,24 @@ def test_timeout_preview_shows_unconfirmed_applied_changes(
         raise BudgetExpired()
 
     monkeypatch.setattr(UnificationRefactorEngine, "_follow_the_written_change", expire)
-    flags = ["--no-types", "--no-format", "--progress", "none", "--json"]
+    flags = [
+        "--strict" if strict else "--no-strict",
+        "--no-types",
+        "--no-format",
+        "--progress",
+        "none",
+        "--json",
+    ]
     preview = invoke(["preview", str(target), *flags])
     assert preview.status == 124, preview
     result = json.loads(preview.stdout)
     assert result["status"] == "incomplete" and result["termination"] == "time_limit"
     assert result["applied"] == 1
     assert result["diff"] == ""
-    assert "__extracted_func_" in result["partial_diff"]
+    # This unanchored input has no complete scope: only relaxed mode reuses f1.
+    target_call = "__extracted_func_0()" if strict else "f1()"
+    assert f"+    return {target_call}\n" in result["partial_diff"]
+    assert "-    x = 1\n-    y = x + 2\n-    return y\n" in result["partial_diff"]
     assert result["finally_confirmed"] is False
     assert (project / "sample.py").read_bytes() == before
     output = tmp_path / ("out" if directory else "out.py")

@@ -582,11 +582,15 @@ def test_the_callable_a_signature_writes_is_imported_end_to_end(tmp_path: Path) 
         for node in ast.parse(changed).body
     )
     assert not helper.decorator_list
-    assert [parameter.arg for parameter in helper.args.posonlyargs] == ["__param_0"]
-    assert [parameter.arg for parameter in helper.args.args] == ["found", "group"]
-    assert [_annotation(parameter.annotation) for parameter in helper.args.args] == [
-        "list[_TowelT0]",
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == [
+        "group",
+        "found",
+        "__param_0",
+    ]
+    assert helper.args.args == []
+    assert [_annotation(parameter.annotation) for parameter in helper.args.posonlyargs[:2]] == [
         "str",
+        "list[_TowelT0]",
     ]
     calls = [
         node
@@ -596,8 +600,8 @@ def test_the_callable_a_signature_writes_is_imported_end_to_end(tmp_path: Path) 
         and node.func.id == helper.name
     ]
     assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
-        ("lambda: self._versions", "found", "group"),
-        ("lambda: self._names", "found", "group"),
+        ("group", "found", "lambda: self._versions"),
+        ("group", "found", "lambda: self._names"),
     ]
     assert all(
         isinstance(call.func, ast.Name)
@@ -831,7 +835,10 @@ def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
     the generic one are unrelated; read as ``type[Row]``, one variable relates
     the class to the list it fills. Before, only ``Any`` got this through.
     """
-    assert _class_and_list_helper_annotations(tmp_path)[:2] == [
+    # Shape orders the helper's inputs as the first site reads them: the
+    # child, then the class, then the list.
+    assert _class_and_list_helper_annotations(tmp_path) == [
+        "Element",
         "_typing.Callable[[], type[_TowelT0]]",
         "_typing.Callable[[], list[_TowelT0]]",
     ]

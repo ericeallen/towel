@@ -234,3 +234,39 @@ def test_broken_pool_falls_back_to_the_serial_result_with_a_warning(
     assert [p.description for p in recovered] == [p.description for p in serial]
     assert _rendered(parallel_engine, path, recovered) == serial_rendered
     assert parallel._worker_engine is None and parallel._worker_pairs is None
+
+
+def test_rebinding_warnings_are_deduplicated_in_parent_across_workers_and_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Shape review: fork-local warning sets must not repeat the same user diagnostic."""
+    import logging
+
+    path = tmp_path / "mod.py"
+    path.write_text(
+        "\n".join(
+            shape.format(name=f"f{group}_{index}", index=1)
+            for group, shape in enumerate(SHAPES)
+            for index in range(8)
+        )
+    )
+    (tmp_path / "client.py").write_text("import mod; mod.f1_0 = lambda: 0\n")
+    _lower_thresholds(monkeypatch)
+    constructions = _recording_executor(monkeypatch)
+    log = tmp_path / "warnings.log"
+    handler = logging.FileHandler(log)
+    logger = logging.getLogger("towel")
+    logger.addHandler(handler)
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=3, strict=False, complete_scope=True, settings=_settings(2)
+        )
+        for _ in range(2):
+            assert engine.analyze_file(str(path))
+        handler.flush()
+        warnings = [line for line in log.read_text().splitlines() if "Cannot redirect" in line]
+        assert constructions, "the regression must exercise a real forked pool"
+        assert len(warnings) == 1, warnings
+    finally:
+        logger.removeHandler(handler)
+        handler.close()

@@ -208,6 +208,30 @@ def _is_python_source(path: Path) -> bool:
     )
 
 
+def _is_source_consumer(path: Path) -> bool:
+    """Read-only analysis also sees scripts and unresolved source links.
+
+    Links are returned as uncertainty, never followed. Their caller must
+    decline a proof that depends on having inspected them.
+    """
+    if is_probe_file(path):
+        return False
+    if not path.is_symlink() and not path.is_file():
+        return False
+    if path.suffix in (".py", ".pyw"):
+        return True
+    if path.suffix:
+        return False
+    if path.is_symlink():
+        return True
+    try:
+        with path.open("rb") as stream:
+            header = stream.readline(256)
+    except OSError:
+        return True
+    return header.startswith(b"#!") and b"python" in header.lower()
+
+
 def python_sources(
     directory: Path,
     *,
@@ -216,11 +240,16 @@ def python_sources(
     include_ignored: Optional[bool] = None,
     analysis: bool = True,
     skipped: Optional[Callable[[Path, str], None]] = None,
+    include_consumers: bool = False,
 ) -> list[Path]:
     """Sorted regular sources, excluding build products, Git ignores and environments.
 
     ``analysis=False`` retains the original consumer inventory for renames:
     Git ignores and build products remain visible.
+
+    ``include_consumers`` is for read-only proofs: also return Python shebang
+    scripts, .pyw files and unresolved source links (including directory links).
+    Those links must be treated as unknown consumers, never followed or edited.
 
     Hidden directories and ``TOOL_DIRECTORIES`` are skipped by name, an
     environment by what it holds (:func:`is_environment`), whatever its name.
@@ -235,12 +264,13 @@ def python_sources(
     A missing explicit root has no sources; errors encountered within an
     existing root still fail the inventory.
     """
+    is_source = _is_source_consumer if include_consumers else _is_python_source
     try:
         directory.stat()
     except FileNotFoundError:
         return []
     if directory.is_file():
-        return [directory] if _is_python_source(directory) else []
+        return [directory] if is_source(directory) else []
     policy = _SOURCE_POLICY.get()
     retain_ignored = (
         include_ignored
@@ -262,6 +292,15 @@ def python_sources(
                 if name in ignored or (analysis and name.endswith(".egg-info")):
                     for omitted in _omitted_sources(root / name):
                         skipped(omitted, "its directory is excluded from analysis")
+        if include_consumers and recursive:
+            found.extend(
+                root / name
+                for name in directories
+                if not name.startswith(".")
+                and name not in ignored
+                and (root / name).is_symlink()
+                and not is_environment(root / name)
+            )
         directories[:] = sorted(
             name
             for name in directories
@@ -274,7 +313,7 @@ def python_sources(
         )
         for name in filenames:
             path = root / name
-            if name not in ignored and _is_python_source(path):
+            if name not in ignored and is_source(path):
                 found.append(path)
     git_ignored = frozenset() if retain_ignored else ignored_by_git(directory, found)
     if skipped is not None:

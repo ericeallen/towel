@@ -6,33 +6,33 @@ data validation, ETL pipelines, error handling, and logging.
 """
 
 
-def __extracted_func_7(bucket_key, buckets, value):
-    buckets[bucket_key]['count'] += 1
-    buckets[bucket_key]['sum'] += value
-    buckets[bucket_key]['values'].append(value)
+def __extracted_func_7(buckets, bucket_key, value):
+    buckets[bucket_key]["count"] += 1
+    buckets[bucket_key]["sum"] += value
+    buckets[bucket_key]["values"].append(value)
 
 
-def __extracted_func_6(__param_0, e, error_handler, failed, i, item, metrics):
-    error_handler.log(e, context={'index': i, 'item': item})
-    failed.append({'index': i, 'error': str(e), 'item': item})
-    metrics.increment(__param_0)
+def __extracted_func_6(error_handler, metrics, e, i, item, failed, _param_0):
+    error_handler.log(e, context={"index": i, "item": item})
+    failed.append({"index": i, "error": str(e), "item": item})
+    metrics.increment(_param_0)
 
 
-def __extracted_func_5(audit_log, data, errors, field):
+def __extracted_func_5(data, audit_log, field, errors):
     if field not in data or not data[field]:
-        errors.append(f'Missing required field: {field}')
-        audit_log.record('validation_error', field=field)
+        errors.append(f"Missing required field: {field}")
+        audit_log.record("validation_error", field=field)
 
 
-def __extracted_func_4(e, logger, max_retries, retry_count):
-    logger.warn(f'Extract failed (attempt {retry_count}): {e}')
+def __extracted_func_4(logger, retry_count, e, max_retries):
+    logger.warn(f"Extract failed (attempt {retry_count}): {e}")
     if retry_count >= max_retries:
-        logger.error('Extract phase failed')
+        logger.error("Extract phase failed")
         raise
 
 
 def __extracted_func_3(logger):
-    logger.info('Starting extract phase')
+    logger.info("Starting extract phase")
     # Extract with retry logic
     # Same retry logic, different timeout
     max_retries = 3
@@ -41,27 +41,36 @@ def __extracted_func_3(logger):
     return (data, max_retries, retry_count)
 
 
-def __extracted_func_2(logger, request, validated):
+def __extracted_func_2(request, logger, validated):
     if not validated:
-        logger.error('Invalid payload')
-        return ({'error': 'Bad request'}, 400)
-    logger.info(f'Processing request for user {request.user_id}')
-    return ({'status': 'success'}, 200)
+        logger.error("Invalid payload")
+        return {"error": "Bad request"}, 400
+
+    logger.info(f"Processing request for user {request.user_id}")
+    return {"status": "success"}, 200
 
 
 def __extracted_func_1(buckets):
-    return {k: {'count': v['count'], 'sum': v['sum'], 'avg': v['sum'] / v['count'] if v['count'] > 0 else 0} for k, v in buckets.items()}
+    return {
+        k: {
+            "count": v["count"],
+            "sum": v["sum"],
+            "avg": v["sum"] / v["count"] if v["count"] > 0 else 0,
+        }
+        for k, v in buckets.items()
+    }
 
 
-def __extracted_func_0(__param_0, audit_log, data, errors, rules_engine, warnings):
-    if data.get('amount', 0) > __param_0:
+def __extracted_func_0(data, rules_engine, audit_log, _param_0, errors, warnings):
+    if data.get("amount", 0) > _param_0:
         if not rules_engine.check_approval(data):
-            errors.append('Amount requires approval')
-            audit_log.record('approval_required', amount=data['amount'])
+            errors.append("Amount requires approval")
+            audit_log.record("approval_required", amount=data["amount"])
     # Warnings
-    if data.get('currency') not in ['USD', 'EUR', 'GBP']:
+    if data.get("currency") not in ["USD", "EUR", "GBP"]:
         warnings.append(f"Unusual currency: {data.get('currency')}")
-    return {'valid': len(errors) == 0, 'errors': errors, 'warnings': warnings}
+
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
 
 def handle_api_request_v1(request, auth, rate_limiter, logger):
@@ -79,7 +88,7 @@ def handle_api_request_v1(request, auth, rate_limiter, logger):
     data = request.json()
     validated = auth.validate_payload(data)
 
-    return __extracted_func_2(logger, request, validated)
+    return __extracted_func_2(request, logger, validated)
 
 
 def handle_api_request_v2(request, auth, rate_limiter, logger):
@@ -97,7 +106,7 @@ def handle_api_request_v2(request, auth, rate_limiter, logger):
     data = request.json()
     validated = auth.validate_payload(data)
 
-    return __extracted_func_2(logger, request, validated)
+    return __extracted_func_2(request, logger, validated)
 
 
 def etl_pipeline_extract_a(source, config, logger):
@@ -111,7 +120,7 @@ def etl_pipeline_extract_a(source, config, logger):
             break
         except Exception as e:
             retry_count += 1
-            __extracted_func_4(e, logger, max_retries, retry_count)
+            __extracted_func_4(logger, retry_count, e, max_retries)
 
     return data
 
@@ -127,7 +136,7 @@ def etl_pipeline_extract_b(source, config, logger):
             break
         except Exception as e:
             retry_count += 1
-            __extracted_func_4(e, logger, max_retries, retry_count)
+            __extracted_func_4(logger, retry_count, e, max_retries)
 
     return data
 
@@ -140,10 +149,10 @@ def validate_business_rules_v1(data, rules_engine, audit_log):
     # Validate required fields
     required = ["customer_id", "amount", "currency"]
     for field in required:
-        __extracted_func_5(audit_log, data, errors, field)
+        __extracted_func_5(data, audit_log, field, errors)
 
     # Business rules
-    return __extracted_func_0(10000, audit_log, data, errors, rules_engine, warnings)
+    return __extracted_func_0(data, rules_engine, audit_log, 10000, errors, warnings)
 
 
 def validate_business_rules_v2(data, rules_engine, audit_log):
@@ -154,10 +163,10 @@ def validate_business_rules_v2(data, rules_engine, audit_log):
     # Validate required fields
     required = ["customer_id", "amount", "currency"]
     for field in required:
-        __extracted_func_5(audit_log, data, errors, field)
+        __extracted_func_5(data, audit_log, field, errors)
 
     # Business rules (different threshold)
-    return __extracted_func_0(5000, audit_log, data, errors, rules_engine, warnings)
+    return __extracted_func_0(data, rules_engine, audit_log, 5000, errors, warnings)
 
 
 def process_batch_with_errors_a(items, processor, error_handler, metrics):
@@ -180,7 +189,7 @@ def process_batch_with_errors_a(items, processor, error_handler, metrics):
             metrics.increment("processed")
 
         except Exception as e:
-            __extracted_func_6('processing_errors', e, error_handler, failed, i, item, metrics)
+            __extracted_func_6(error_handler, metrics, e, i, item, failed, "processing_errors")
 
     return {"processed": processed, "failed": failed, "total": len(items)}
 
@@ -205,7 +214,7 @@ def process_batch_with_errors_b(items, processor, error_handler, metrics):
             metrics.increment("success_count")
 
         except Exception as e:
-            __extracted_func_6('error_count', e, error_handler, failed, i, item, metrics)
+            __extracted_func_6(error_handler, metrics, e, i, item, failed, "error_count")
 
     return {"processed": processed, "failed": failed, "total": len(items)}
 
@@ -274,7 +283,7 @@ def aggregate_metrics_a(events, time_window, aggregator):
 
         # Aggregate
         value = event["value"] * 2
-        __extracted_func_7(bucket_key, buckets, value)
+        __extracted_func_7(buckets, bucket_key, value)
 
     # Calculate statistics per bucket
     return __extracted_func_1(buckets)
@@ -294,7 +303,7 @@ def aggregate_metrics_b(events, time_window, aggregator):
 
         # Different multiplier
         value = event["value"] * 3
-        __extracted_func_7(bucket_key, buckets, value)
+        __extracted_func_7(buckets, bucket_key, value)
 
     # Calculate statistics per bucket
     return __extracted_func_1(buckets)

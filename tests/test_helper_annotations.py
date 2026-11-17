@@ -46,12 +46,11 @@ YES, NO, UNKNOWN = Subtyping.YES, Subtyping.NO, Subtyping.UNKNOWN
 
 
 def _refactor(tmp_path: Path, code: str, **engine_options: Unpack[EngineOptions]) -> str:
-    """Extract from ``code``; reuse is off so a helper is always produced."""
+    """Extract from ``code``; fixtures requiring a fresh helper exclude redirects."""
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "m"\nrequires-python = ">=3.10"\n')
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent(code))
     options: EngineOptions = {
-        "reuse_existing_functions": False,
         "skip_trivial_helpers": False,
         **engine_options,
     }
@@ -90,7 +89,7 @@ def test_parameters_and_none_return_come_from_agreeing_sites(tmp_path: Path) -> 
         def second(value: int, prefix: str) -> None:{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value: int) -> None:"
+    assert _signature(result) == "def __extracted_func_0(value: int, prefix: str) -> None:"
     exec(compile(result, "<annotated>", "exec"), {})
 
 
@@ -107,7 +106,7 @@ def test_disagreeing_sites_join_into_a_union(tmp_path: Path) -> None:
         """,
     )
     assert (
-        _signature(result) == "def __extracted_func_0(prefix: str, value: 'int | float') -> None:"
+        _signature(result) == "def __extracted_func_0(value: 'int | float', prefix: str) -> None:"
     )
 
 
@@ -119,7 +118,7 @@ def test_unrelated_sites_join_into_a_union(tmp_path: Path) -> None:
         def second(value: str, prefix: str) -> None:{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value: 'int | str') -> None:"
+    assert _signature(result) == "def __extracted_func_0(value: 'int | str', prefix: str) -> None:"
 
 
 def test_a_none_site_makes_the_parameter_optional(tmp_path: Path) -> None:
@@ -206,7 +205,7 @@ def test_rebound_parameter_is_not_trusted(tmp_path: Path) -> None:
     )
     # A rebound parameter is not trusted; once the helper is annotated at
     # all, the bare parameter becomes ``Any`` so the signature is complete.
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value: _typing.Any) -> None:"
+    assert _signature(result) == "def __extracted_func_0(value: _typing.Any, prefix: str) -> None:"
 
 
 def test_literals_take_their_builtin_type_and_bool_is_not_int(tmp_path: Path) -> None:
@@ -233,13 +232,14 @@ def test_literals_take_their_builtin_type_and_bool_is_not_int(tmp_path: Path) ->
         helper.args.defaults,
     ) == (None, None, [], [])
     assert [parameter.arg for parameter in helper.args.posonlyargs] == [
+        "items",
         "__param_0",
         "__param_1",
     ]
-    assert [parameter.arg for parameter in helper.args.args] == ["items"]
+    assert helper.args.args == []
     assert [
         ast.unparse(parameter.annotation) for parameter in parameters if parameter.annotation
-    ] == ["int", "bool", "list"]
+    ] == ["list", "int", "bool"]
     assert helper.returns is not None and ast.unparse(helper.returns) == "None"
     calls = [
         node
@@ -249,8 +249,8 @@ def test_literals_take_their_builtin_type_and_bool_is_not_int(tmp_path: Path) ->
         and node.func.id == helper.name
     ]
     assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
-        ("10", "True", "items"),
-        ("20", "False", "items"),
+        ("items", "10", "True"),
+        ("items", "20", "False"),
     ]
     assert all(not call.keywords and len(call.args) == len(parameters) for call in calls)
 
@@ -314,11 +314,12 @@ def test_unannotated_code_stays_unannotated(tmp_path: Path) -> None:
     result = _refactor(
         tmp_path,
         f"""
+        @staticmethod
         def first(value, prefix):{BODY}
         def second(value, prefix):{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix, value):"
+    assert _signature(result) == "def __extracted_func_0(value, prefix):"
 
 
 def test_annotation_can_be_switched_off(tmp_path: Path) -> None:
@@ -330,7 +331,7 @@ def test_annotation_can_be_switched_off(tmp_path: Path) -> None:
         """,
         annotate_helpers=False,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix, value):"
+    assert _signature(result) == "def __extracted_func_0(value, prefix):"
 
 
 def test_class_defined_later_puts_the_helper_after_it_with_a_bare_name(
@@ -392,6 +393,7 @@ def test_deferred_annotations_are_copied_unquoted(tmp_path: Path) -> None:
         """
         from __future__ import annotations
 
+        @staticmethod
         def first(box: Box) -> None:
             print(box.value * 2, box)
             print(box)
@@ -454,13 +456,14 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
     helper = proposals[0].extracted_function
     parameters = helper.args.posonlyargs + helper.args.args
     assert len(parameters) == 3 and len(parameters) <= 5
-    assert len(helper.args.posonlyargs) == 1
-    carrier = helper.args.posonlyargs[0]
+    assert len(helper.args.posonlyargs) == 3
+    assert [parameter.arg for parameter in parameters[:2]] == ["value", "label"]
+    carrier = helper.args.posonlyargs[2]
     assert carrier.arg.startswith("__param_") and carrier.annotation is None
     # ``Optional[str]`` needs typing; its members ``str | None`` are builtins.
     declared = {
         parameter.arg: ast.unparse(parameter.annotation)
-        for parameter in helper.args.args
+        for parameter in parameters
         if parameter.annotation is not None
     }
     assert declared == {"label": "'str | None'", "value": "int"}
@@ -475,7 +478,7 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
     }
     assert slots == {0}
     arguments = [
-        replacement.node.value.args[0]
+        replacement.node.value.args[2]
         for replacement in proposals[0].replacements
         if isinstance(replacement.node, ast.Expr) and isinstance(replacement.node.value, ast.Call)
     ]
@@ -511,7 +514,7 @@ def test_subscripted_annotations_are_quoted_even_with_familiar_names(
     )
     assert (
         _signature(result)
-        == "def __extracted_func_0(items: 'list[int]', seq: 'Sequence[int]', view: 'memoryview[int]') -> None:"
+        == "def __extracted_func_0(view: 'memoryview[int]', items: 'list[int]', seq: 'Sequence[int]') -> None:"
     )
     exec(compile(result, "<generic>", "exec"), {})
 

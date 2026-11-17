@@ -36,18 +36,17 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 # Small fixtures exercise semantic guards independently of the product usefulness policy.
 
 # Encoding tests use no caller-owned arguments; they must still apply real
-# extractions when the runtime cannot certify argument cleanup order.
+# extractions when the runtime cannot certify argument cleanup order. Decorators
+# exclude redirects so the tests also exercise writing a new helper.
 DUPLICATES = (
-    "def f():\n    x = 2\n    y = x * 2\n    z = y + compute(1)\n    return z\n\n\n"
-    "def g():\n    x = 2\n    y = x * 2\n    z = y + compute(1)\n    return z\n\n\n"
+    "@staticmethod\ndef f():\n    x = 2\n    y = x * 2\n    z = y + compute(1)\n    return z\n\n\n"
+    "@staticmethod\ndef g():\n    x = 2\n    y = x * 2\n    z = y + compute(1)\n    return z\n\n\n"
     "def compute(v):\n    return v\n"
 )
 
 
 def _dry(source_dir: Path, out: Path) -> int:
-    engine = UnificationRefactorEngine(
-        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
-    )
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(source_dir), str(out), max_iterations=0, progress="none"

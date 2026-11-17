@@ -37,8 +37,8 @@ def test_parameter_names_covers_every_category():
 
 def test_parameter_nodes_yields_in_declaration_group_order():
     args = _args("def f(a, /, b, *args, c, **kw): pass")
-    # positional-only, positional, keyword-only, *args, **kwargs
-    assert [node.arg for node in parameter_nodes(args)] == ["a", "b", "c", "args", "kw"]
+    # Audit R5: preserve textual order, including *args before keyword-only inputs.
+    assert [node.arg for node in parameter_nodes(args)] == ["a", "b", "args", "c", "kw"]
 
 
 def test_parameter_names_empty_for_no_arguments():

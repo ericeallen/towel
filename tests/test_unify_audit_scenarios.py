@@ -25,8 +25,8 @@ import sys
 import pytest
 import towel
 
-from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.argument_ownership import _supported_runtime
+from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.semantic_safety import (
     created_object_escapes,
     nested_scopes_cross_block_boundary,
@@ -201,5 +201,9 @@ def test_audit_cli_preserves_original_driver_observations(
         assert {path.name: path.read_bytes() for path in output.glob("*.py")} == {
             path.name: path.read_bytes() for path in source.glob("*.py")
         }
+    elif case == "05_varname_medium" and not strict:
+        rewritten = (output / "dedupe.py").read_text()
+        assert "return unique_emails(tags)" in rewritten
+        assert "__extracted_func_" not in rewritten
     elif case in {"02_literal_medium", "05_varname_medium", "43_typed_generic"}:
         assert any("def __extracted_func_" in path.read_text() for path in output.glob("*.py"))

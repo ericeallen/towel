@@ -166,23 +166,21 @@ def find_duplicate_helpers(root: Path) -> list[str]:
 # or out of this set with an explanation in the commit, never silently.
 #
 # Relaxed mode, the default (docs/design/DECISIONS.md, "Relaxed mode is the default;
-# strict mode keeps exact lifetimes"), leaves four inputs alone:
+# strict mode keeps exact lifetimes"), leaves three inputs alone:
 #
 # - bindings_comprehensions.py: every candidate block is a comprehension whose
 #   binder names differ, so nothing unifies without a parameter budget overrun.
-# - closure_adversarial.py: each duplicate rebinds a variable of an enclosing
-#   function, which a helper cannot do, or shares too little to repay one.
 # - example3_file1.py / example3_file2.py: their duplicate is across the two
 #   files, which single-file mode cannot see (the cross-file run is covered by
 #   test_crossfile_integration.py).
 #
 # The other twelve that strict mode leaves alone are extracted: their helpers
 # are called directly, with no ownership transfer to pay for and no partial
-# frame to refuse.
+# frame to refuse. closure_adversarial.py left the set with shape's redirect:
+# multiplier_b now calls the identical multiplier_a.
 EXPECTED_UNCHANGED_EXAMPLES = frozenset(
     {
         "bindings_comprehensions.py",
-        "closure_adversarial.py",
         "example3_file1.py",
         "example3_file2.py",
     }

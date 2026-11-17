@@ -2596,3 +2596,21 @@ engine assumes it does), `tests/test_expression_pairing.py`,
 `tests/test_expression_extraction.py` (audit case 44 in both modes),
 `tests/test_expression_guards.py` (hostile programs run before and after in
 both modes) and `tests/test_expression_reasons.py`.*
+
+## 2026-11-15: Redirect to an existing function only within a clean consumer scope
+
+**Status: implemented for 2.0.** Supersedes “No existing function is redirected
+to another” under the following conditions. Eric: “Yes, strict mode should
+redirect under your conditions.”
+
+A plain, undecorated module-level function may supply a duplicate when its
+whole body matches and every positional parameter is supplied exactly once.
+The function keeps its signature and body. Every caller must reach its name;
+import cycles and import-time effects remain grounds for declining. A scan
+of the analyzed program rejects a redirect on a possible rebinding, including
+module definitions, stores, imports and deletes, global stores, attribute
+writes, setattr/delattr, and patching calls. The diagnostic names the source
+file and line. Relaxed mode redirects when this scan is clean. Strict mode
+also requires a complete consumer scope, inferred by the same project/package
+anchors as rename-helpers or declared with --complete-scope on dry or preview,
+and no ownership transfer at any redirected calling site.

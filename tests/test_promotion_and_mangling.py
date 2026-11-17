@@ -19,6 +19,7 @@ import pytest
 import textwrap
 
 from tests.test_helpers import lifetime_order_certified
+from towel.unification.parameters import is_generated_parameter
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise extraction mechanics independently of the usefulness policy.
@@ -158,7 +159,7 @@ def test_option_b_promotes_equal_literals_in_higher_order_factories(tmp_path):
     ]
     assert calls, "Helper should call make_validator"
     called_with_param = any(
-        isinstance(c.args[0], ast.Name) and c.args[0].id.startswith("__param_")
+        isinstance(c.args[0], ast.Name) and is_generated_parameter(c.args[0].id, helper)
         for c in calls
         if c.args
     )
@@ -174,11 +175,13 @@ def test_option_b_disabled_keeps_equal_literals_inline(tmp_path):
     def make_validator(limit):
         return lambda x: x > limit
 
+    @staticmethod
     def c(data):
         validator = make_validator(5)
         filtered = filter(validator, data)
         return list(filtered)
 
+    @staticmethod
     def d(data):
         validator = make_validator(5)
         filtered = filter(validator, data)
@@ -216,7 +219,10 @@ def test_option_b_disabled_keeps_equal_literals_inline(tmp_path):
     assert 5 in literals, "Literal 5 should remain inline when promotion disabled"
 
     # Helper should not introduce extra parameters beyond the data argument
-    assert all(arg.arg != "__param_0" for arg in helper.args.args)
+    assert all(
+        not is_generated_parameter(arg.arg, helper)
+        for arg in helper.args.posonlyargs + helper.args.args
+    )
 
 
 def test_promotion_failure_is_a_bug_not_a_warning():

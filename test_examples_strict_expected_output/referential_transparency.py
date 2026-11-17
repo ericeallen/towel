@@ -6,12 +6,12 @@ and don't accidentally capture or modify variables incorrectly.
 """
 
 
-def __extracted_func_0(cache, key, metrics, processed):
+def __extracted_func_0(cache, metrics, key, processed):
     cache[key] = processed
-    metrics['count'] += 1
-    metrics['total'] += processed
+    metrics["count"] += 1
+    metrics["total"] += processed
     if processed > 100:
-        metrics['high_value'] += 1
+        metrics["high_value"] += 1
 
 
 def update_mutable_state_v1(items, counter):
@@ -243,7 +243,7 @@ def modify_external_state_a(data, cache, metrics):
     for key, value in data.items():
         # Modifies both cache and metrics
         processed = value * 2
-        __extracted_func_0(cache, key, metrics, processed)
+        __extracted_func_0(cache, metrics, key, processed)
 
     return cache, metrics
 
@@ -253,6 +253,6 @@ def modify_external_state_b(data, cache, metrics):
     for key, value in data.items():
         # Same pattern, different multiplier
         processed = value * 3
-        __extracted_func_0(cache, key, metrics, processed)
+        __extracted_func_0(cache, metrics, key, processed)
 
     return cache, metrics

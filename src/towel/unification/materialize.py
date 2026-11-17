@@ -74,7 +74,13 @@ from .import_graph import (
     inert_function_definition,
     runs_as_script,
 )
-from .insertion import early_helper_line, reindent
+from .insertion import early_helper_line
+from .source_render import (
+    indent_rendered,
+    indentation_unit,
+    preserve_call_source,
+    preserve_helper_source,
+)
 from .splicing import splice_block, whole_lines
 from .models import (
     AppliedChange,
@@ -202,17 +208,19 @@ class Materialization(
         not used: the helper is then inserted as rendered, where each
         directive stands beside the code it was written for.
         """
-        preserve_ast = any(r.argument_handoff is not None for r in proposal.replacements)
         if awaits_in_own_frame(proposal.extracted_function.body):
             node = with_coroutine_helper(node, proposal.extracted_function.name)
-        if not proposal.helper_comments.carried:
-            return self._render(node, proposal.file_path, prefix, preserve_ast=preserve_ast)
         helper = node.body[-1] if isinstance(node, ast.Module) else node
         woven = weave_comments(node, helper, proposal.helper_comments)
-        formatted = self._format_snippet(
-            woven.text, proposal.file_path, prefix, preserve_ast=preserve_ast
-        )
-        return formatted if woven.keeps_directives(formatted) else woven.text
+        text = woven.text
+        if proposal.replacements:
+            site = proposal.replacements[0]
+            source = "".join(self._source_lines(site.file_path or proposal.file_path))
+            restored = preserve_helper_source(node, text, source, site.line_range)
+            if woven.keeps_directives(restored):
+                text = restored
+        formatted = self._format_snippet(text, proposal.file_path, prefix, preserve_ast=True)
+        return formatted if woven.keeps_directives(formatted) else text
 
     def _materialize_refactoring(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """
@@ -229,9 +237,7 @@ class Materialization(
         if proposal.reused_function is None:
             host = self._parsed_host(proposal.file_path)
             if self._oldest_python_for(proposal.file_path, host) < (3, 8):
-                arguments = proposal.extracted_function.args
-                arguments.args = arguments.posonlyargs + arguments.args
-                arguments.posonlyargs = []
+                proposal.extracted_function = _legacy_parameters(proposal.extracted_function)
         self._infer_helper_annotations(proposal)
         check_types = self._active_type_oracle() is not None
         counters = dict(self._helper_name_counters)
@@ -341,8 +347,19 @@ class Materialization(
                 )
             if _runtime_star_imports(tree):
                 raise RefactoringError("A star import can overwrite an early shared helper")
-            if proposal.reused_function is not None:
-                self._require_early_reused_helper(proposal)
+        if proposal.reused_function is not None and (
+            _shared_module_helper(proposal)
+            or not (
+                is_generated_helper_name(proposal.reused_function.name)
+                and self._helper_introduced_during_run(
+                    proposal.reused_function.name, proposal.reused_function.file_path
+                )
+            )
+        ):
+            # Same-file reuse of a helper created earlier in this run retains
+            # its checked placement. User definitions and cross-module calls
+            # need the stronger proof of availability during import.
+            self._require_early_reused_helper(proposal)
         if proposal.helper_type_declarations and (
             proposal.reused_function is not None or proposal.insert_into_function is not None
         ):
@@ -640,11 +657,14 @@ class Materialization(
             block_lines = lines[start_line - 1 : end_line]
             first = block_lines[0]
             indentation = first[: len(first) - len(first.lstrip())]
-            replacement_code = self._render(
-                self._call_site(proposal, naming, repl),
+            replacement_code = self._format_snippet(
+                preserve_call_source(
+                    self._call_site(proposal, naming, repl),
+                    "".join(self._source_lines(file_path)),
+                ),
                 file_path,
                 indentation,
-                preserve_ast=any(r.argument_handoff is not None for r in proposal.replacements),
+                preserve_ast=True,
             )
             spliced = splice_block(
                 block_lines, repl.columns or whole_lines(block_lines), replacement_code
@@ -682,7 +702,8 @@ class Materialization(
         fn_insert_info = self._find_function_insert_position_before_body_statements(
             "".join(lines), proposal.insert_into_function
         )
-        inner_indent = fn_insert_info[1] + "    " if fn_insert_info is not None else ""
+        unit = indentation_unit("".join(self._source_lines(proposal.file_path)))
+        inner_indent = fn_insert_info[1] + unit if fn_insert_info is not None else ""
         fn_lines = [
             line + "\n"
             for line in self._helper_text(
@@ -694,7 +715,7 @@ class Materialization(
             lines[insert_line:insert_line] = fn_lines + ["\n", "\n"]
             return
         insert_at, _ = fn_insert_info
-        indented = [inner_indent + line if line.strip() else line for line in fn_lines]
+        indented = indent_rendered("".join(fn_lines), inner_indent, unit).splitlines(keepends=True)
         lines[insert_at:insert_at] = _padded(lines, insert_at, indented)
 
     def _insert_helper_into_class(
@@ -720,9 +741,10 @@ class Materialization(
                 proposal, proposal.extracted_function, method_indent
             ).split("\n")
         ]
-        indented = [
-            reindent(line, method_indent) if line.strip() else line for line in method_lines
-        ]
+        unit = indentation_unit("".join(self._source_lines(file_path)))
+        indented = indent_rendered("".join(method_lines), method_indent, unit).splitlines(
+            keepends=True
+        )
         insert_at = insert_line_zero_based + 1
         if (proposal.method_kind or "instance") == "instance":
             # Where the class's attributes keep the declarations they had.
@@ -760,7 +782,13 @@ class Materialization(
                 lines[declared_at:declared_at] = _padded(lines, declared_at, declaration_lines)
             source = "".join(lines)
             insert_line = early_helper_line(lines, self._parse_source(source))
-            func_lines = [line + "\n" for line in self._helper_text(proposal, helper).split("\n")]
+            unit = indentation_unit("".join(self._source_lines(proposal.file_path)))
+            func_lines = [
+                line + "\n"
+                for line in indent_rendered(self._helper_text(proposal, helper), "", unit).split(
+                    "\n"
+                )
+            ]
             lines[insert_line:insert_line] = _padded(lines, insert_line, func_lines)
             return
         node: ast.AST = proposal.extracted_function
@@ -775,7 +803,11 @@ class Materialization(
                 type_ignores=[],
             )
             dependencies |= self._type_declaration_dependencies(proposal)
-        func_lines = [line + "\n" for line in self._helper_text(proposal, node).split("\n")]
+        unit = indentation_unit("".join(self._source_lines(proposal.file_path)))
+        func_lines = [
+            line + "\n"
+            for line in indent_rendered(self._helper_text(proposal, node), "", unit).split("\n")
+        ]
         insert_line = self._find_insert_position(lines, dependencies)
         if proposal.helper_type_declarations:
             insert_line = self._type_declaration_position(lines, dependencies, insert_line)
@@ -1131,6 +1163,46 @@ class Materialization(
                         f"Generated call to {helper_name} passes {len(node.args)} arguments "
                         f"but the helper binds {expected}: {path}"
                     )
+
+
+def _legacy_parameters(helper: ast.FunctionDef) -> ast.FunctionDef:
+    """Keep source order without a slash or an invalid legacy positional-only name."""
+    rewritten = copy.deepcopy(helper)
+    arguments = rewritten.args
+    arguments.args = arguments.posonlyargs + arguments.args
+    arguments.posonlyargs = []
+    # Include identifiers in nested scopes: a new spelling must not capture a
+    # nested binding, import, or attribute used by the generated body.
+    taken = {
+        value
+        for node in ast.walk(rewritten)
+        for _, value in ast.iter_fields(node)
+        if isinstance(value, str) and value.isidentifier()
+    }
+    for node in ast.walk(rewritten):
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            taken.update(node.names)
+    renames: Dict[str, str] = {}
+    ordinary_seen = False
+    for parameter in arguments.args:
+        if not parameter.arg.startswith("__param_"):
+            ordinary_seen = True
+        elif ordinary_seen:
+            base = parameter.arg[1:]
+            name = base
+            suffix = 0
+            while name in taken:
+                suffix += 1
+                name = f"{base}_{suffix}"
+            taken.add(name)
+            renames[parameter.arg] = name
+            parameter.arg = name
+    for node in ast.walk(rewritten):
+        if isinstance(node, ast.Name):
+            node.id = renames.get(node.id, node.id)
+        elif isinstance(node, ast.Nonlocal):
+            node.names = [renames.get(name, name) for name in node.names]
+    return rewritten
 
 
 def _runtime_star_imports(tree: ast.Module) -> Tuple[ast.ImportFrom, ...]:

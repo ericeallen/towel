@@ -20,25 +20,25 @@ async def __extracted_func_2(items):
     return seen
 
 
-def __extracted_func_1(size, values):
+def __extracted_func_1(values, size):
     if size <= 0:
-        raise ValueError('size must be positive')
+        raise ValueError("size must be positive")
     cleaned = [value for value in values if value is not None]
     limit = len(cleaned) - len(cleaned) % size
     window = cleaned[:limit]
     return (limit, window)
 
 
-def __extracted_func_0(__param_0, size, values):
-    limit, window = __extracted_func_1(size, values)
-    total = __param_0
+def __extracted_func_0(values, size, _param_0):
+    limit, window = __extracted_func_1(values, size)
+    total = _param_0
     count = 0
     return (window, total, count)
 
 
 def batched_totals(values, size):
     """Sum each full run of ``size`` values, one total per run."""
-    window, total, count = __extracted_func_0(0, size, values)
+    window, total, count = __extracted_func_0(values, size, 0)
     for value in window:
         total += value
         count += 1
@@ -50,7 +50,7 @@ def batched_totals(values, size):
 
 def batched_peaks(values, size):
     """The largest value of each full run of ``size`` values."""
-    window, peak, count = __extracted_func_0(None, size, values)
+    window, peak, count = __extracted_func_0(values, size, None)
     for value in window:
         peak = value if peak is None or value > peak else peak
         count += 1
@@ -80,14 +80,14 @@ def numbered_words(text):
 
 async def settle_totals(values, size):
     """Batch totals after yielding to the event loop once."""
-    limit, window = __extracted_func_1(size, values)
+    limit, window = __extracted_func_1(values, size)
     await asyncio.sleep(0)
     return [sum(window[start : start + size]) for start in range(0, limit, size)]
 
 
 async def settle_peaks(values, size):
     """Batch peaks after yielding to the event loop once."""
-    limit, window = __extracted_func_1(size, values)
+    limit, window = __extracted_func_1(values, size)
     await asyncio.sleep(0)
     return [max(window[start : start + size]) for start in range(0, limit, size)]
 

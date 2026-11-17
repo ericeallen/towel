@@ -8,38 +8,34 @@ Tests that:
 """
 
 
-def __extracted_func_1(value):
-    precision = 2
-    result = f'Value: {value:.{precision}f}'
-    return result
-
-
-def __extracted_func_0(__param_0, __param_1, name):
-    status = 'active'
+def __extracted_func_0(name, _param_0, _param_1):
+    status = "active"
     count = 1
-    message = f'{__param_0} {name} (ID: {__param_1}) is {status}'
+    message = f"{_param_0} {name} (ID: {_param_1}) is {status}"
     print(message)
     return count
 
 
 def log_user(user_id, name):
     """Log user with f-string."""
-    return __extracted_func_0('User', user_id, name)
+    return __extracted_func_0(name, 'User', user_id)
 
 
 def log_admin(admin_id, name):
     """Log admin with f-string (different literal text - should NOT unify)."""
-    return __extracted_func_0('Admin', admin_id, name)
+    return __extracted_func_0(name, 'Admin', admin_id)
 
 
 def format_number_a(value):
     """F-string with formatting."""
-    return __extracted_func_1(value)
+    precision = 2
+    result = f"Value: {value:.{precision}f}"
+    return result
 
 
 def format_number_b(value):
     """F-string with formatting (same literal - should unify)."""
-    return __extracted_func_1(value)
+    return format_number_a(value)
 
 
 def const_parameterization_a(item):

@@ -974,7 +974,9 @@ def test_relaxed_unsupported_layout_cli(tmp_path: Path) -> None:
         ]
     )
     assert result.status == 0, result.stderr
-    assert "__extracted_func" in (tmp_path / "out/pkg/a.py").read_text()
+    transformed = (tmp_path / "out/pkg/a.py").read_text()
+    assert "return f1(b)" in transformed
+    assert "__extracted_func" not in transformed
     assert unsupported._behavior(tmp_path / "out") == before
 
 

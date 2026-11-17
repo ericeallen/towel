@@ -8,11 +8,11 @@ properly propagate return values in replacement calls.
 
 def __extracted_func_1(x):
     if x < 0:
-        return 'negative'
+        return "negative"
     elif x == 0:
-        return 'zero'
+        return "zero"
     else:
-        return 'positive'
+        return "positive"
 
 
 def __extracted_func_0(x, y):

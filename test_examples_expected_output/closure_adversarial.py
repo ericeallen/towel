@@ -95,10 +95,7 @@ def multiplier_a(x, factor):
 
 def multiplier_b(y, multiplier):
     """Similar pattern but captures different variable names."""
-    output = 0
-    for j in range(y):
-        output += multiplier
-    return output
+    return multiplier_a(y, multiplier)
 
 
 # Variable shadowing edge case

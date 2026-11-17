@@ -42,7 +42,7 @@ class TestExtractorFinalLines(unittest.TestCase):
         data = {"count": 20}
         extracted = namespace[function.name]
         assert callable(extracted)
-        extracted(data, obj)
+        extracted(obj, data)
         self.assertEqual(obj.value, 12)
         self.assertEqual(data["count"], 23)
 

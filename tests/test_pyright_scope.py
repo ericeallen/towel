@@ -270,14 +270,18 @@ def test_a_directory_pyright_excludes_costs_no_wait(tmp_path: Path, source: str)
         assert helper.args.posonlyargs == helper.args.args == []
         assert helper.returns is not None and ast.unparse(helper.returns) == "int"
         return
-    assert [parameter.arg for parameter in helper.args.posonlyargs] == ["self", "__param_0"]
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == [
+        "self",
+        "prefix",
+        "__param_0",
+    ]
     assert (
         helper.args.vararg,
         helper.args.kwarg,
         helper.args.kwonlyargs,
         helper.args.defaults,
     ) == (None, None, [], [])
-    assert [parameter.arg for parameter in helper.args.args] == ["prefix", "_towel_owner"]
+    assert [parameter.arg for parameter in helper.args.args] == ["_towel_owner"]
     assert helper.args.posonlyargs[0].annotation is None
     annotations = [
         ast.unparse(parameter.annotation)
@@ -285,8 +289,8 @@ def test_a_directory_pyright_excludes_costs_no_wait(tmp_path: Path, source: str)
         if parameter.annotation is not None
     ]
     assert annotations == [
-        "_typing.Any",
         "str",
+        "_typing.Any",
     ], "what the sites declare and Any for the rest: nothing would check an inferred type"
     assert isinstance(helper.args.args[-1].annotation, ast.Constant)
     assert helper.args.args[-1].annotation.value == "object"

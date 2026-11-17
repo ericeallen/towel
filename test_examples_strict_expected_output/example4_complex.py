@@ -16,6 +16,7 @@ def __extracted_func_0(data, _towel_owner):
             result[key] = [str(item) for item in value]
         else:
             result[key] = str(value)
+
     return result
 
 

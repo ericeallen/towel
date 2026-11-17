@@ -14,7 +14,7 @@ def __extracted_func_3(__param_0, _towel_owner):
     data = [__param_0, __param_0 + 1, __param_0 + 2]  # list
     data = data + list((__param_0, __param_0 + 1))  # tuple
     data = data + list({__param_0, __param_0 + 1})  # set
-    data = data + list({'a': __param_0, 'b': __param_0 + 1}.values())  # dict
+    data = data + list({"a": __param_0, "b": __param_0 + 1}.values())  # dict
     return sum(data)
 
 
@@ -32,8 +32,8 @@ def __extracted_func_1(__param_0, _towel_owner):
     result = __param_0 + 42  # int
     result = result + 3.14  # float
     result = result + 1j  # complex
-    result = result + len('string')  # string
-    result = result + len(b'bytes')  # bytes
+    result = result + len("string")  # string
+    result = result + len(b"bytes")  # bytes
     result = result + (1 if True else 0)  # boolean
     result = result + (0 if None else 1)  # None
     return result

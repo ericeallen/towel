@@ -203,7 +203,7 @@ def test_the_program_leaves_out_tool_directories_and_environments(tmp_path: Path
         (NEWER.encode(), "line 1: "),
         (b'def f():\n    return "caf\xe9"\n', None),
         (b"# -*- coding: lala -*-\nx = 1\n", None),
-        (b"x = 1\0\n", None if sys.version_info >= (3, 14) else "null bytes"),
+        (b"x = 1\0\n", "null bytes"),
     ],
     ids=["parses", "syntax error", "newer syntax", "does not decode", "no such codec", "null byte"],
 )
@@ -213,13 +213,6 @@ def test_what_the_parser_says_of_a_file(
     path = tmp_path / "m.py"
     path.write_bytes(data)
     failure = parse_failure(path)
-    if b"\0" in data and sys.version_info >= (3, 14):
-        # The newer tokenizer rejects null bytes before parsing; strict keeps
-        # its historical decoding skip while relaxed must name the omission.
-        decoded_failure = parse_failure(path, include_decoding_errors=True)
-        assert decoded_failure is not None
-        assert "it cannot be decoded:" in decoded_failure.complaint
-        assert "null bytes" in decoded_failure.complaint
     if complaint is None:
         assert failure is None
     else:

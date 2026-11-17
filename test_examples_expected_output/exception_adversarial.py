@@ -6,22 +6,13 @@ when extracting code with try/except/finally blocks.
 """
 
 
-def __extracted_func_5(__param_0, __param_1):
+def __extracted_func_4(__param_0, __param_1):
     value = __param_0
     try:
         value = int(__param_1)
     except (ValueError, TypeError):
         value = __param_0
     return value
-
-
-def __extracted_func_4(__param_0, __param_1):
-    result = 0
-    try:
-        result = __param_0 / __param_1
-    except ZeroDivisionError:
-        result = float('inf')
-    return result
 
 
 def __extracted_func_3(__param_0):
@@ -76,22 +67,27 @@ def __extracted_func_0(__param_0):
 
 def safe_divide_a(x, y):
     """Division with exception handling."""
-    return __extracted_func_4(x, y)
+    result = 0
+    try:
+        result = x / y
+    except ZeroDivisionError:
+        result = float("inf")
+    return result
 
 
 def safe_divide_b(a, b):
     """Similar division pattern."""
-    return __extracted_func_4(a, b)
+    return safe_divide_a(a, b)
 
 
 def parse_int_or_default_a(s, default=0):
     """Parse int with fallback."""
-    return __extracted_func_5(default, s)
+    return __extracted_func_4(default, s)
 
 
 def parse_int_or_default_b(text, fallback=0):
     """Similar parse pattern."""
-    return __extracted_func_5(fallback, text)
+    return __extracted_func_4(fallback, text)
 
 
 def process_with_cleanup_a(items):

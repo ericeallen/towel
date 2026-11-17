@@ -7,12 +7,13 @@ Tests: Same-file duplicate detection in class methods.
 
 def _extracted_func_0(__param_0, __param_1):
     if not __param_0():
-        raise ValueError('Email is required')
-    if '@' not in __param_0():
-        raise ValueError('Invalid email format')
+        raise ValueError("Email is required")
+    if "@" not in __param_0():
+        raise ValueError("Invalid email format")
     if len(__param_0()) < 5:
-        raise ValueError('Email too short')
-    print(f'Processing {__param_1}: {__param_0()}')
+        raise ValueError("Email too short")
+
+    print(f"Processing {__param_1}: {__param_0()}")
     return True
 
 

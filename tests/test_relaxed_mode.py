@@ -141,7 +141,7 @@ def _quick_start() -> str:
     return blocks[0]
 
 
-def test_the_quick_start_gets_three_one_line_callers(tmp_path: Path) -> None:
+def test_the_quick_start_redirects_two_callers_to_the_existing_function(tmp_path: Path) -> None:
     """Audit finding 1: the quick start's ``charges.py`` reads as a person would write it."""
     source = tmp_path / "charges.py"
     source.write_text(_quick_start())
@@ -149,15 +149,16 @@ def test_the_quick_start_gets_three_one_line_callers(tmp_path: Path) -> None:
     result = invoke(["dry", str(source), str(output), "--no-interactive", *UNTYPED])
     assert result.status == 0, result.stderr
     generated = output.read_text()
-    for function in ("checkout_total", "quote_total", "invoice_total"):
-        assert _body(generated, function) == "return __extracted_func_0(amount)"
+    # Shape item 5: keep the user's implementation and redirect its duplicates.
+    assert _body(generated, "checkout_total") == _body(source.read_text(), "checkout_total")
+    for function in ("quote_total", "invoice_total"):
+        assert _body(generated, function) == "return checkout_total(amount)"
+    assert "__extracted_func_" not in generated
     assert "_towel_" not in generated
-    helper = next(
-        node
-        for node in ast.walk(ast.parse(generated))
-        if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
-    )
-    assert [argument.arg for argument in helper.args.args] == ["amount"]
+    driver = "\nprint([f(x) for f in (checkout_total, quote_total, invoice_total) for x in (-1, 0, 42, 120)])\n"
+    source.write_text(source.read_text() + driver)
+    output.write_text(generated + driver)
+    assert _output(output) == _output(source)
 
 
 def test_strict_mode_keeps_the_quick_starts_ownership_transfer(tmp_path: Path) -> None:
@@ -227,7 +228,12 @@ def test_relaxed_mode_extracts_the_audits_cases_with_plain_calls(tmp_path: Path,
     driver, source, output = _scenario(tmp_path, name, strict=False)
     generated = _python_text(output)
     assert generated != _python_text(source)
-    assert "_extracted_func_0(" in generated
+    if name == "varname_small":
+        assert _body(generated, "mean_latency") == "return average_score(samples)"
+        assert _body(generated, "average_score") == _body(_python_text(source), "average_score")
+        assert "__extracted_func_" not in generated
+    else:
+        assert "_extracted_func_0(" in generated
     assert "_towel_" not in generated
     assert _output(driver, str(output)) == _output(driver, str(source))
 
@@ -286,8 +292,8 @@ def test_relaxed_mode_takes_the_whole_block_strict_mode_cut_short(tmp_path: Path
     """Audit case 12: the binding of ``message`` moves too, so ``message`` is no parameter."""
     _, _, relaxed = _scenario(tmp_path / "relaxed", "block_end", strict=False)
     _, _, strict = _scenario(tmp_path / "strict", "block_end", strict=True)
-    assert "def __extracted_func_0(body, outbox, subject, user):" in _python_text(relaxed)
-    assert "def __extracted_func_0(body, message, outbox, subject):" in _python_text(strict)
+    assert "def __extracted_func_0(user, outbox, subject, body):" in _python_text(relaxed)
+    assert "def __extracted_func_0(outbox, message, subject, body):" in _python_text(strict)
 
 
 def test_returned_names_follow_the_order_of_first_assignment(tmp_path: Path) -> None:
@@ -344,7 +350,7 @@ def test_relaxed_mode_calls_a_whole_body_helper_directly(tmp_path: Path) -> None
     reverse order, local first, so there the two orders coincide.
     """
     generated, before, after = _refactored(tmp_path, WHOLE_FUNCTION, strict=False)
-    assert _body(generated, "first") == "return __extracted_func_0('first', x)"
+    assert _body(generated, "first") == "return __extracted_func_0(x, 'first')"
     assert "_towel_" not in generated
     if _release_order_certified():
         assert before.splitlines()[:3] == ["first 13", "released argument", "released local"]
@@ -395,7 +401,7 @@ def test_relaxed_mode_returns_only_what_later_code_reads(tmp_path: Path) -> None
     objects whose finalizer destroys something still in use.
     """
     generated, before, after = _refactored(tmp_path, KEEP_HOLDER, strict=False)
-    assert "count = __extracted_func_0('first handle', 1)" in generated
+    assert 'count = __extracted_func_0("first handle", 1)' in generated
     assert "_towel_" not in generated
     assert before.splitlines()[:3] == ["prepared 13", "after block", "released first handle"]
     assert after.splitlines()[:3] == ["prepared 13", "released first handle", "after block"]
@@ -407,7 +413,7 @@ def test_strict_mode_holds_an_unread_local_until_the_function_returns(tmp_path: 
         _strict_declines_for_release_order(tmp_path, KEEP_HOLDER)
         return
     generated, before, after = _refactored(tmp_path, KEEP_HOLDER, strict=True)
-    assert "_towel_keep_handle, count = __extracted_func_0('first handle', 1)" in generated
+    assert '_towel_keep_handle, count = __extracted_func_0("first handle", 1)' in generated
     assert after == before
 
 
@@ -447,7 +453,7 @@ if __name__ == "__main__":
 def test_relaxed_mode_extracts_a_block_inside_a_handler_that_stays(tmp_path: Path) -> None:
     """No ``owned_binding_exception_boundary`` refusal: the same output but for when ``handle`` goes."""
     generated, before, after = _refactored(tmp_path, EXCEPTION_BOUNDARY, strict=False)
-    assert "        __extracted_func_0('first', values)\n    except ZeroDivisionError:" in generated
+    assert '        __extracted_func_0(values, "first")\n    except ZeroDivisionError:' in generated
     assert "_towel_" not in generated
     released = re.compile(r"^released ")
     assert [line for line in after.splitlines() if not released.match(line)] == [
@@ -501,7 +507,7 @@ def test_relaxed_mode_passes_a_leading_argument_by_value_whatever_its_result(
     run, which only a finalizer could observe.
     """
     generated, before, after = _refactored(tmp_path, LEADING_THUNK, strict=False)
-    assert _body(generated, "describe_total") == "return __extracted_func_0(stats.total, label)"
+    assert _body(generated, "describe_total") == "return __extracted_func_0(label, stats.total)"
     assert "lambda" not in generated
     assert after == before
 
@@ -511,5 +517,5 @@ def test_strict_mode_keeps_the_thunk_of_an_opaque_result(tmp_path: Path) -> None
         _strict_declines_for_release_order(tmp_path, LEADING_THUNK)
         return
     generated, before, after = _refactored(tmp_path, LEADING_THUNK, strict=True)
-    assert "value = __param_0()" in generated and "lambda" in generated
+    assert "value = _param_0()" in generated and "lambda" in generated
     assert after == before

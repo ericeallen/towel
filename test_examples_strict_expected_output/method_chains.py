@@ -6,11 +6,11 @@ and object-oriented code patterns correctly.
 """
 
 
-def __extracted_func_4(__param_0, data, response):
+def __extracted_func_4(data, response, _param_0):
     response.set_data(data)
     response.set_status(200)
-    response.add_header('Content-Type', 'application/json')
-    response.add_header('Cache-Control', __param_0)
+    response.add_header("Content-Type", "application/json")
+    response.add_header("Cache-Control", _param_0)
 
 
 def __extracted_func_3(handler, item):
@@ -20,7 +20,7 @@ def __extracted_func_3(handler, item):
         handler.commit()
 
 
-def __extracted_func_2(result, transformer):
+def __extracted_func_2(transformer, result):
     if len(result) > 0:
         transformer.commit()
         return result
@@ -51,7 +51,7 @@ def process_api_response_v1(response, validator, transformer):
     validated = [validator.check(item) for item in cleaned]
     result = transformer.process(validated).filter(lambda x: x is not None).to_list()
 
-    return __extracted_func_2(result, transformer)
+    return __extracted_func_2(transformer, result)
 
 
 def process_api_response_v2(response, validator, transformer):
@@ -62,7 +62,7 @@ def process_api_response_v2(response, validator, transformer):
     validated = [validator.check(item) for item in cleaned]
     result = transformer.process(validated).filter(lambda x: x is not None).to_list()
 
-    return __extracted_func_2(result, transformer)
+    return __extracted_func_2(transformer, result)
 
 
 def update_model_fields_a(model, updates, validator):
@@ -159,7 +159,7 @@ def build_response_a(data, serializer, cache):
     """Version A: Response builder with multiple method calls."""
     # Building response
     response = serializer.create_response()
-    __extracted_func_4('max-age=3600', data, response)
+    __extracted_func_4(data, response, "max-age=3600")
 
     # Cache the response
     cache_key = serializer.generate_key(data)
@@ -172,7 +172,7 @@ def build_response_b(data, serializer, cache):
     """Version B: Different cache duration, same pattern."""
     # Same building pattern
     response = serializer.create_response()
-    __extracted_func_4('max-age=7200', data, response)
+    __extracted_func_4(data, response, "max-age=7200")
 
     # Cache the response
     cache_key = serializer.generate_key(data)

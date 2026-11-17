@@ -698,10 +698,17 @@ def calculate_b(y):
                 refactored_code = stream.read()
             self.assertEqual(refactored_code, original_code)
         else:
-            self.assertEqual(
-                [p.description for p in proposals],
-                ["Extract common code from calculate_a and calculate_b"],
-            )
+            # calculate_b duplicates calculate_a's whole body. A clean binding
+            # lets the default relaxed mode reuse calculate_a directly.
+            self.assertEqual(len(proposals), 1)
+            reused = proposals[0].reused_function
+            if self.engine.strict:
+                self.assertIsNone(reused)
+                self.assertEqual(len(proposals[0].replacements), 2)
+            else:
+                self.assertIsNotNone(reused)
+                assert reused is not None
+                self.assertEqual(reused.name, "calculate_a")
 
             refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
 

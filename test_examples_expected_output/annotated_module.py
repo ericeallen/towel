@@ -15,7 +15,7 @@ SCALE: Final[float] = 100.0
 EMPTY_LABEL: Final[str] = "empty"
 
 
-def __extracted_func_0(floor: float, values: 'list[float]') -> 'tuple[float, float, int]':
+def __extracted_func_0(values: 'list[float]', floor: float) -> 'tuple[float, float, int]':
     total: float = 0.0
     peak: float = float(floor)
     count: int = 0
@@ -40,7 +40,7 @@ class Summary:
 
 def summarize_values(values: list[float], *, label: str = "values", floor: float = 0) -> Summary:
     """Total, peak and count of the values at or above ``floor``."""
-    total, peak, count = __extracted_func_0(floor, values)
+    total, peak, count = __extracted_func_0(values, floor)
     if count == 0:
         return Summary(EMPTY_LABEL, 0.0, 0.0, 0)
     return Summary(label, total, peak, count)
@@ -48,7 +48,7 @@ def summarize_values(values: list[float], *, label: str = "values", floor: float
 
 def summarize_scaled(values: list[float], *, label: str = "scaled", floor: float = 0) -> Summary:
     """The same figures after scaling every value by ``SCALE``."""
-    total, peak, count = __extracted_func_0(floor, values)
+    total, peak, count = __extracted_func_0(values, floor)
     if count == 0:
         return Summary(EMPTY_LABEL, 0.0, 0.0, 0)
     return Summary(label, total * SCALE, peak * SCALE, count)

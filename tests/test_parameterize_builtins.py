@@ -226,7 +226,7 @@ def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_t
         assert _python_files(after) == _python_files(before)
     elif flag:
         assert applied == 1
-        assert _parameters(after) == [["__param_0", "__param_1", "name", "rows", "_towel_owner"]]
+        assert _parameters(after) == [["rows", "name", "_param_0", "_param_1", "_towel_owner"]]
     else:
         assert applied == 0
         assert "builtin_argument" in declined
@@ -443,7 +443,7 @@ def test_the_flag_preserves_cross_module_lookups_and_same_module_bare_reads(tmp_
     if lifetime_order_certified():
         assert applied > 0
         assert _parameters(tmp_path / "proj") == [
-            ["__param_0", "__param_1", "__param_2", "name", "rows", "_towel_owner"]
+            ["rows", "name", "_param_2", "_param_0", "_param_1", "_towel_owner"]
         ]
     else:
         assert applied == 0
@@ -458,7 +458,7 @@ def test_the_flag_preserves_cross_module_lookups_and_same_module_bare_reads(tmp_
     applied, declined = _refactor(same_module, parameterize_builtins=True)
     if lifetime_order_certified():
         assert applied == 1
-        assert _parameters(tmp_path / "same") == [["__param_0", "name", "rows", "_towel_owner"]]
+        assert _parameters(tmp_path / "same") == [["rows", "name", "_param_0", "_towel_owner"]]
     else:
         assert applied == 0
         assert "lifetime_order_uncertified" in declined
@@ -553,7 +553,7 @@ def test_the_flag_reaches_the_engine_from_the_command_line(
     applied, declined = _refactor(tmp_path / "m.py", parameterize_builtins=True)
     if lifetime_order_certified():
         assert applied == 1
-        assert _parameters(tmp_path) == [["__param_0", "__param_1", "name", "rows", "_towel_owner"]]
+        assert _parameters(tmp_path) == [["rows", "name", "_param_0", "_param_1", "_towel_owner"]]
     else:
         assert applied == 0
         assert "lifetime_order_uncertified" in declined
@@ -754,8 +754,14 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
         return
     (helper,) = _helpers(tmp_path / "pkg")
     parameters = helper.args.posonlyargs + helper.args.args
-    assert helper.args.posonlyargs
-    assert all(parameter.arg.startswith("__param_") for parameter in helper.args.posonlyargs)
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == [
+        "rows",
+        "name",
+        "heading",
+        "__param_1",
+        "__param_0",
+        "__param_2",
+    ]
     assert not any(parameter.arg.startswith("__param_") for parameter in helper.args.args)
     annotations = {
         argument.arg: (

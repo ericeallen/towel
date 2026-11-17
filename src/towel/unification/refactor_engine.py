@@ -371,6 +371,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         parameterize_builtins: bool = False,
         strict: bool = DEFAULT_STRICT,
         include_ignored: bool = False,
+        complete_scope: bool = False,
         excluded_directories: Sequence[str] = (),
         cross_module_helpers: bool = False,
         skip_trivial_helpers: bool = True,
@@ -460,14 +461,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 those output-quality filters, not semantic checks or unconditional
                 no-logic refusals (docs/design/DECISIONS.md, "Complete extractions must
                 repay their generated syntax").
-            reuse_existing_functions: Deprecated, and has no effect. It chose
-                whether a site that is the whole body of a plain module-level
-                function was left alone and the other sites rewritten to call
-                it; since 1.772 an extracted input function calls a fresh helper
-                instead, because such a call looked the other function up in
-                its module each time, so patching or rebinding it changed both.
-                Still accepted so existing callers keep working; it will be
-                removed in a later release.
+            reuse_existing_functions: Deprecated compatibility option; ignored.
+                Since 2.0, redirection follows the clean-program rebinding scan
+                and mode-specific completeness and ownership conditions.
+            complete_scope: Declare that the analyzed target contains every
+                ordinary consumer (default: False). Otherwise strict redirection
+                requires a scope established by project or package metadata.
             annotate_helpers: Give a helper the parameter and return annotations
                 its call sites agree on -- an annotated, never-rebound parameter
                 of the enclosing function, a literal's builtin type, the sites'
@@ -556,6 +555,11 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.include_ignored = include_ignored
         self._discovery_skipped: Tuple[SkippedFile, ...] = ()
         self.strict = strict
+        self.complete_scope = complete_scope
+        self._declared_complete_scope = complete_scope
+        self._rebinding_sources: Dict[str, Optional[str]] = {}
+        self._reported_rebindings: set[str] = set()
+        self._pair_rebindings: set[str] = set()
         self.unifier = Unifier(
             max_parameters=max_parameters,
             parameterize_constants=parameterize_constants,
@@ -840,12 +844,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
         progress: ProgressMode = DEFAULT_PROGRESS,
         invalidate_paths: Optional[List[str]] = None,
         changed_files: Optional[FrozenSet[str]] = None,
+        program_root: Optional[Path] = None,
     ) -> List[RefactoringProposal]:
         """Analyze multiple files using the compiler-style pipeline and return proposals.
 
         Args:
             file_paths: The files to analyze together.
             progress: How progress is shown (see ``ProgressMode``).
+            program_root: Read-only consumer scope supplied by the entry point.
             invalidate_paths: Re-parse and re-analyze these paths even if cached.
             changed_files: When given, only pairs with a function in one of
                 these files are considered (see ``incremental_global_passes``).
@@ -863,6 +869,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 progress=progress,
                 invalidate_paths=invalidate_paths,
                 changed_files=changed_files,
+                program_root=program_root,
             )
 
     def _analyze_files(
@@ -872,6 +879,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         progress: ProgressMode,
         invalidate_paths: Optional[List[str]],
         changed_files: Optional[FrozenSet[str]],
+        program_root: Optional[Path],
     ) -> List[RefactoringProposal]:
         """Analyze with the caller's shared, bounded source context active."""
         # The index and last unification's inputs belong to one analysis.
@@ -894,7 +902,18 @@ class UnificationRefactorEngine(ParallelEvaluation):
         for path in stale:
             self._evict_cached_analysis(path)
         self._analysis_paths = tuple(file_paths)
+        from .rebinding import rebinding_scope
+
         roots = {path: self._project_root_in_run(path) for path in file_paths}
+        self.complete_scope, self._rebinding_sources = rebinding_scope(
+            file_paths,
+            declared_complete=self._declared_complete_scope,
+            program_root=(
+                self._output_origin[1] if self._output_origin is not None else program_root
+            ),
+            project_roots=roots,
+            excluded=self.excluded_directories,
+        )
         mapping_writes = {
             root: project_may_replace_builtin_mapping(root, frozenset(self.excluded_directories))
             for root in sorted(set(roots.values()))
@@ -1153,6 +1172,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         class_infos: List[ClassInfo],
     ) -> PairVerdict:
         """``pair`` judged, with its trace held back and nothing counted; see ``PairVerdict``."""
+        self._pair_rebindings = set()
         self._pair_rejection = None
         self._pair_rejection_subject = None
         self._pair_identity = None
@@ -1172,6 +1192,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             None if proposal is not None or duplicate else self._rejection_key(pair),
             lines[:mark],
             lines[mark:],
+            tuple(sorted(self._pair_rebindings)),
         )
 
     def _settle(self, pair: CodeBlockPair, verdict: PairVerdict) -> Optional[RefactoringProposal]:
@@ -1180,6 +1201,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         A pair whose proposal an earlier pair already settled is a duplicate,
         whatever its own judgement found beyond the duplicate check.
         """
+        for reason in verdict.rebindings:
+            if reason not in self._reported_rebindings:
+                self._reported_rebindings.add(reason)
+                LOG.warning(reason)
         duplicate = verdict.identity is not None and verdict.identity in self._settled_identities
         if verdict.identity is not None:
             self._settled_identities.add(verdict.identity)

@@ -259,7 +259,7 @@ def test_evaluated_fstring_constants_preserve_text_conversion_and_format_effects
         expected = original(Probe(3))
         expected_events = tuple(events)
         events.clear()
-        assert generated(offset, Probe(3)) == expected
+        assert generated(Probe(3), offset) == expected
         assert tuple(events) == expected_events
 
 
@@ -277,7 +277,7 @@ def test_nested_format_spec_evaluates_occurrence_parameter() -> None:
         exec("def observed(x):\n    " + source, original_namespace)
         original = original_namespace["observed"]
         assert isinstance(original, FunctionType)
-        assert generated(offset, 3) == original(3)
+        assert generated(3, offset) == original(3)
 
 
 def test_release_blocks_releases_pooled_occurrences_and_metadata_state() -> None:

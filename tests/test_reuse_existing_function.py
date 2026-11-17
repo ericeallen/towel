@@ -45,6 +45,10 @@ from tests.test_helpers import (
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# These fixtures pin 1.949 binding independence and ownership guarantees.
+pytestmark = pytest.mark.strict_mode
+
+
 # These integer fixtures exercise the default reuse policy with substantial
 # shared arithmetic while retaining their original observed results and spans.
 IDENTICAL_PAIR = """
@@ -206,8 +210,12 @@ def test_a_partial_owned_body_declines_but_complete_bodies_share(tmp_path: Path)
         return
     helper = _extracted_helper(final, ("norm", "report"))
     functions = module_functions(final)
-    _assert_owned_helper_call(functions["norm"], functions[helper], ("items", "label"))
-    _assert_owned_helper_call(functions["report"], functions[helper], ("data", "label"))
+    _assert_owned_helper_call(
+        functions["norm"], functions[helper], ("items", "label"), argument_order=("label", "items")
+    )
+    _assert_owned_helper_call(
+        functions["report"], functions[helper], ("data", "label"), argument_order=("label", "data")
+    )
     assert _observed(final, driver) == _observed(original, driver)
 
 

@@ -354,14 +354,17 @@ def test_directory_guide_example_reanalyzes_and_preserves_input(
     assert namespace["reason"] == "fixed_point"
     assert (source / "example.py").read_text() == code
     output = (tmp_path / "src_cleaned/example.py").read_text()
+    engine = namespace["engine"]
+    assert isinstance(engine, UnificationRefactorEngine)
     if strict_lifetime_refusal():
-        engine = namespace["engine"]
-        assert isinstance(engine, UnificationRefactorEngine)
         assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
         assert namespace["results"] == {}
         assert output == code
-    else:
+    elif engine.strict:
         assert "__extracted_func_" in output
+    else:
+        assert output.count("return checkout_total(amount)") == 2
+        assert "__extracted_func_" not in output
     before: dict[str, object] = {}
     after: dict[str, object] = {}
     observe = (

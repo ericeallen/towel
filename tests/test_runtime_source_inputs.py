@@ -16,7 +16,6 @@
 
 from pathlib import Path
 import subprocess
-import sys
 
 import pytest
 
@@ -66,8 +65,8 @@ def test_include_ignored_and_discovery_census(tmp_path: Path) -> None:
     assert python_sources(tmp_path, include_ignored=True) == [tmp_path / "local.py"]
 
 
-@pytest.mark.parametrize("data", [b"def broken(:\n", b"x=1\0\n"])
-def test_relaxed_nonprogram_files_warn_once_and_strict_retains_parser_policy(
+@pytest.mark.parametrize("data", [b"def broken(:\n", b"x=1\0\n", b"\0\n# coding: unknown\n"])
+def test_relaxed_nonprogram_files_warn_once_and_strict_refuses(
     tmp_path: Path, data: bytes, caplog: pytest.LogCaptureFixture
 ) -> None:
     """R6/R9: relaxed invalid inputs warn once and cannot veto whole-program scans."""
@@ -78,14 +77,8 @@ def test_relaxed_nonprogram_files_warn_once_and_strict_retains_parser_policy(
     source = tmp_path / "bad.py"
     source.write_bytes(data)
     (tmp_path / "pyproject.toml").write_text("")
-    with source_policy(strict=True):
-        if b"\0" in data and sys.version_info >= (3, 14):
-            # Null bytes fail decoding here, which strict has always skipped.
-            refuse_unparsed_program(tmp_path)
-            assert source in list(program_files(tmp_path))
-        else:
-            with pytest.raises(UnparsedProgramError, match="--exclude bad.py"):
-                refuse_unparsed_program(tmp_path)
+    with source_policy(strict=True), pytest.raises(UnparsedProgramError, match="--exclude bad.py"):
+        refuse_unparsed_program(tmp_path)
     with source_policy(strict=False):
         refuse_unparsed_program(tmp_path)
         assert source not in list(program_files(tmp_path))
@@ -96,6 +89,30 @@ def test_relaxed_nonprogram_files_warn_once_and_strict_retains_parser_policy(
         )
         == 1
     )
+
+
+def test_relaxed_parse_check_leaves_excluded_sources_to_the_exclusion(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An --exclude'd file that does not parse is excluded, not reported as unavailable.
+
+    Integration 3: relaxed mode recorded it as a file it could not parse, and
+    the shape lane's redirect declines reuse whenever an input was unavailable,
+    so naming a directory in --exclude disabled every redirect (review 6c).
+    """
+    from towel.program_files import program_files, refuse_unparsed_program
+    from towel.source_files import current_source_policy, source_policy
+
+    (tmp_path / "pyproject.toml").write_text("")
+    (tmp_path / "broken_dir").mkdir()
+    (tmp_path / "broken_dir" / "py2.py").write_text('print "python two"\n')
+    (tmp_path / "mod.py").write_text("x = 1\n")
+    with source_policy(strict=False):
+        refuse_unparsed_program(tmp_path, ["broken_dir"])
+        list(program_files(tmp_path))
+        policy = current_source_policy()
+        assert policy is not None and policy.skipped == {}
+    assert not [record.message for record in caplog.records if "Skipping" in record.message]
 
 
 @pytest.mark.parametrize("directory,mode", [(False, 0), (True, 0), (True, 0o400)])

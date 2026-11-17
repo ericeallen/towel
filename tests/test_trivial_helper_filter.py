@@ -20,6 +20,7 @@ skip_trivial_helpers=False restores the old behavior for callers that want every
 duplicate, however small.
 """
 
+from towel import cli
 from tests.test_helpers import lifetime_order_certified
 from tests.test_helpers import write_module
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -51,8 +52,8 @@ def test_lone_raise_is_skipped_by_default(tmp_path):
 
 
 def test_real_two_statement_body_remains_available_without_the_usefulness_filter(tmp_path):
-    # This computes a result, so the semantic pipeline must still exercise it;
-    # the default declines its larger ownership wrappers as an adoption choice.
+    # Relaxed mode reuses the existing body without a new helper. Strict mode
+    # declines its larger ownership wrappers as an adoption choice.
     path = write_module(
         tmp_path,
         "def first(value):\n"
@@ -62,8 +63,24 @@ def test_real_two_statement_body_remains_available_without_the_usefulness_filter
         "    tmp = value + 1\n"
         "    return tmp * 2\n",
     )
-    assert not UnificationRefactorEngine(min_lines=1).analyze_file(path)
-    assert UnificationRefactorEngine(min_lines=1, skip_trivial_helpers=False).analyze_file(path)
+    engine = UnificationRefactorEngine(min_lines=1)
+    proposals = engine.analyze_file(path)
+    if cli.DEFAULT_STRICT:
+        assert not proposals
+    else:
+        assert len(proposals) == 1
+        rendered = engine.apply_refactoring(path, proposals[0])
+        assert "return first(value)" in rendered
+        assert "__extracted_func_" not in rendered
+    unfiltered = UnificationRefactorEngine(min_lines=1, skip_trivial_helpers=False)
+    unfiltered_proposals = unfiltered.analyze_file(path)
+    assert unfiltered_proposals
+    if not lifetime_order_certified():
+        # The safe tail still extracts; both assignments retain ownership.
+        rendered = unfiltered.apply_refactoring(path, unfiltered_proposals[0])
+        assert "def __extracted_func_0(tmp):\n    return tmp * 2" in rendered
+        assert rendered.count("tmp = value + 1") == 2
+        assert unfiltered.declined_pairs.get("lifetime_order_uncertified", 0) > 0
 
 
 def test_assign_then_return_of_the_call_is_forwarding_too(tmp_path):

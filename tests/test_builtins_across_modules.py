@@ -694,9 +694,9 @@ def test_a_same_module_helper_is_unchanged_by_a_patch_of_its_module(tmp_path: Pa
         # The complete body also carries its header tag and final argument owner;
         # len remains an ordinary lookup in this same module.
         assert [argument.arg for argument in helpers[0].args.args] == [
-            "__param_0",
-            "name",
             "rows",
+            "name",
+            "_param_0",
             "_towel_owner",
         ]
         assert (
