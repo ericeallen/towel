@@ -86,9 +86,19 @@ def package_chain(path: Path) -> List[Path]:
     return chain
 
 
+def resolve_user_path(path: str | Path) -> Path:
+    """Resolve a user path, reporting older pathlib's symlink-loop failure normally."""
+    try:
+        return Path(path).resolve()
+    except RuntimeError as error:
+        # Python 3.11/3.12 report symlink loops as RuntimeError. Keep this
+        # conversion local to resolution so unrelated programming errors surface.
+        raise ValueError(f"Cannot resolve path {str(path)!r}: {error}") from error
+
+
 def find_project_root(start_path: Path) -> Path:
     """Find nearest ancestor that looks like the project root."""
-    start = start_path.resolve()
+    start = resolve_user_path(start_path)
     base_dir = start.parent if start.is_file() else start
 
     # Prefer a nearby directory containing packaging markers, but fall back to

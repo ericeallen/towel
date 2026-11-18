@@ -95,6 +95,7 @@ from towel.cli_reporting import (
 from towel.diagnostics import LOG, Settings, configure_stderr_logging, public_log_paths
 from towel.relaxed_suitability import RelaxedFinding, findings_for_target, relaxed_notice
 from towel.config import ConfigurationError, apply_project_defaults
+from towel.project_layout import resolve_user_path
 from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
@@ -1321,16 +1322,6 @@ def _existing_target(path: str) -> Tuple[bool, bool]:
     return is_file, is_dir
 
 
-def _resolve_cli_path(path: str) -> Path:
-    """Resolve a user path, reporting older pathlib's symlink-loop failure normally."""
-    try:
-        return Path(path).resolve()
-    except RuntimeError as error:
-        # Python 3.11/3.12 report symlink loops as RuntimeError. Keep this
-        # conversion local to resolution so unrelated programming errors surface.
-        raise ValueError(f"Cannot resolve path {path!r}: {error}") from error
-
-
 @dataclass(frozen=True)
 class DryOptions:
     """One dry pipeline, publishing to a requested or private preview destination."""
@@ -1578,8 +1569,8 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
         )
 
     # Resolve aliases before checking containment or creating any output.
-    source = _resolve_cli_path(input_path)
-    destination = _resolve_cli_path(output_path)
+    source = resolve_user_path(input_path)
+    destination = resolve_user_path(output_path)
     if source != destination:
         if source in destination.parents or destination in source.parents:
             raise ValueError("Input and output must not contain one another")
@@ -1872,11 +1863,11 @@ def _relative_to_run(options: DryOptions) -> Callable[[str], str]:
     target_is_dir = Path(options.input).is_dir()
     bases = []
     for given in (options.output, options.input):
-        resolved = _resolve_cli_path(given)
+        resolved = resolve_user_path(given)
         bases.append(resolved if target_is_dir else resolved.parent)
 
     def relative(path: str) -> str:
-        for candidate in (Path(os.path.abspath(path)), _resolve_cli_path(path)):
+        for candidate in (Path(os.path.abspath(path)), resolve_user_path(path)):
             for base in bases:
                 if candidate.is_relative_to(base) and candidate != base:
                     return str(candidate.relative_to(base))

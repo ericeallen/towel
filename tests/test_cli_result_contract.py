@@ -43,17 +43,18 @@ def _source(tmp_path: Path) -> Path:
 FLAGS = ["--no-types", "--no-format", "--progress", "none"]
 
 
+@pytest.mark.parametrize("mode", ["--strict", "--no-strict"])
 @pytest.mark.parametrize(
     "command,looped", [("preview", "input"), ("dry", "input"), ("dry", "output")]
 )
 def test_json_reports_symlink_loops_without_resolving_the_failed_path_again(
-    tmp_path: Path, command: str, looped: str
+    tmp_path: Path, command: str, looped: str, mode: str
 ) -> None:
     source = _source(tmp_path)
     loop = tmp_path / "loop"
     loop.symlink_to(loop.name)
     target = loop if looped == "input" else source
-    arguments = [command, str(target), "--json", *FLAGS]
+    arguments = [command, str(target), "--json", mode, *FLAGS]
     if command == "dry":
         arguments.extend(
             [str(loop if looped == "output" else tmp_path / "out.py"), "--no-interactive"]
