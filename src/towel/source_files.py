@@ -17,16 +17,15 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import Context, ContextVar, copy_context
 from dataclasses import dataclass, field
+from functools import wraps
 import os
 import subprocess
 from pathlib import Path
-from types import TracebackType
-from typing import Callable, Iterable, Iterator, Optional
+from typing import Callable, Concatenate, Iterable, Iterator, Optional, ParamSpec, Protocol, TypeVar
 
 from .diagnostics import LOG
-from .execution_budget import completes_before_deadline
 
 PROBE_PREFIX = "_towel_probe_"
 
@@ -42,6 +41,7 @@ class SourcePolicy:
     strict: bool
     include_ignored: bool
     skipped: dict[Path, str] = field(default_factory=dict)
+    omitted: dict[Path, str] = field(default_factory=dict)
     excluded_names: frozenset[str] = frozenset()
     copies: tuple[tuple[Path, Path], ...] = ()
 
@@ -61,35 +61,50 @@ def current_source_policy() -> Optional[SourcePolicy]:
     return _SOURCE_POLICY.get()
 
 
-class source_policy:
-    """Own one run's skip warnings, restoring an outer run's policy on exit.
+def source_policy_context(*, strict: bool, include_ignored: bool = False) -> Context:
+    """Run nested phases with the same policy, without ever binding it in the caller.
 
-    A class, because a generator's context manager runs library code on each
-    side of the change, where a deadline would strand the policy. A policy left
-    active would make later runs in this process skip what they must refuse.
+    Context.run restores the caller in the interpreter, including when an alarm
+    interrupts setup or teardown. A Python finally around ContextVar.reset has
+    interruption windows on both sides of the body.
     """
+    context = copy_context()
+    outer = current_source_policy()
+    if outer is None or (outer.strict, outer.include_ignored) != (strict, include_ignored):
+        context.run(_SOURCE_POLICY.set, SourcePolicy(strict, include_ignored))
+    return context
 
-    def __init__(self, *, strict: bool, include_ignored: bool = False) -> None:
-        self._settings = (strict, include_ignored)
-        self._outer: Optional[SourcePolicy] = None
 
-    @completes_before_deadline
-    def __enter__(self) -> SourcePolicy:
-        outer = self._outer = _SOURCE_POLICY.get()
-        if outer is not None and (outer.strict, outer.include_ignored) == self._settings:
-            return outer
-        policy = SourcePolicy(*self._settings)
-        _SOURCE_POLICY.set(policy)
-        return policy
+class _SourceOptions(Protocol):
+    @property
+    def strict(self) -> bool:
+        """Whether an unreadable source refuses the run."""
+        ...
 
-    @completes_before_deadline
-    def __exit__(
-        self,
-        error_type: Optional[type[BaseException]],
-        error: Optional[BaseException],
-        traceback: Optional[TracebackType],
-    ) -> None:
-        _SOURCE_POLICY.set(self._outer)
+    @property
+    def include_ignored(self) -> bool:
+        """Whether Git-ignored sources participate in analysis."""
+        ...
+
+
+_Options = TypeVar("_Options", bound=_SourceOptions)
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def with_source_policy(
+    action: Callable[Concatenate[_Options, _P], _R],
+) -> Callable[Concatenate[_Options, _P], _R]:
+    """Scope source policy and any analysis caches installed by this call."""
+
+    @wraps(action)
+    def run(options: _Options, /, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        context = source_policy_context(
+            strict=options.strict, include_ignored=options.include_ignored
+        )
+        return context.run(action, options, *args, **kwargs)
+
+    return run
 
 
 def skipped_source_paths() -> tuple[Path, ...]:

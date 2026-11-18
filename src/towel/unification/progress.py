@@ -158,12 +158,14 @@ class Heartbeat:
 
     def _end_thread(self) -> Optional[threading.Thread]:
         """Tell the beating thread to end and forget it; the thread, for the caller to join."""
-        beating, self._beating = self._beating, None
+        beating = self._beating
         if beating is None:
             return None
         thread, ended = beating
         ended.set()
-        return thread
+        # If interrupted, cleanup may repeat. Signal the thread before forgetting it.
+        self._beating = None
+        return thread if thread.ident is not None else None
 
     def stop(self) -> None:
         _BEATING.discard(self)
@@ -275,15 +277,18 @@ _RUN: ContextVar[Optional[_RunDisplay]] = ContextVar("towel_progress_run", defau
 
 
 @contextmanager
-def progress_run(*, quiet: bool = False) -> Iterator[None]:
+def progress_run(*, quiet: bool = False, inherit: bool = False) -> Iterator[None]:
     """Bound backend decisions and repeated warnings to a single invocation."""
-    token = _RUN.set(_RunDisplay(quiet))
-    previous = tuple(_ACTIVE)
+    if inherit and _RUN.get() is not None:
+        yield
+        return
+    run = _RunDisplay(quiet)
+    token = _RUN.set(run)
     try:
         yield
     finally:
         for renderer in tuple(_ACTIVE):
-            if renderer not in previous:
+            if renderer._owner is run:
                 renderer.close()
         _RUN.reset(token)
 
@@ -364,12 +369,15 @@ class ProgressRenderer:
         self._details: Mapping[str, object] = {}
         self._bar: Optional[ProgressBar] = None
         self._closed = False
+        self._owner: Optional[_RunDisplay] = None
         self._visible = False
         self._started = time.monotonic()
         self._heartbeat = Heartbeat(self.refresh)
 
     def _activate(self) -> None:
         if self not in _ACTIVE:
+            # The terminal is shared. Only the run that drew this bar may close it.
+            self._owner = _RUN.get()
             if _ACTIVE:
                 _ACTIVE[-1]._clear()
             _ACTIVE.append(self)
