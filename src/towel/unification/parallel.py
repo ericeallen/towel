@@ -45,6 +45,7 @@ import threading
 import time
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import (
     Dict,
     FrozenSet,
@@ -79,20 +80,17 @@ from concurrent.futures.process import BrokenProcessPool
 from .fixed_point import FixedPointDrivers
 from .pair_evaluation import PairEvaluation
 
-_worker_engine: Optional["ParallelEvaluation"] = None
+
+@dataclass(frozen=True)
+class _PairWork:
+    engine: ParallelEvaluation
+    functions: Sequence[FunctionArtifact]
+    class_infos: List[ClassInfo]
+    pairs: List[CodeBlockPair]
+    probed: FrozenSet[int]
 
 
-_worker_functions: Optional[Sequence[FunctionArtifact]] = None
-
-
-_worker_class_infos: Optional[List[ClassInfo]] = None
-
-
-_worker_pairs: Optional[List[CodeBlockPair]] = None
-
-
-_worker_probed: FrozenSet[int] = frozenset()
-"""Pairs the parent's probe already judged; a worker whose chunk spans one leaves it alone."""
+_worker_inputs: Optional[_PairWork] = None
 
 
 PARENT_WATCH_INTERVAL_SECONDS = 1.0
@@ -168,8 +166,15 @@ def _start_parent_watchdog() -> None:
     ).start()
 
 
+def _initialize_pair_worker(inputs: _PairWork) -> None:
+    """The fork inherits the initializer arguments. Only the child retains them."""
+    global _worker_inputs
+    _worker_inputs = inputs
+    _start_parent_watchdog()
+
+
 def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, PairVerdict]]:
-    """Judge ``_worker_pairs[start:end]`` in a forked worker; the verdicts, by pair index.
+    """Judge the given range in a forked worker and return verdicts by pair index.
 
     The worker inherited the parent's engine, function context, pairs and
     caches copy-on-write at fork time, so nothing is pickled in; only the
@@ -178,23 +183,20 @@ def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, PairVerdict
     judged is not judged again, since chunks are contiguous: judging it here
     too wrote its trace a second time.
     """
-    if _worker_engine is None or _worker_functions is None or _worker_class_infos is None:
+    inputs = _worker_inputs
+    if inputs is None:
         raise RuntimeError("Worker not initialized for pair processing")
-    if _worker_pairs is None:
-        raise RuntimeError("Worker has no pairs to evaluate")
     start, end = bounds
     # The parent's probe left identities behind at fork time; which pair
     # repeats which is settled by the parent, so the worker starts from none.
-    _worker_engine._seen_proposals.clear()
+    inputs.engine._seen_proposals.clear()
     return [
         (
             index,
-            _worker_engine._pair_verdict(
-                _worker_pairs[index], _worker_functions, _worker_class_infos
-            ),
+            inputs.engine._pair_verdict(inputs.pairs[index], inputs.functions, inputs.class_infos),
         )
         for index in range(start, end)
-        if index not in _worker_probed
+        if index not in inputs.probed
     ]
 
 
@@ -364,9 +366,6 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         progress: ProgressMode,
         bar: ProgressRenderer,
     ) -> List[RefactoringProposal]:
-        global _worker_engine, _worker_functions, _worker_class_infos, _worker_pairs
-        global _worker_probed
-
         # Every pair costs something even when its analyses are cached, and
         # most pairs are rejected before unification, so the probe samples the
         # whole list rather than the pairs the unification cache has not seen.
@@ -423,13 +422,6 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         # Chunks are index ranges over ``block_pairs``; cold indices are
         # increasing, so a range may include warm or probed pairs, which the
         # worker then also evaluates cheaply. That keeps chunks contiguous.
-        _worker_engine, _worker_functions, _worker_class_infos, _worker_pairs = (
-            self,
-            all_functions,
-            class_infos,
-            block_pairs,
-        )
-        _worker_probed = frozenset(probe)
         running: Tuple[str, ...] = ()
         try:
             with polling_interrupts() as check:
@@ -437,10 +429,14 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
                 try:
                     with _alone_at_fork() as running:
                         if not running:
+                            work = _PairWork(
+                                self, all_functions, class_infos, block_pairs, frozenset(probe)
+                            )
                             executor = ProcessPoolExecutor(
                                 max_workers=workers,
                                 mp_context=multiprocessing.get_context("fork"),
-                                initializer=_start_parent_watchdog,
+                                initializer=_initialize_pair_worker,
+                                initargs=(work,),
                             )
                             # Submit while display/read threads are stopped:
                             # the first submission forks all workers.
@@ -465,9 +461,6 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
             # worker raised itself propagates, since it is a bug to fix.
             LOG.warning("Parallel pair evaluation unavailable (%s); finishing serially", error)
             return finish_serially([index for index in cold if index not in evaluated])
-        finally:
-            _worker_engine = _worker_functions = _worker_class_infos = _worker_pairs = None
-            _worker_probed = frozenset()
         if running:
             _note_serial_evaluation(running)
             return finish_serially(cold)
