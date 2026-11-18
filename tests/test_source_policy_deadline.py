@@ -154,12 +154,18 @@ def _run_until_interrupted(
 
     def caller() -> None:
         caught: Optional[BaseException] = None
+        # Python 3.12 enables opcode events only if a frame requests them
+        # when settrace is installed. Waiting for the first call event is too late.
+        frame = sys._getframe()
+        previous_opcodes = frame.f_trace_opcodes
+        frame.f_trace_opcodes = True
         sys.settrace(trace)
         try:
             body()
         except interruption.raises as error:
             caught = error
         finally:
+            frame.f_trace_opcodes = previous_opcodes
             sys.settrace(previous_trace)  # Disarming the budget is not part of the window.
         afterward()
         where = fired_in[0] if fired_in else None
