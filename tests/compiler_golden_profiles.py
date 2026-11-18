@@ -66,6 +66,9 @@ HISTORICAL_PARAMETER_CELL_GOLDENS = frozenset(
 LIFETIME_REFUSAL_GOLDENS = frozenset(
     {
         "edge_cases_stress_test.py",
+        # The unify lane's f-string parameters made its strict extraction a
+        # whole-body handoff of user_id, which an uncertified runtime declines.
+        "example1_simple.py",
         "example4_complex.py",
         "nested_structures.py",
         "real_world_patterns.py",
