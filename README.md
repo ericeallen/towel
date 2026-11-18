@@ -107,7 +107,9 @@ describe Towel 2.0; `towel --version` shows the version you have. Versions
 before 2.0 have no relaxed mode (they behave as `--strict` does), no
 `--check` and no `[tool.towel]`. The
 [GitHub releases page](https://github.com/ericeallen/towel/releases) lists every
-published version with its release notes.
+published version with its release notes, and the
+[compatibility policy](https://github.com/ericeallen/towel/blob/v2.0/docs/COMPATIBILITY.md#upgrades-and-support)
+says what beta means for upgrades.
 
 The PyPI package is **[`code-towel`](https://pypi.org/project/code-towel/)**;
 the command is **`towel`**. The PyPI name `towel` belongs to an unrelated project,
