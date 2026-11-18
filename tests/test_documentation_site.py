@@ -27,6 +27,7 @@ import tomllib
 from typing import List, Tuple
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGURATION = ROOT / "zensical.toml"
@@ -151,6 +152,20 @@ def test_the_users_pages_are_in_the_users_part_of_the_navigation(page: str) -> N
     groups = {target: group for group, target in _entries(_project()["nav"])}
     assert page in groups
     assert not set(groups[page]) & {*RECORD_GROUPS, CONTRIBUTORS}
+
+
+def test_search_excludes_the_two_record_sections() -> None:
+    """Documentation audit A20: inherited page metadata keeps records out of guide searches."""
+    project = _project()
+    plugins = project["plugins"]
+    assert isinstance(plugins, dict) and "meta" in plugins
+    docs = ROOT / str(project["docs_dir"])
+    excluded = {
+        p.parent.relative_to(docs).as_posix()
+        for p in docs.rglob(".meta.yml")
+        if yaml.safe_load(p.read_text()).get("search", {}).get("exclude") is True
+    }
+    assert excluded == set(RECORD_DIRECTORIES.values())
 
 
 def test_headings_get_githubs_anchors_so_one_link_works_in_both_places() -> None:

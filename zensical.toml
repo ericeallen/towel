@@ -102,6 +102,9 @@ nav = [
   ] },
 ]
 
+# Inherit search.exclude from the two contributor sections’ .meta.yml files.
+[project.plugins.meta]
+
 [project.theme]
 language = "en"
 features = [
