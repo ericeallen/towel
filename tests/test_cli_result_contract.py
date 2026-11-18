@@ -183,6 +183,35 @@ def test_empty_rename_inventory_is_json_too(tmp_path: Path) -> None:
     assert json.loads(result.stdout)["helpers"] == []
 
 
+def test_a_time_limit_conflicting_with_an_inherited_timer_is_a_cli_error(tmp_path: Path) -> None:
+    """Release campaign: exec preserves a parent's alarm across CLI startup."""
+    source = _source(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import os, signal, sys; signal.alarm(60); "
+            "os.execv(sys.executable, [sys.executable, '-m', 'towel', *sys.argv[1:]])",
+            "preview",
+            str(source),
+            "--time-limit",
+            "30",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 1
+    assert (
+        result.stderr.strip()
+        == "Error: --time-limit conflicts with an already active interval timer"
+    )
+    document = json.loads(result.stdout)
+    assert document["status"] == document["termination"] == "error"
+    assert document["published"] is False
+
+
 @pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "not-a-number"])
 def test_time_limit_rejects_unusable_values(value: str) -> None:
     result = invoke(["preview", "unused.py", "--time-limit", value])

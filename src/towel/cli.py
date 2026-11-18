@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from towel.unification.models import RefactoringProposal
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, journals_covering, pending_journal_remedy, recover
-from towel.execution_budget import BudgetExpired, run_with_budget
+from towel.execution_budget import BudgetExpired, TimerConflict, run_with_budget
 from towel.cli_reporting import (
     BindingRecord as BindingRecord,
     CallRecord as CallRecord,
@@ -296,6 +296,9 @@ def _main() -> None:
             if getattr(args, "quiet", False):
                 args.progress = "none"
             run_with_budget(getattr(args, "time_limit", None), lambda: _dispatch(parser, args))
+    except TimerConflict as error:
+        _write_failure_result(args, "error", "error", str(error))
+        parser.exit(1, f"Error: {error}\n")
     except BudgetExpired:
         # A signal may arrive while redirect_stdout.__enter__ has assigned
         # sys.stdout but before the with statement can register its __exit__.

@@ -27,6 +27,10 @@ from types import FrameType
 from typing import Callable, Iterator
 
 
+class TimerConflict(ValueError):
+    """The caller already owns the real-time interval timer."""
+
+
 class BudgetExpired(BaseException):
     """An incomplete run, never a candidate refusal or a failed type check.
 
@@ -68,7 +72,7 @@ def run_with_budget(seconds: float | None, action: Callable[[], None]) -> None:
         action()
         return
     if _current_budget() is not None or signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
-        raise ValueError("A time limit cannot replace an already active interval timer")
+        raise TimerConflict("--time-limit conflicts with an already active interval timer")
     previous_handler = signal.getsignal(signal.SIGALRM)
 
     def timed() -> None:
