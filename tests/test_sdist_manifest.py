@@ -47,6 +47,8 @@ READ_BY_THE_SUITE = (
     "test_examples_crossfile_expected_output",
     "test_examples_crossfile_strict_expected_output",
     "zensical.toml",
+    "docs/design/.meta.yml",
+    "docs/maintainers/.meta.yml",
 )
 
 

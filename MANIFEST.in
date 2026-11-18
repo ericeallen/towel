@@ -16,7 +16,7 @@ recursive-include test_examples_crossfile_strict_expected_output *.py
 recursive-include scripts *
 exclude scripts/_debug_global_case.py scripts/debug_pair.py
 prune .templates
-recursive-include docs *.md
+recursive-include docs *.md .meta.yml
 include zensical.toml
 prune docs/docs_local
 prune .todo
