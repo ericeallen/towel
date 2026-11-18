@@ -2,6 +2,9 @@
 
 [Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
+Historical: Towel 2.0 changed several refusals described here; for current
+behavior see [why something was left alone](../../WHY_LEFT_ALONE.md).
+
 Status: several recoveries shipped in 1.792; exact constant occurrences and
 bounded IF-only fresh outputs were implemented during 1.946 preparation.
 Publication of 1.946 was verified on October 19; 1.947 was published October 26.

@@ -1,12 +1,17 @@
 # Reading Towel's output
 
-Most of what Towel writes is a helper and calls to it, with the values that
-differed between the copies passed as arguments, as in the
+```python
+return __extracted_func_0(amount, 0.10)
+```
+
+Most of what Towel writes is a helper and calls to it like this one, with the
+values that differed between the copies passed as arguments, as in the
 [quick start](QUICKSTART.md). This page explains the rest: a `lambda` in a
 call, a helper inside a class, a call to a function you already had, and what
 strict mode adds. Every example runs in a project whose `pyproject.toml`
-configures Black (a `[tool.black]` table with `line-length = 88`), so the
-inserted code is formatted.
+configures Black (a `[tool.black]` table with `line-length = 88`), with Black
+installed where Towel runs, so the inserted code is formatted. Without Black, the
+first line of each output says the code is inserted unformatted.
 
 ## A `lambda:` that delays an argument
 
@@ -75,7 +80,8 @@ something else in the block, runs repeatedly, runs only under a condition, or
 runs inside a `try` that could catch its failure. Constants, variables,
 module-level functions and classes, and expressions the helper evaluates first
 are passed as themselves. If one call needs a `lambda:` for a parameter, every
-call passes one for it.
+call passes one for it. Strict mode passes fewer expressions as themselves, so
+its calls hold more of these.
 
 ## A `lambda` that takes an argument
 
@@ -253,8 +259,9 @@ Input files were not changed.
 
 When one copy is already the whole body of a function, the other copies call
 that function, and there is no new helper to name. Towel does this only where
-it can show that nothing rebinds the function while the copies run. A
-repeated expression is extracted into a new helper even when an existing
+it can show that nothing rebinds the function while the copies run; strict mode
+also needs the whole program in view (`--complete-scope`) and no object handed
+over to the function. A repeated expression is extracted into a new helper even when an existing
 function returns it.
 
 ## Names, parameters and other details
@@ -270,7 +277,16 @@ function returns it.
   it when the project's `requires-python` allows; `rename-helpers` keeps it.
 - **`async def` helpers.** A block that uses `await`, `async for` or `async with`
   becomes an `async def` helper, called as `await helper(…)`. A block that
-  yields is left alone.
+  yields is left alone, and so is one whose exceptions an `async` helper would
+  change (`coroutine_exception_boundary`).
+- **Repetition inside one function.** A block repeated within a single function
+  becomes a helper too, as `_restore_dict` does in the [gallery](GALLERY.md).
+- **Repeated expressions.** A multi-line expression repeated in otherwise
+  different statements, such as a long condition, becomes a helper that returns
+  its value. An expression holding `yield`, `await` or `:=`, one using `super()`,
+  and anything inside a `lambda` or an f-string stay where they are. Strict mode
+  also leaves alone an expression that decides an `if` in one place and gives a
+  value in another (`truth_test_repeated`).
 - **Where helpers go.** A module's helper goes before its first definition; a
   helper of one class or function goes inside it. With `--cross-module`, one
   module defines a helper and the others import it ([sharing across modules](CROSS_MODULE.md)).
@@ -278,8 +294,9 @@ function returns it.
   annotation needs is added under `if 0 > 1:`, which never runs; type checkers
   still read it. Unlike `if TYPE_CHECKING:`, it needs no import of its own and
   tests nothing a program can change ([typed projects](TYPING.md)).
-- **Comments and formatting.** Comments in moved code move with it. Inserted
-  code is formatted with Ruff or Black, if it is installed where Towel runs,
+- **Comments and formatting.** Comments in moved code move with it. The helper
+  is built from the first copy, so a comment found only in another copy can land
+  beside the wrong lines or be lost: read the whole diff. Inserted code is formatted with Ruff or Black, if it is installed where Towel runs,
   when the project configures it, when its pre-commit hooks run it, or when
   every file the run analyses already matches its defaults; a note names the
   formatter and the reason. Otherwise the note says so and Towel leaves layout
@@ -292,10 +309,12 @@ function returns it.
   not count, except in strict mode when a whole function body moves: there the
   whole signature must fit, including the hidden `_towel_owner` parameter.
 - **`--parameterize-builtins`.** Copies in different modules may not mean the same
-  `len`: a module can define its own. Such copies are left alone unless you pass
-  `--parameterize-builtins`, which hands the helper each caller's `len` as
-  `lambda: len`. They are still left alone where the project could replace a
-  module's `__builtins__`, and where the copies use different builtins.
+  `len`: a module can define its own. In relaxed mode a shared helper reads the
+  builtin directly unless the project could give one module its own; strict mode
+  leaves such copies alone. `--parameterize-builtins` hands the helper each
+  caller's `len` as `lambda: len`, in either mode. Copies stay alone where the
+  project could replace a module's `__builtins__`, and where they use different
+  builtins.
 
 ## Strict mode's bookkeeping
 
@@ -333,6 +352,13 @@ rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
 none of these three assumptions. A change that breaks a program meeting these
 conditions is a bug.
 
+Relaxed mode's assumptions reach a little further than that summary. Testing a
+value's truth (`__bool__` or `__len__`) must have no side effects and give the
+same answer twice. Nothing may depend on the `__qualname__` of a lambda that
+uses only its own parameters. With `--cross-module`, code outside the project
+must not rebind a builtin in one module, and equal literals must not be
+compared with `is`. `--strict` assumes none of these.
+
 Protect a function by ending its `def` line with `# towel: no-extract`:
 
 ```python
@@ -344,5 +370,7 @@ or leave its file out with `--exclude`
 ([command reference](CLI_GUIDE.md#protect-a-function)). The complete rules
 behind every form on this page are in
 [generated code, in full](design/GENERATED_CODE_RULES.md).
+
+**Next:** [why something was left alone](WHY_LEFT_ALONE.md) covers the code Towel did not change.
 
 [Documentation index](README.md)

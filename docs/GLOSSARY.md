@@ -1,5 +1,9 @@
 # Glossary
 
+```python
+return __extracted_func_0(amount, 0.10)  # a call to a helper, with one argument
+```
+
 The words Towel's pages and messages use, each in plain terms. Terms are grouped
 by when you meet them: running Towel, reading its output, and the rarer cases.
 
@@ -31,8 +35,9 @@ Fixed point
 Left alone, or declined
 :   Towel found duplicate blocks but did not extract them, because it could not
     show that the change keeps the program's behavior or because the helper
-    would cost more to read than the code it replaces. Every run gives the
-    reasons; `--explain` lists every place ([reasons](WHY_LEFT_ALONE.md)).
+    would cost more to read than the code it replaces. A run that extracts
+    nothing gives the reasons; `--explain` lists every place the final analysis
+    left alone ([reasons](WHY_LEFT_ALONE.md)).
 
 Refused
 :   A run, or a request such as a rename, that stops before writing anything,
@@ -44,8 +49,8 @@ Relaxed mode
     effects. It assumes three things nearly every program satisfies: that it
     does not depend on when an object it no longer uses is released, that
     reading an attribute, indexing, comparing and arithmetic have no side
-    effects, and that module names are not rebound while a helper runs
-    ([relaxed and strict](RELAXED_AND_STRICT.md)).
+    effects, and that module names are not rebound while a helper runs. A few
+    narrower conditions are on [relaxed and strict](RELAXED_AND_STRICT.md).
 
 Strict mode
 :   `--strict` makes Towel also preserve exactly when objects are released and

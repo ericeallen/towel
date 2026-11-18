@@ -1,5 +1,14 @@
 # Getting help
 
+A useful report fits on one screen:
+
+```text
+towel 2.0, Python 3.13.7, macOS 15
+Command: towel preview src/ --explain
+Printed: src/a.py:3-9 and src/b.py:4-10: <the reason Towel gave>
+Expected: one helper shared by both functions
+```
+
 ## Where to ask
 
 Ask on the [issue tracker](https://github.com/ericeallen/towel/issues). It is the
@@ -25,6 +34,11 @@ A report that lets someone run what you ran gets an answer fastest. Include:
 - **What you expected,** and, if Towel changed your program's behavior, the test
   or output that shows the difference.
 
+The bug-report template on the [new-issue page](https://github.com/ericeallen/towel/issues/new/choose)
+asks for the same things.
+
+## What counts as a bug
+
 **What Towel promises.** A change Towel makes keeps what your program
 computes and does: its results, output, exceptions and the order of its side
 effects. That holds for programs that do not use reflection or
@@ -40,8 +54,12 @@ rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
 none of these three assumptions. A change that breaks a program meeting these
 conditions is a bug.
 
-The bug-report template on the [new-issue page](https://github.com/ericeallen/towel/issues/new/choose)
-asks for the same things.
+Relaxed mode's assumptions reach a little further than that summary. Testing a
+value's truth (`__bool__` or `__len__`) must have no side effects and give the
+same answer twice. Nothing may depend on the `__qualname__` of a lambda that
+uses only its own parameters. With `--cross-module`, code outside the project
+must not rebind a builtin in one module, and equal literals must not be
+compared with `is`. `--strict` assumes none of these.
 
 ## Security problems
 
