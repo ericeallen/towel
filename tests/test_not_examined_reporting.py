@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_cli_integration import invoke
+from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
 from towel.cli_reporting import run_outcome
 from towel.unification.fixed_point import RunReport
 from towel.unification.models import NotExamined
@@ -89,7 +89,12 @@ def test_unsupported_code_is_named_without_an_all_clear(
     )
     assert result.status == 0, result
     sentence = case.sentence.replace("example.py", "out.py") if command == "dry" else case.sentence
-    assert sentence in result.stdout
+    assert (sentence in result.stdout) is explain
+    summary = "1 file holds module-level code or early-return guards that Towel does not examine"
+    assert (
+        result.stdout.splitlines().count(summary + ("." if explain else "; --explain lists them."))
+        == 1
+    )
     assert "No repeated code found in the code Towel examined in 1 file." in result.stdout
     assert "No repeated code found in 1 file." not in result.stdout
     assert "repeat each other" not in result.stdout
@@ -143,3 +148,57 @@ def test_unexamined_code_does_not_erase_positive_or_declined_findings() -> None:
         )
         == "all_left_alone"
     )
+
+
+@pytest.mark.parametrize("command", ["preview", "quick", "dry"])
+@pytest.mark.parametrize("found", [False, True])
+def test_coverage_is_one_line_until_the_reader_asks_for_files(
+    tmp_path: Path, command: str, found: bool
+) -> None:
+    """Integration 7: many files get one qualification only when nothing was found."""
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "first.py").write_text(CASES[1].source + "print('first')\n")
+    (root / "second.py").write_text("print('second')\n" + (LITERAL_DUPLICATES if found else ""))
+    args = _arguments(command, root, tmp_path / "out", False)
+    result = invoke(args)
+    assert result.status == 0, result
+    summary = "2 files hold module-level code or early-return guards that Towel does not examine"
+    assert result.stdout.splitlines().count(summary + "; --explain lists them.") == int(not found)
+    assert "is not examined:" not in result.stdout
+    assert "are not examined on their own:" not in result.stdout
+    if found:
+        assert (
+            "refactoring(s)" if command != "quick" else "refactoring opportunities"
+        ) in result.stdout
+        assert "No repeated code" not in result.stdout
+
+    explained = invoke([*_arguments(command, root, tmp_path / "explained", False), "--explain"])
+    assert explained.status == 0, explained
+    assert explained.stdout.splitlines().count(summary + ".") == 1
+    for name in ("first.py", "second.py"):
+        assert (
+            f"Module-level code is not examined: {name} has 1 executable statement."
+            in explained.stdout
+        )
+    assert (
+        "Early-return guards are not examined on their own: first.py has 1 guard."
+        in explained.stdout
+    )
+
+
+def test_a_declined_match_is_a_finding_for_the_coverage_summary(tmp_path: Path) -> None:
+    """Integration 7: a named match left alone also makes the blanket qualification unnecessary."""
+    source = tmp_path / "feed.py"
+    source.write_text(
+        "print('module')\n"
+        + "".join(
+            f"def {name}(items):\n    for item in items:\n        yield item + 1\n        yield item * 2\n"
+            for name in ("first", "second")
+        )
+    )
+    result = invoke(_arguments("preview", source, tmp_path / "out.py", False))
+    assert result.status == 0, result
+    assert "with similar code and extracted none." in result.stdout
+    assert "module-level code or early-return guards" not in result.stdout
+    assert "Module-level code is not examined:" not in result.stdout

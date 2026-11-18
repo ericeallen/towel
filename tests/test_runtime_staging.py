@@ -142,7 +142,7 @@ def test_relaxed_staging_skips_unreadable_inputs(
     tmp_path: Path, preview: bool, directory_mode: int
 ) -> None:
     """Runtime items 4/6: staging cannot defeat relaxed unreadable-input handling."""
-    from towel.source_files import source_policy
+    from towel.source_files import current_source_policy, source_policy_context
 
     root = tmp_path / "project"
     root.mkdir()
@@ -154,14 +154,19 @@ def test_relaxed_staging_skips_unreadable_inputs(
     (locked_directory / "m.py").write_text("x = 3\n")
     locked_file.chmod(0)
     locked_directory.chmod(directory_mode)
+
+    def check_stage() -> None:
+        policy = current_source_policy()
+        assert policy is not None
+        with staged_project(root, root, tmp_path / "out", limit=100, preview=preview) as stage:
+            assert (stage.target / "good.py").exists()
+            assert not (stage.target / "locked.py").exists()
+            assert not (stage.target / "locked_directory").exists()
+        assert locked_file in policy.skipped
+        assert locked_directory in policy.skipped
+
     try:
-        with source_policy(strict=False) as policy:
-            with staged_project(root, root, tmp_path / "out", limit=100, preview=preview) as stage:
-                assert (stage.target / "good.py").exists()
-                assert not (stage.target / "locked.py").exists()
-                assert not (stage.target / "locked_directory").exists()
-            assert locked_file in policy.skipped
-            assert locked_directory in policy.skipped
+        source_policy_context(strict=False).run(check_stage)
     finally:
         locked_file.chmod(0o600)
         locked_directory.chmod(0o700)

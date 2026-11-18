@@ -91,3 +91,13 @@ def test_shared_context_preserves_independent_groups_but_overlapping_data_does_n
     # Shared expected values still permit independent groups (the same receiver
     # is shared too); only partial overlap or different structure links cases.
     assert _worthwhile(parameters, statements) is worthwhile
+
+
+def test_literal_expected_values_are_case_data() -> None:
+    """Integration 7: a run of the same check stays a run when each expected value differs."""
+    assert not _worthwhile(
+        "convert",
+        "    assert convert('one') == 1\n"
+        "    assert convert('two') == 2\n"
+        "    assert convert('three') == 3\n",
+    )

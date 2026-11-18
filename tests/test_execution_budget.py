@@ -20,36 +20,43 @@ from types import FrameType
 
 import pytest
 
-from towel.execution_budget import BudgetExpired, execution_budget, finish_before_publication
+from towel.execution_budget import BudgetExpired, finish_before_publication, run_with_budget
 
 
 def test_timeout_unwinds_and_restores_signal_state() -> None:
     previous = signal.getsignal(signal.SIGALRM)
     cleaned = False
+
+    def work() -> None:
+        nonlocal cleaned
+        try:
+            time.sleep(1)
+        finally:
+            cleaned = True
+
     with pytest.raises(BudgetExpired):
-        with execution_budget(0.01):
-            try:
-                time.sleep(1)
-            finally:
-                cleaned = True
+        run_with_budget(0.01, work)
     assert cleaned
     assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
     assert signal.getsignal(signal.SIGALRM) == previous
 
 
 def test_publication_finishes_after_the_budget_without_false_timeout() -> None:
-    with execution_budget(0.1):
+    def publish() -> None:
         finish_before_publication()
         time.sleep(0.15)
+
+    run_with_budget(0.1, publish)
     assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
 
 
 def test_an_existing_timer_is_never_overwritten() -> None:
-    with execution_budget(10):
+    def nested() -> None:
         with pytest.raises(ValueError, match="already active"):
-            with execution_budget(1):
-                pytest.fail("must not replace the outer budget")
+            run_with_budget(1, lambda: pytest.fail("must not replace the outer budget"))
         assert signal.getitimer(signal.ITIMER_REAL)[0] > 0
+
+    run_with_budget(10, nested)
 
 
 def test_an_unrelated_alarm_handler_survives_an_unexpected_exception() -> None:
@@ -59,11 +66,13 @@ def test_an_unrelated_alarm_handler_survives_an_unexpected_exception() -> None:
     def unrelated(signum: int, frame: FrameType | None) -> None:
         received.append(signum)
 
+    def fail() -> None:
+        raise RuntimeError("injected failure")
+
     signal.signal(signal.SIGALRM, unrelated)
     try:
         with pytest.raises(RuntimeError, match="injected failure"):
-            with execution_budget(10):
-                raise RuntimeError("injected failure")
+            run_with_budget(10, fail)
         assert signal.getsignal(signal.SIGALRM) is unrelated
         assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
         signal.raise_signal(signal.SIGALRM)
@@ -77,14 +86,19 @@ def test_alarm_during_pool_cleanup_does_not_abandon_workers() -> None:
     from towel.execution_budget import polling_interrupts
 
     cleaned = False
-    with pytest.raises(KeyboardInterrupt):
-        with execution_budget(10), polling_interrupts() as check:
+
+    def work() -> None:
+        nonlocal cleaned
+        with polling_interrupts() as check:
             try:
                 signal.raise_signal(signal.SIGINT)
                 check()
             finally:
                 signal.raise_signal(signal.SIGALRM)
                 cleaned = True
+
+    with pytest.raises(KeyboardInterrupt):
+        run_with_budget(10, work)
     assert cleaned
 
 
@@ -106,11 +120,16 @@ def test_deadline_during_normal_pool_cleanup_is_delivered_after_cleanup() -> Non
     from towel.execution_budget import polling_interrupts
 
     cleaned = False
-    with pytest.raises(BudgetExpired):
-        with execution_budget(10), polling_interrupts() as check:
+
+    def work() -> None:
+        nonlocal cleaned
+        with polling_interrupts() as check:
             check()
             signal.raise_signal(signal.SIGALRM)
             cleaned = True
+
+    with pytest.raises(BudgetExpired):
+        run_with_budget(10, work)
     assert cleaned
 
 
@@ -129,3 +148,35 @@ def test_recorded_signal_survives_a_broken_pool(signum: int) -> None:
     if isinstance(raised.value, SystemExit):
         assert raised.value.code == 143
     assert signal.getsignal(signum) == previous
+
+
+def test_deadline_at_disarm_cannot_strand_the_signal_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Integration 8: a deadline at teardown must leave the caller able to set another."""
+    from contextvars import copy_context
+
+    previous = signal.getsignal(signal.SIGALRM)
+    real_setitimer = signal.setitimer
+
+    def expire_at_disarm(timer: int, seconds: float) -> tuple[float, float]:
+        if not seconds:
+            signal.raise_signal(signal.SIGALRM)
+        return real_setitimer(timer, seconds)
+
+    def run() -> None:
+        with monkeypatch.context() as patch:
+            patch.setattr(signal, "setitimer", expire_at_disarm)
+            try:
+                run_with_budget(30, lambda: None)
+            except BudgetExpired:
+                pass
+        assert signal.getsignal(signal.SIGALRM) == previous
+        assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+        run_with_budget(30, lambda: None)
+
+    try:
+        copy_context().run(run)
+    finally:
+        real_setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)

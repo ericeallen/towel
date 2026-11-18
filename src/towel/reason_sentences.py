@@ -64,6 +64,10 @@ _UNPROFITABLE = _says(
     " blocks would not be smaller than the blocks themselves (counted in syntax, not lines)."
 )
 
+_REPEATED_STATEMENT_GROUP = _says(
+    "This helper would bundle independent repetitions of the same operation."
+)
+
 PAIR_REASONS: Mapping[RejectReason, Explanation] = {
     RejectReason.RESOURCE_LIFETIME_UNPROVEN: _says(
         "This block creates or weakly references a resource that later code may depend on,"
@@ -340,6 +344,7 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         " --max-parameters allows.",
         "If the blocks need more parameters, raise --max-parameters.",
     ),
+    RejectReason.REPEATED_STATEMENT_GROUP: _REPEATED_STATEMENT_GROUP,
     RejectReason.UNPROFITABLE_HELPER: _UNPROFITABLE,
     RejectReason.UNPROVEN_IMPORT: _says(
         _CROSS_MODULE + "no existing import in the project shows how one of the modules can"
@@ -499,6 +504,7 @@ PROPOSAL_REASONS: Mapping[str, Explanation] = {
         "The project's Ruff check failed on the changed file, or reported something new there."
     ),
     "could not be rendered": _says("Towel could not write the helper or one of its calls."),
+    "repeated_statement_group": _REPEATED_STATEMENT_GROUP,
     "unprofitable helper": _UNPROFITABLE,
     "changed nothing": _says("Applying it would have left the code exactly as it was."),
 }

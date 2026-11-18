@@ -59,3 +59,34 @@ def test_library_pairing_exception_clears_progress(
             # A failing regression must not leak a display into the other tests.
             for renderer in tuple(progress._ACTIVE):
                 renderer.close()
+
+
+def test_api_deadline_during_renderer_close_does_not_leave_it_active(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Integration 8: the public API owns its bars even when the deadline interrupts close."""
+    from towel.api import UnificationRefactorEngine
+    from towel.execution_budget import BudgetExpired
+
+    source = tmp_path / "module.py"
+    source.write_text("x = 1\n")
+    original_close = progress.ProgressRenderer.close
+    interrupted: list[progress.ProgressRenderer] = []
+
+    def close(renderer: progress.ProgressRenderer) -> None:
+        if not interrupted and renderer._visible:
+            interrupted.append(renderer)
+            raise BudgetExpired()
+        original_close(renderer)
+
+    monkeypatch.setattr(progress, "load_tqdm", lambda: None)
+    monkeypatch.setattr(progress.ProgressRenderer, "close", close)
+    with contextlib.redirect_stderr(_TerminalStream()):
+        try:
+            with pytest.raises(BudgetExpired):
+                UnificationRefactorEngine().analyze_file(str(source))
+            assert interrupted[0]._closed
+            assert not progress._ACTIVE
+        finally:
+            for renderer in interrupted:
+                original_close(renderer)

@@ -28,7 +28,7 @@ from towel.unification.models import (
     Replacement,
     is_generated_helper_name,
 )
-from towel.unification.profitability import _syntax_cost, worthwhile_helper
+from towel.unification.profitability import HelperRejection, _syntax_cost, helper_rejection
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -61,22 +61,22 @@ def _verify_counted_callers(
         helper: ast.FunctionDef,
         replacements: Sequence[Replacement],
         callers: Sequence[ast.AST] | None = None,
-    ) -> bool:
+    ) -> HelperRejection | None:
         assert callers is not None
         analysis[tuple(r.line_range for r in replacements)] = copy.deepcopy(list(callers))
-        return worthwhile_helper(helper, replacements, callers)
+        return helper_rejection(helper, replacements, callers)
 
     def counted_final(
         helper: ast.FunctionDef,
         replacements: Sequence[Replacement],
         callers: Sequence[ast.AST] | None = None,
-    ) -> bool:
+    ) -> HelperRejection | None:
         assert callers is not None
         final.append(copy.deepcopy(list(callers)))
-        return worthwhile_helper(helper, replacements, callers)
+        return helper_rejection(helper, replacements, callers)
 
-    monkeypatch.setattr(pair_evaluation, "worthwhile_helper", counted_analysis)
-    monkeypatch.setattr(materialize, "worthwhile_helper", counted_final)
+    monkeypatch.setattr(pair_evaluation, "helper_rejection", counted_analysis)
+    monkeypatch.setattr(materialize, "helper_rejection", counted_final)
     engine = UnificationRefactorEngine(annotate_helpers=False)
     proposals = engine.analyze_files([str(path)], progress="none")
     assert len(proposals) == 1

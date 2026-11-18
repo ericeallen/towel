@@ -143,11 +143,11 @@ def test_forked_pool_produces_the_serial_proposals(
 
     assert counts and counts[0] >= 128, counts
     assert [c["max_workers"] for c in constructions] == [2]
-    assert constructions[0]["initializer"] is parallel._start_parent_watchdog
+    assert constructions[0]["initializer"] is parallel._initialize_pair_worker
     assert [p.description for p in forked] == [p.description for p in serial]
     assert _rendered(parallel_engine, path, forked) == serial_rendered
-    # The worker globals never outlive the pool.
-    assert parallel._worker_engine is None and parallel._worker_pairs is None
+    # The parent never owns the workers' binding.
+    assert parallel._worker_inputs is None
 
 
 def test_probe_that_projects_a_cheap_run_stays_serial(
@@ -233,7 +233,7 @@ def test_broken_pool_falls_back_to_the_serial_result_with_a_warning(
     ), warnings
     assert [p.description for p in recovered] == [p.description for p in serial]
     assert _rendered(parallel_engine, path, recovered) == serial_rendered
-    assert parallel._worker_engine is None and parallel._worker_pairs is None
+    assert parallel._worker_inputs is None
 
 
 def test_rebinding_warnings_are_deduplicated_in_parent_across_workers_and_passes(
@@ -270,3 +270,23 @@ def test_rebinding_warnings_are_deduplicated_in_parent_across_workers_and_passes
     finally:
         logger.removeHandler(handler)
         handler.close()
+
+
+def test_deadline_before_fork_keeps_worker_inputs_out_of_the_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Integration 8: interrupting pool setup cannot strand a run's engine in the parent."""
+    from towel.execution_budget import BudgetExpired
+
+    path = tmp_path / "m.py"
+    path.write_text(_module(8))
+    _lower_thresholds(monkeypatch)
+
+    def expire_before_fork(**kwargs: object) -> None:
+        with pytest.raises(RuntimeError, match="Worker not initialized"):
+            parallel._evaluate_pair_chunk((0, 0))
+        raise BudgetExpired()
+
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", expire_before_fork)
+    with pytest.raises(BudgetExpired):
+        _analyze(path, workers=2)

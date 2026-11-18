@@ -23,7 +23,7 @@ import pytest
 
 from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
 from towel.program_files import refuse_unparsed_program
-from towel.source_files import source_policy
+from towel.source_files import source_policy_context
 from towel.type_inference import CheckSuccess, MypyInferrer, PyrightOracle
 
 pytestmark = pytest.mark.relaxed_mode
@@ -92,18 +92,21 @@ def test_skipping_invalid_input_keeps_real_type_errors_visible(
     source.write_text("x: int = 1\n")
     (tmp_path / "bad.py").write_text("def broken(:\n")
     oracle = MypyInferrer() if checker == "mypy" else PyrightOracle()
+
+    def check() -> None:
+        refuse_unparsed_program(tmp_path)
+        baseline = oracle.check_project({str(source): source.read_text()})
+        assert isinstance(baseline, CheckSuccess) and not baseline.errors, baseline
+        changed = oracle.check_project({str(source): 'x: int = "wrong"\n'})
+        assert isinstance(changed, CheckSuccess) and changed.errors, changed
+        assert any(Path(error.path) == source for error in changed.errors)
+        source.write_text('x: int = "already wrong"\n')
+        original = oracle.check_project({str(source): source.read_text()})
+        assert isinstance(original, CheckSuccess) and original.errors, original
+        assert any(Path(error.path) == source for error in original.errors)
+
     try:
-        with source_policy(strict=False):
-            refuse_unparsed_program(tmp_path)
-            baseline = oracle.check_project({str(source): source.read_text()})
-            assert isinstance(baseline, CheckSuccess) and not baseline.errors, baseline
-            changed = oracle.check_project({str(source): 'x: int = "wrong"\n'})
-            assert isinstance(changed, CheckSuccess) and changed.errors, changed
-            assert any(Path(error.path) == source for error in changed.errors)
-            source.write_text('x: int = "already wrong"\n')
-            original = oracle.check_project({str(source): source.read_text()})
-            assert isinstance(original, CheckSuccess) and original.errors, original
-            assert any(Path(error.path) == source for error in original.errors)
+        source_policy_context(strict=False).run(check)
     finally:
         oracle.close()
 
@@ -117,12 +120,15 @@ def test_checker_does_not_follow_import_into_skipped_module(tmp_path: Path, chec
     source.write_text("import bad\nx: int = 1\n")
     (tmp_path / "bad.py").write_text("def broken(:\n")
     oracle = MypyInferrer() if checker == "mypy" else PyrightOracle()
+
+    def check() -> None:
+        refuse_unparsed_program(tmp_path)
+        result = oracle.check_project({str(source): source.read_text()})
+        assert isinstance(result, CheckSuccess), result
+        assert result.errors, result
+        assert any(Path(error.path) == source for error in result.errors)
+
     try:
-        with source_policy(strict=False):
-            refuse_unparsed_program(tmp_path)
-            result = oracle.check_project({str(source): source.read_text()})
-            assert isinstance(result, CheckSuccess), result
-            assert result.errors, result
-            assert any(Path(error.path) == source for error in result.errors)
+        source_policy_context(strict=False).run(check)
     finally:
         oracle.close()

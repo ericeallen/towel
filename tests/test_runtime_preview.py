@@ -114,3 +114,29 @@ def test_timeout_during_pairs_retains_census_without_claiming_no_duplicates(
         assert "these changes" not in preview.stdout
         assert "no changes were applied" in preview.stdout
     assert source.read_bytes() == before
+
+
+def test_interrupted_previews_translate_only_their_own_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Integration 8: the private stage's path mapping belongs to the preview."""
+    import signal
+    from contextvars import copy_context
+    from towel import cli
+    from towel.diagnostics import LOG
+
+    caller = copy_context()
+    target = tmp_path / "valid.py"
+    target.write_text("value = 1\n")
+    outputs: list[str] = []
+
+    def expire(options: cli.DryOptions, *, preview: bool) -> None:
+        outputs.append(options.output)
+        caller.run(LOG.warning, "Outside %s", options.output)
+        LOG.warning("Inside %s", options.output)
+        signal.raise_signal(signal.SIGALRM)
+
+    monkeypatch.setattr(cli, "_execute_dry_with_policy", expire)
+    assert invoke(["preview", str(target), "--time-limit", "30"]).status == 124
+    assert f"Outside {outputs[0]}" in caplog.messages
+    assert f"Inside {target}" in caplog.messages

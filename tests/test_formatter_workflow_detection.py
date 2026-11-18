@@ -24,7 +24,7 @@ from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
 from tests.test_generated_code_formatting import LITERAL_STRINGS
 from towel import formatting
 from towel.project_tools import ToolChoice
-from towel.source_files import source_policy
+from towel.source_files import current_source_policy, source_policy_context
 
 
 def _clean(path: Path) -> None:
@@ -74,9 +74,14 @@ def test_one_dirty_selected_file_prevents_inference_but_excluded_file_does_not(
     _clean(clean)
     dirty.write_text("value='unformatted'\n")
     assert formatting.formatter_factory_for_project(tmp_path)(str(clean)) is None
-    with source_policy(strict=False) as policy:
+
+    def check_exclusion() -> None:
+        policy = current_source_policy()
+        assert policy is not None
         policy.excluded_names = frozenset({"dirty.py"})
         assert formatting.formatter_factory_for_project(tmp_path)(str(clean)) is not None
+
+    source_policy_context(strict=False).run(check_exclusion)
 
 
 @pytest.mark.parametrize("hook", ["black", "ruff-format", "'black'", '"ruff-format"'])
@@ -134,8 +139,8 @@ def test_missing_tools_do_not_establish_formatter(
         return subprocess.CompletedProcess(command, 1, "", "No module named black")
 
     monkeypatch.setattr(subprocess, "run", unavailable)
-    with source_policy(strict=False, include_ignored=True):
-        assert formatting._sources_already_formatted(tmp_path) is None
+    context = source_policy_context(strict=False, include_ignored=True)
+    assert context.run(formatting._sources_already_formatted, tmp_path) is None
 
 
 def test_inferred_black_uses_black_defaults_not_linter_width(tmp_path: Path) -> None:

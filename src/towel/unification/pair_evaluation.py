@@ -100,7 +100,7 @@ from .reuse import ExistingFunctionReuse
 from .annotation_wiring import HelperAnnotationWiring, declared_oldest_python
 from .annotations import complete_with_any
 from .placement import HelperPlacement, _helper_reads_class_private_names
-from .profitability import worthwhile_helper
+from .profitability import helper_rejection
 from .unsupported_syntax import unsupported_syntax
 from .block_analysis import BlockAnalysis
 from .engine_state import BlockSite
@@ -2380,12 +2380,13 @@ class PairEvaluation(
                 # without a checker, each bare parameter acquires an Any; count
                 # that minimum interface before offering a marginal proposal.
                 helper = complete_with_any(helper, None, self._receiver_name(proposal)).helper
-            if not worthwhile_helper(
+            refusal = helper_rejection(
                 helper,
                 proposal.replacements,
                 self._rendered_call_sites(proposal, reserve_ownership_holder=True),
-            ):
-                self._debug_reject(RejectReason.UNPROFITABLE_HELPER, pair)
+            )
+            if refusal is not None:
+                self._debug_reject(refusal, pair)
                 return None
         return proposal
 

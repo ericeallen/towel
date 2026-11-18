@@ -29,11 +29,13 @@ variables (``TOWEL_WORKERS``, ``TOWEL_CHECK_AST_IMMUTABLE``,
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import logging
 import os
 import sys
-from typing import Mapping, Optional, TextIO
+from typing import Callable, Iterator, Mapping, Optional, TextIO
 
 LOG = logging.getLogger("towel")
 """User-facing notes and warnings from the library."""
@@ -52,6 +54,37 @@ TYPES = logging.getLogger("towel.types")
 
 UNIFIER = logging.getLogger("towel.unifier")
 """Recovered internal failures inside unification; never on by an environment variable."""
+
+
+_PUBLIC_PATHS: ContextVar[tuple[Callable[[str], str], ...]] = ContextVar(
+    "towel_public_log_paths", default=()
+)
+
+
+def _translate_log_paths(record: logging.LogRecord) -> bool:
+    rewrites = _PUBLIC_PATHS.get()
+    if rewrites:
+        message = rewritten = record.getMessage()
+        for rewrite in rewrites:
+            rewritten = rewrite(rewritten)
+        if rewritten != message:
+            record.msg, record.args = rewritten, None
+    return True
+
+
+# The filter is permanent. Only the run's context ever holds private stage paths.
+for _logger in (LOG, REJECTIONS, VALIDATION, OVERLAP, TYPES, UNIFIER):
+    _logger.addFilter(_translate_log_paths)
+
+
+@contextmanager
+def public_log_paths(rewrite: Callable[[str], str]) -> Iterator[None]:
+    """Translate nested stages from the innermost copy out to the public path."""
+    token = _PUBLIC_PATHS.set((rewrite, *_PUBLIC_PATHS.get()))
+    try:
+        yield
+    finally:
+        _PUBLIC_PATHS.reset(token)
 
 
 def debugging(logger: logging.Logger) -> bool:

@@ -248,3 +248,25 @@ def test_run_cleanup_catches_a_heartbeat_before_its_first_tick(
         assert renderer._closed
         assert not any(thread.name == "towel-progress" for thread in threading.enumerate())
         assert read_terminal(master).endswith("\r\x1b[2K")
+
+
+def test_interrupted_heartbeat_start_does_not_break_run_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Integration 8: a time limit before the thread starts still closes the renderer."""
+    import threading
+    from towel.execution_budget import BudgetExpired
+
+    def expire(thread: threading.Thread) -> None:
+        raise BudgetExpired()
+
+    monkeypatch.setattr(progress, "load_tqdm", lambda: None)
+    monkeypatch.setattr(threading.Thread, "start", expire)
+    with terminal() as (stream, master), contextlib.redirect_stderr(stream):
+        renderer = ProgressRenderer("auto", total=3, desc="apply", unit="it")
+        try:
+            with pytest.raises(BudgetExpired), progress.progress_run():
+                renderer.start_heartbeat()
+            assert renderer not in progress._ACTIVE
+        finally:
+            renderer.close()
