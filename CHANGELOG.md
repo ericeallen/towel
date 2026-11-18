@@ -31,9 +31,12 @@ is now a site, and shows every command's output.
   ([relaxed and strict](https://github.com/ericeallen/towel/blob/v2.0/docs/RELAXED_AND_STRICT.md)).
   The Python API's default is relaxed too: pass `strict=True` to keep 1.949's.
 - **Formatting follows the project.** Inserted code is formatted with Ruff or
-  Black only when the project configures one (in its settings or a pre-commit
-  hook) or its analysed files are already formatted by one; otherwise Towel
-  says so and leaves formatting alone. 1.949 ran Black regardless.
+  Black only when the project configures one (in its settings or a standard
+  pre-commit format hook) or its analyzed files are already formatted by one;
+  otherwise Towel says so and leaves formatting alone. A note names the choice:
+  `Note: formatting generated code with Black (all analyzed files already
+  formatted).` `--no-format` still turns formatting off. 1.949 ran Black
+  regardless.
 - **`preview --check` exits 3** when it would change code. Status 3 is new, and
   only `--check` returns it.
 - **Abbreviated options are refused**: `--summ` is exit 2, `unrecognized
@@ -75,10 +78,18 @@ is now a site, and shows every command's output.
   take in equal literals, and a run that shares nothing between modules says
   what each pair lacked.
 - Every run reports what it read (`Analysed 2 Python files (4 functions)`),
-  what it skipped, what it did not examine, and why it left code alone, in a
-  sentence per reason, with what you can do; an all-clear says it covers the
-  code Towel examined. `--explain` lists every place. In relaxed mode, files
-  that do not parse are skipped with a warning; `--strict` still refuses them.
+  what it skipped, and why it left code alone, in a sentence per reason, with
+  what you can do. In relaxed mode, files that do not parse are skipped with a
+  warning; `--strict` still refuses them.
+- An empty search says when it could not see everything: `No repeated code
+  found in the code Towel examined in 12 files.`, then `12 files hold
+  module-level code or early-return guards that Towel does not examine;
+  --explain lists them.` Once Towel finds similar code, including matches it
+  declines, these coverage details appear only with `--explain`, which names
+  each file and what to do about it. JSON always has the full
+  `analysed.not_examined` list (`path`, `module_statements`,
+  `early_return_guards`), and such a run's `outcome` is `not_fully_examined`.
+  Exit statuses are unchanged.
 - A relaxed run first notes code that may depend on when objects are freed
   (`__del__`, weak-reference callbacks and the like), naming each place.
   `--quiet` hides the note; `--json` reports it in `relaxed_findings`.
@@ -90,15 +101,17 @@ is now a site, and shows every command's output.
   shows each helper's whole source and a call site. `recover` says what it
   restored.
 - In relaxed mode, a typed project whose configured checker is missing, or
-  whose own check cannot run, runs untyped with a warning, and unannotated
-  changes proceed past unresolved imports. Strict mode still refuses.
+  whose own check cannot run or fails to finish (a timeout, for example), runs
+  unverified with a warning that names the failure, and unannotated changes
+  proceed past unresolved imports. Strict mode still refuses.
 - JSON results gain `mode`, `types`, `config_path`, `outcome`, `analysed`
   (with `skipped` and `not_examined`), `left_alone` and `relaxed_findings`,
   and an incomplete preview's `partial_diff` and `finally_confirmed`
   (schema 1, additive).
 - New reasons for leaving code alone: `generator_block`,
-  `coroutine_exception_boundary`, `resource_lifetime_unproven` and, in strict
-  mode, `truth_test_repeated` and `lifetime_order_uncertified`.
+  `coroutine_exception_boundary`, `resource_lifetime_unproven`,
+  `repeated_statement_group` and, in strict mode, `truth_test_repeated` and
+  `lifetime_order_uncertified`.
 - Python 3.14 and 3.15. Strict mode's lifetime guarantees are certified for
   3.11 to 3.13; on later versions it leaves alone what they cover, so install
   on 3.13 to use `--strict` (`uv tool install` now picks 3.14 or 3.15).
@@ -110,16 +123,20 @@ is now a site, and shows every command's output.
   that it needs an output.
 - Help lists options in four groups, states each default and fits the terminal.
 - Helpers keep the source's parameter order, spelling and indentation.
-- A helper made only of independent repeated statements, such as a run of
-  asserts or appends, is not proposed, in either mode.
+- A helper that would only bundle independent repetitions of one operation,
+  such as a whole run of asserts or a signature made of repeated groups of
+  inputs, is not proposed, in either mode (`repeated_statement_group`).
+  Dependent computations remain eligible.
 - Strict mode extracts the value of an assignment it declines to extract
   whole.
 - Files Git ignores, and `build/`, `dist/`, `site-packages/` and `*.egg-info`,
-  are not analysed.
+  are not analyzed.
 
 ### Fixed
 
 - A crash on a namespace package whose modules mypy renamed.
+- After `--time-limit` exits with status 124, later commands and API calls in
+  the same process use their own skipped files and exclusions.
 - Group SIGINT and SIGTERM always exit 130 and 143, even when workers die first.
 - `preview` no longer fails on a file that does not decode.
 - Negative counts and huge time limits give argument errors, not tracebacks.
