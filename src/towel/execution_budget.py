@@ -23,8 +23,10 @@ import os
 import signal
 import time
 import threading
-from types import FrameType
-from typing import Callable, Iterator
+from types import CodeType, FrameType
+from typing import Callable, Iterator, TypeVar
+
+_Function = TypeVar("_Function", bound=Callable[..., object])
 
 
 class BudgetExpired(BaseException):
@@ -43,11 +45,38 @@ class _Budget:
 
 _active: ContextVar[_Budget | None] = ContextVar("towel_execution_budget", default=None)
 
+# Long enough to clear the cleanup that follows a protected change: Python
+# discards an exception raised inside a weakref callback or finalizer.
+_REDELIVERY_SECONDS = 0.001
+_uninterruptible_code: set[CodeType] = set()
+
+
+def completes_before_deadline(function: _Function) -> _Function:
+    """Let a short, non-blocking state change finish before a deadline is raised.
+
+    Python can deliver a signal between any two calls, including on the first
+    line of ``__exit__``, where no ``try`` of the function's own can protect it.
+    """
+    _uninterruptible_code.add(function.__code__)
+    return function
+
+
+def _interrupts_protected_code(frame: FrameType | None) -> bool:
+    while frame is not None:
+        if frame.f_code in _uninterruptible_code:
+            return True
+        frame = frame.f_back
+    return False
+
 
 def _expire(signum: int, frame: FrameType | None) -> None:
     budget = _active.get()
-    if budget is not None and os.getpid() == budget.owner:
-        raise BudgetExpired()
+    if budget is None or os.getpid() != budget.owner:
+        return
+    if _interrupts_protected_code(frame):
+        signal.setitimer(signal.ITIMER_REAL, _REDELIVERY_SECONDS)
+        return
+    raise BudgetExpired()
 
 
 @contextmanager

@@ -22,9 +22,11 @@ from dataclasses import dataclass, field
 import os
 import subprocess
 from pathlib import Path
+from types import TracebackType
 from typing import Callable, Iterable, Iterator, Optional
 
 from .diagnostics import LOG
+from .execution_budget import completes_before_deadline
 
 PROBE_PREFIX = "_towel_probe_"
 
@@ -59,19 +61,35 @@ def current_source_policy() -> Optional[SourcePolicy]:
     return _SOURCE_POLICY.get()
 
 
-@contextmanager
-def source_policy(*, strict: bool, include_ignored: bool = False) -> Iterator[SourcePolicy]:
-    """Own one run's skip warnings, restoring an outer run's policy on exit."""
-    outer = _SOURCE_POLICY.get()
-    if outer is not None and (outer.strict, outer.include_ignored) == (strict, include_ignored):
-        yield outer
-        return
-    policy = SourcePolicy(strict, include_ignored)
-    token = _SOURCE_POLICY.set(policy)
-    try:
-        yield policy
-    finally:
-        _SOURCE_POLICY.reset(token)
+class source_policy:
+    """Own one run's skip warnings, restoring an outer run's policy on exit.
+
+    A class, because a generator's context manager runs library code on each
+    side of the change, where a deadline would strand the policy. A policy left
+    active would make later runs in this process skip what they must refuse.
+    """
+
+    def __init__(self, *, strict: bool, include_ignored: bool = False) -> None:
+        self._settings = (strict, include_ignored)
+        self._outer: Optional[SourcePolicy] = None
+
+    @completes_before_deadline
+    def __enter__(self) -> SourcePolicy:
+        outer = self._outer = _SOURCE_POLICY.get()
+        if outer is not None and (outer.strict, outer.include_ignored) == self._settings:
+            return outer
+        policy = SourcePolicy(*self._settings)
+        _SOURCE_POLICY.set(policy)
+        return policy
+
+    @completes_before_deadline
+    def __exit__(
+        self,
+        error_type: Optional[type[BaseException]],
+        error: Optional[BaseException],
+        traceback: Optional[TracebackType],
+    ) -> None:
+        _SOURCE_POLICY.set(self._outer)
 
 
 def skipped_source_paths() -> tuple[Path, ...]:
