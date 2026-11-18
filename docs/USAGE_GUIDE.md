@@ -1,5 +1,19 @@
 # Python API guide
 
+```python
+from towel.api import UnificationRefactorEngine
+
+engine = UnificationRefactorEngine()
+results, reason = engine.refactor_directory_to_fixed_point("src/", "src_cleaned/", progress="none")
+print(results)
+print(reason)
+```
+
+```text
+{'src_cleaned/accounts.py': (1, ['Extract common code from register_user and register_admin'])}
+fixed_point
+```
+
 This guide is for calling Towel from Python, through `UnificationRefactorEngine`.
 For the command line, see the [command reference](CLI_GUIDE.md); for what Towel
 will not change, [known limitations](KNOWN_LIMITATIONS.md). Every option and
@@ -77,8 +91,9 @@ publication; ordinary text-mode writes do not preserve all source formats.
 ## Results and errors
 
 `refactor_directory_to_fixed_point` returns `(results, reason)`: `results`
-maps each changed file to its new text, and `reason` is `fixed_point` when no
-more refactorings were found, or `iteration_cap` when `max_iterations` (the
+maps each changed output file to a pair, the number of refactorings it received
+and a list describing each one. The new text is in the output directory. `reason`
+is `fixed_point` when no more refactorings were found, or `iteration_cap` when `max_iterations` (the
 CLI's `--max-refactorings`) stopped the run; 0, the default, means no cap.
 `progress` is `auto` by default, which draws a bar only on a terminal;
 `"none"` turns it off.
@@ -113,7 +128,8 @@ engine = UnificationRefactorEngine(
 )
 ```
 
-Both are `--max-parameters` and `--min-lines` on the command line. The other
+Both are `--max-parameters` and `--min-lines` on the command line. A third
+positional argument, `parameterize_constants`, defaults to `True`. The other
 options are keyword-only; these are the ones most callers set:
 
 | Option | Default | Effect |
@@ -125,7 +141,9 @@ options are keyword-only; these are the ones most callers set:
 | `expression_candidates` | `True` | Also extract a repeated expression of at least `min_lines` lines. |
 | `include_ignored` | `False` | Also analyze files Git ignores, `--include-ignored`. |
 
-The [compatibility contract](COMPATIBILITY.md#python-api) lists the options
+The keywords `reuse_existing_functions`, `prefer_absolute_imports` and
+`pep420_namespace_packages` are deprecated and do nothing; remove them from your
+calls. The [compatibility contract](COMPATIBILITY.md#python-api) lists the options
 it supports; `complete_scope`, `expression_candidates` and `include_ignored`
 are not among them yet, so pin the Towel version if you rely on them.
 

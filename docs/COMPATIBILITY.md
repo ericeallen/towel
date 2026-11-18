@@ -1,5 +1,18 @@
 # Compatibility and automation
 
+A script runs Towel with `--json`, then reads the exit status and one JSON object:
+
+```text
+$ towel preview src/ --check --json > result.json
+$ echo $?
+3
+$ python3 -c "import json; r = json.load(open('result.json')); print(r['status'], r['outcome'], r['applied'])"
+complete applied 1
+```
+
+Status 3 means the run finished and would change code. The rest of this page
+says what each status and field promises.
+
 This contract has applied since **1.949**; what 2.0 added is marked "Added
 in 2.0". Towel remains beta.
 Correctness repairs may decline previously accepted extractions or change
@@ -59,7 +72,9 @@ or a declined confirmation is cancellation, not completed work.
 `--max-refactorings` intentionally limits the requested work and can return
 success with `iteration_cap`; it does not assert that all opportunities were
 exhausted. A time limit stops an incomplete attempt with status 124 and no
-published output. Final publication and cleanup may extend beyond the elapsed
+published output. A limit that expires during setup leaves `analysed` `null` and
+no `partial_diff`; one that expires later can return a partial diff, which Towel
+has not checked as a whole. Final publication and cleanup may extend beyond the elapsed
 limit so they can finish safely. See [bounded runs](CLI_GUIDE.md#limits).
 
 Human-readable output is intended for people. Errors, warnings and progress go
@@ -76,7 +91,10 @@ from being written. Check the exit status and require a complete result before
 treating an automated run as successful.
 Helper inventory and rename commands also provide their documented
 `--json` forms. Use the returned inventory's `rename_key` values when preparing
-a rename batch; do not reconstruct those keys from helper names.
+a rename batch; do not reconstruct those keys from helper names. With
+`rename-helpers --rename-file FILE --json`, a well-formed mapping that is rejected
+prints a JSON result and exits 2. A file that cannot be read or is not valid JSON
+prints an error on stderr, nothing on stdout, and exits 1.
 
 The preview/dry result schema is version 1:
 
@@ -97,10 +115,10 @@ The preview/dry result schema is version 1:
 | `error` | Human-readable failure explanation, or `null`. |
 | `config_path` | Absolute path of the `pyproject.toml` whose `[tool.towel]` table the run used, or `null`. Added in 2.0. |
 | `outcome` | On a completed run, `"applied"`, `"all_left_alone"` (similar code found, none extracted), `"no_repeated_code"`, `"not_fully_examined"` (no repeated code in what was examined, but some code was not examined; see `analysed.not_examined`) or `"no_python_files"`; `null` on an incomplete or failed run. Added in 2.0. |
-| `analysed` | `{"files": N, "functions": M, "skipped": [...], "not_examined": [...]}`: what the run read, each file it skipped with the reason, and each file with code it did not examine (`path`, `module_statements`, `early_return_guards`); `null` when the run failed (`status` `"error"`). Added in 2.0. |
-| `left_alone` | How many places with similar code the run lists as left alone by default; `0` on failure. Added in 2.0. |
-| `relaxed_findings` | In relaxed mode, code that may depend on what strict mode keeps: a list of `{"kind", "path", "line", "detail"}`, where `kind` is `"finalizer"`, `"weakref_callback"`, `"gc_callback"` or `"function_rebinding"`. Added in 2.0. |
-| `partial_diff`, `finally_confirmed` | Only on a preview stopped before it finished (`status` `"incomplete"`): the diff of what it had done, which was not checked as a whole, and `false`. Added in 2.0. |
+| `analysed` | `{"files": N, "functions": M, "skipped": [...], "not_examined": [...]}`: what the run read, each file it skipped with the reason, and each file with code it did not examine (`path`, `module_statements`, `early_return_guards`); `null` when the run failed (`status` `"error"`) or a time limit expired before Towel had read the project. Added in 2.0. |
+| `left_alone` | How many places with similar code the run lists as left alone by default, counting all of them although a summary prints the five largest. A run that applied changes does not list the pairs it declined, so this can be `0` where `--explain` shows more. `0` on failure. Added in 2.0. |
+| `relaxed_findings` | In relaxed mode, code that may depend on what strict mode keeps: a list of `{"kind", "path", "line", "detail"}`, where `kind` is `"finalizer"`, `"weakref_callback"`, `"gc_callback"` or `"function_rebinding"`; an empty list in strict mode. Added in 2.0. |
+| `partial_diff`, `finally_confirmed` | Only on a preview stopped after it had done some work (`status` `"incomplete"`): the diff of what it had done, which was not checked as a whole, and `false`. Absent when the run stopped during setup. Added in 2.0. |
 
 When `published` is `null`, inspect the destination and any recovery journal
 before retrying. An explicit interrupt or error can happen after source
@@ -145,7 +163,9 @@ The supported surface consists of:
   `skip_trivial_helpers`, `annotate_helpers`, `max_candidate_pairs` and
   `strict` (added in 2.0). `strict` defaults to `False`, relaxed mode, as the
   CLI does; earlier releases behaved as `strict=True` does now, so pass it to
-  keep their behavior.
+  keep their behavior. Only `max_parameters`, `min_lines` and
+  `parameterize_constants` may be passed by position, in that order; the others
+  are keyword-only.
 - Its `analyze_file`, `analyze_files`, `plan_refactoring`,
   `refactor_to_fixed_point` and `refactor_directory_to_fixed_point` methods,
   with their documented argument and return shapes.
