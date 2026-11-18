@@ -341,6 +341,7 @@ def unparsed_refusal(
     subject = "this file" if len(unparsed) == 1 else f"these {len(unparsed)} files"
     verb = "does" if len(unparsed) == 1 else "do"
     requirement = declared_requirement(root)
+    oldest = python_lower_bound(requirement) if requirement is not None else None
     lines = [
         *_exclusion_remedy(unparsed, root, target),
         f"Refusing to refactor: {subject} of the program {verb} not parse or cannot be read on"
@@ -348,12 +349,10 @@ def unparsed_refusal(
         *(f"  {failure.describe(root)}" for failure in unparsed),
     ]
     if any(_uses_newer_syntax(failure.path, running) for failure in unparsed):
+        lines.append(_python_remedy(declared_newest_python(root), oldest, running))
+    elif oldest is not None and oldest > running:
         lines.append(
-            _python_remedy(
-                declared_newest_python(root),
-                python_lower_bound(requirement) if requirement is not None else None,
-                running,
-            )
+            f"This interpreter is below the project's minimum: it requires Python {_version(oldest)} or newer."
         )
     return UnparsedProgramError("\n".join(lines))
 

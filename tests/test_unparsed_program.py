@@ -591,6 +591,19 @@ def test_a_root_file_named_in_the_refusal_is_cleared_on_the_command_line(tmp_pat
     assert invoke([*arguments, "--exclude", "benchmark.py"]).status == 0
 
 
+def test_parse_refusal_reports_a_newer_project_minimum_even_for_unknown_syntax(
+    tmp_path: Path,
+) -> None:
+    """Release matrix: the declared requirement is known even when the syntax is not."""
+    newer = f"3.{sys.version_info.minor + 1}"
+    project = _project(
+        tmp_path, {"pkg/bad.py": "def broken(:\n"}, f'requires-python = ">={newer}"\n'
+    )
+    message = _refusal(project)
+    assert f"it requires Python {newer} or newer" in message
+    assert "Run Towel on a Python" not in message
+
+
 @pytest.mark.skipif(sys.version_info >= (3, 12), reason="3.12 parses the PEP 701 f-string")
 def test_a_3_12_file_refuses_a_3_11_run(tmp_path: Path) -> None:
     """The audit's P1-2 as it was found: the project requires 3.12, Towel runs on 3.11."""
