@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 import os
 import signal
@@ -35,23 +35,28 @@ class BudgetExpired(BaseException):
     """
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Budget:
     owner: int
     deadline: float
+    abandoned: bool = False
 
 
 _active: ContextVar[_Budget | None] = ContextVar("towel_execution_budget", default=None)
 
 
-def _expire(signum: int, frame: FrameType | None) -> None:
+def _current_budget() -> _Budget | None:
     budget = _active.get()
+    return budget if budget is not None and not budget.abandoned else None
+
+
+def _expire(signum: int, frame: FrameType | None) -> None:
+    budget = _current_budget()
     if budget is not None and os.getpid() == budget.owner:
         raise BudgetExpired()
 
 
-@contextmanager
-def execution_budget(seconds: float | None) -> Iterator[None]:
+def run_with_budget(seconds: float | None, action: Callable[[], None]) -> None:
     """Bound setup/analysis/checking; unwind cleanup without repeated interrupts.
 
     POSIX interval timers interrupt Python computation and blocking tool I/O.
@@ -60,20 +65,25 @@ def execution_budget(seconds: float | None) -> Iterator[None]:
     Final publication explicitly ends the budget after a last deadline check.
     """
     if seconds is None:
-        yield
+        action()
         return
-    if _active.get() is not None or signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
+    if _current_budget() is not None or signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
         raise ValueError("A time limit cannot replace an already active interval timer")
     previous_handler = signal.getsignal(signal.SIGALRM)
-    token = _active.set(_Budget(os.getpid(), time.monotonic() + seconds))
+
+    def timed() -> None:
+        _active.set(_Budget(os.getpid(), time.monotonic() + seconds))
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        action()
+
+    # Only timed() owns the alarm. Context.run restores the caller before
+    # cleanup, so even an alarm at disarm cannot interrupt handler restoration.
     signal.signal(signal.SIGALRM, _expire)
     try:
-        signal.setitimer(signal.ITIMER_REAL, seconds)
-        yield
+        copy_context().run(timed)
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous_handler)
-        _active.reset(token)
 
 
 def finish_before_publication() -> None:
@@ -83,7 +93,7 @@ def finish_before_publication() -> None:
     starts, an elapsed-time interrupt must not turn committed output into an
     apparent failed run. Explicit interrupts retain ordinary recovery behavior.
     """
-    budget = _active.get()
+    budget = _current_budget()
     if budget is None or os.getpid() != budget.owner:
         return
     signal.setitimer(signal.ITIMER_REAL, 0)
@@ -93,7 +103,7 @@ def finish_before_publication() -> None:
 
 def check_budget() -> None:
     """Poll the owner's deadline between units of work, even with its alarm deferred."""
-    budget = _active.get()
+    budget = _current_budget()
     if budget is not None and os.getpid() == budget.owner and time.monotonic() >= budget.deadline:
         raise BudgetExpired()
 
@@ -124,7 +134,7 @@ def polling_interrupts() -> Iterator[Callable[[], None]]:
         yield check
         return
     signals = [signal.SIGINT, signal.SIGTERM]
-    budget = _active.get()
+    budget = _current_budget()
     if budget is not None and os.getpid() == budget.owner:
         signals.append(signal.SIGALRM)
     previous = {signum: signal.getsignal(signum) for signum in signals}
@@ -144,10 +154,10 @@ def polling_interrupts() -> Iterator[Callable[[], None]]:
 
 def abandon_budget() -> None:
     """End an incomplete preview's deadline so it can report its private snapshot."""
-    budget = _active.get()
+    budget = _current_budget()
     if budget is not None and os.getpid() == budget.owner:
         signal.setitimer(signal.ITIMER_REAL, 0)
-        _active.set(None)
+        budget.abandoned = True
 
 
 @contextmanager
@@ -158,7 +168,7 @@ def recording_application() -> Iterator[None]:
     external verification remain interruptible. A failed write still rolls
     back through the ordinary transaction machinery.
     """
-    budget = _active.get()
+    budget = _current_budget()
     owner = budget is not None and os.getpid() == budget.owner
     if owner:
         signal.setitimer(signal.ITIMER_REAL, 0)

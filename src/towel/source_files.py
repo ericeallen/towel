@@ -17,12 +17,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import Context, ContextVar, copy_context
 from dataclasses import dataclass, field
+from functools import wraps
 import os
 import subprocess
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, Optional
+from typing import Callable, Concatenate, Iterable, Iterator, Optional, ParamSpec, Protocol, TypeVar
 
 from .diagnostics import LOG
 
@@ -40,6 +41,7 @@ class SourcePolicy:
     strict: bool
     include_ignored: bool
     skipped: dict[Path, str] = field(default_factory=dict)
+    omitted: dict[Path, str] = field(default_factory=dict)
     excluded_names: frozenset[str] = frozenset()
     copies: tuple[tuple[Path, Path], ...] = ()
 
@@ -59,19 +61,50 @@ def current_source_policy() -> Optional[SourcePolicy]:
     return _SOURCE_POLICY.get()
 
 
-@contextmanager
-def source_policy(*, strict: bool, include_ignored: bool = False) -> Iterator[SourcePolicy]:
-    """Own one run's skip warnings, restoring an outer run's policy on exit."""
-    outer = _SOURCE_POLICY.get()
-    if outer is not None and (outer.strict, outer.include_ignored) == (strict, include_ignored):
-        yield outer
-        return
-    policy = SourcePolicy(strict, include_ignored)
-    token = _SOURCE_POLICY.set(policy)
-    try:
-        yield policy
-    finally:
-        _SOURCE_POLICY.reset(token)
+def source_policy_context(*, strict: bool, include_ignored: bool = False) -> Context:
+    """Run nested phases with the same policy, without ever binding it in the caller.
+
+    Context.run restores the caller in the interpreter, including when an alarm
+    interrupts setup or teardown. A Python finally around ContextVar.reset has
+    interruption windows on both sides of the body.
+    """
+    context = copy_context()
+    outer = current_source_policy()
+    if outer is None or (outer.strict, outer.include_ignored) != (strict, include_ignored):
+        context.run(_SOURCE_POLICY.set, SourcePolicy(strict, include_ignored))
+    return context
+
+
+class _SourceOptions(Protocol):
+    @property
+    def strict(self) -> bool:
+        """Whether an unreadable source refuses the run."""
+        ...
+
+    @property
+    def include_ignored(self) -> bool:
+        """Whether Git-ignored sources participate in analysis."""
+        ...
+
+
+_Options = TypeVar("_Options", bound=_SourceOptions)
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def with_source_policy(
+    action: Callable[Concatenate[_Options, _P], _R],
+) -> Callable[Concatenate[_Options, _P], _R]:
+    """Scope source policy and any analysis caches installed by this call."""
+
+    @wraps(action)
+    def run(options: _Options, /, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        context = source_policy_context(
+            strict=options.strict, include_ignored=options.include_ignored
+        )
+        return context.run(action, options, *args, **kwargs)
+
+    return run
 
 
 def skipped_source_paths() -> tuple[Path, ...]:

@@ -24,10 +24,10 @@ from __future__ import annotations
 import argparse
 import ast
 from contextlib import contextmanager, redirect_stdout
+from contextvars import copy_context
 from dataclasses import dataclass, replace
 from gettext import gettext
 import json
-import logging
 import math
 import os
 import re
@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from towel.unification.models import RefactoringProposal
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, journals_covering, pending_journal_remedy, recover
-from towel.execution_budget import BudgetExpired, execution_budget
+from towel.execution_budget import BudgetExpired, run_with_budget
 from towel.cli_reporting import (
     BindingRecord as BindingRecord,
     CallRecord as CallRecord,
@@ -92,13 +92,13 @@ from towel.cli_reporting import (
     source_diff,
     stopped_at_limit,
 )
-from towel.diagnostics import LOG, Settings, configure_stderr_logging
+from towel.diagnostics import LOG, Settings, configure_stderr_logging, public_log_paths
 from towel.relaxed_suitability import RelaxedFinding, findings_for_target, relaxed_notice
 from towel.config import ConfigurationError, apply_project_defaults
 from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
-from towel.source_files import python_sources
+from towel.source_files import python_sources, with_source_policy
 from towel.unification.class_private import (
     class_qualnames,
     is_class_private,
@@ -255,6 +255,10 @@ refused, or answered "no"; 2 invalid arguments, or a rename refused; 3 preview
 
 def main() -> None:
     """Main entry point with subcommands."""
+    copy_context().run(_main)
+
+
+def _main() -> None:
     _install_signal_handling()
     parser = _build_parser()
     args = parser.parse_args()
@@ -287,13 +291,10 @@ def main() -> None:
             file=sys.stderr,
         )
     try:
-        with (
-            progress_run(quiet=bool(getattr(args, "quiet", False))),
-            execution_budget(getattr(args, "time_limit", None)),
-        ):
+        with progress_run(quiet=bool(getattr(args, "quiet", False))):
             if getattr(args, "quiet", False):
                 args.progress = "none"
-            _dispatch(parser, args)
+            run_with_budget(getattr(args, "time_limit", None), lambda: _dispatch(parser, args))
     except BudgetExpired:
         # A signal may arrive while redirect_stdout.__enter__ has assigned
         # sys.stdout but before the with statement can register its __exit__.
@@ -1530,27 +1531,26 @@ def _run_dry(args: argparse.Namespace) -> None:
         _execute_dry(options)
 
 
+@with_source_policy
 def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResult":
-    from towel.source_files import source_policy
     from towel.unification.exceptions import BaselineTypeCheckError
 
-    with source_policy(strict=options.strict, include_ignored=options.include_ignored):
-        try:
-            return _execute_dry_with_policy(options, preview=preview)
-        except BaselineTypeCheckError as error:
-            if options.strict or not options.types:
-                raise
-            # The failed run has closed its checker and has not staged or
-            # changed anything. Restart with bare helpers, as when selecting
-            # the requested checker fails, and preserve the requested mode.
-            print(
-                f"Warning: {error}\nContinuing without type verification; generated "
-                "helpers stay bare. Use --strict to refuse instead.",
-                file=sys.stderr,
-            )
-            result = _execute_dry_with_policy(replace(options, types=False), preview=preview)
-            result["types"] = "unverified"
-            return result
+    try:
+        return _execute_dry_with_policy(options, preview=preview)
+    except BaselineTypeCheckError as error:
+        if options.strict or not options.types:
+            raise
+        # The failed run has closed its checker and has not staged or
+        # changed anything. Restart with bare helpers, as when selecting
+        # the requested checker fails, and preserve the requested mode.
+        print(
+            f"Warning: {error}\nContinuing without type verification; generated "
+            "helpers stay bare. Use --strict to refuse instead.",
+            file=sys.stderr,
+        )
+        result = _execute_dry_with_policy(replace(options, types=False), preview=preview)
+        result["types"] = "unverified"
+        return result
 
 
 def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "CommandResult":
@@ -2329,26 +2329,17 @@ def _preview_text(text: str, options: DryOptions) -> str:
 @contextmanager
 def _preview_paths(options: DryOptions) -> Iterator[None]:
     """Translate the engine's public output paths once more for a disposable preview."""
-    from towel.unification.fixed_point import _StagePathsInLogs, _name_public_paths
+    from towel.unification.fixed_point import _name_public_paths
 
-    # Engine staging translates its paths on the logger first. Handler filters
-    # run afterward, so diagnostics name input files rather than the private
-    # preview destination that is about to disappear.
     def rewrite(text: str) -> str:
         return _preview_text(text, options)
 
-    path_filter = _StagePathsInLogs(rewrite)
-    handlers = tuple(dict.fromkeys([*LOG.handlers, *logging.getLogger().handlers]))
-    for handler in handlers:
-        handler.addFilter(path_filter)
-    try:
-        yield
-    except (OSError, ValueError, TowelError) as error:
-        _name_public_paths(error, rewrite)
-        raise
-    finally:
-        for handler in handlers:
-            handler.removeFilter(path_filter)
+    with public_log_paths(rewrite):
+        try:
+            yield
+        except (OSError, ValueError, TowelError) as error:
+            _name_public_paths(error, rewrite)
+            raise
 
 
 @dataclass(frozen=True)
@@ -2545,14 +2536,8 @@ def _quick_report(engine: "UnificationRefactorEngine") -> "RunReport":
     )
 
 
+@with_source_policy
 def _run_quick_preview(options: PreviewOptions) -> None:
-    from towel.source_files import source_policy
-
-    with source_policy(strict=options.strict, include_ignored=options.include_ignored):
-        _run_quick_preview_with_policy(options)
-
-
-def _run_quick_preview_with_policy(options: PreviewOptions) -> None:
     """List one analysis without promising that the proposals will pass dry's checks."""
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals

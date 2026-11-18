@@ -71,18 +71,21 @@ def test_relaxed_nonprogram_files_warn_once_and_strict_refuses(
 ) -> None:
     """R6/R9: relaxed invalid inputs warn once and cannot veto whole-program scans."""
     from towel.program_files import program_files, refuse_unparsed_program
-    from towel.source_files import source_policy
+    from towel.source_files import source_policy_context
     from towel.unification.exceptions import UnparsedProgramError
 
     source = tmp_path / "bad.py"
     source.write_bytes(data)
     (tmp_path / "pyproject.toml").write_text("")
-    with source_policy(strict=True), pytest.raises(UnparsedProgramError, match="--exclude bad.py"):
-        refuse_unparsed_program(tmp_path)
-    with source_policy(strict=False):
+    with pytest.raises(UnparsedProgramError, match="--exclude bad.py"):
+        source_policy_context(strict=True).run(refuse_unparsed_program, tmp_path)
+
+    def analyze() -> None:
         refuse_unparsed_program(tmp_path)
         assert source not in list(program_files(tmp_path))
         assert not project_may_replace_builtin_mapping(tmp_path)
+
+    source_policy_context(strict=False).run(analyze)
     assert (
         sum(
             "Skipping" in record.message and "bad.py" in record.message for record in caplog.records
@@ -101,17 +104,20 @@ def test_relaxed_parse_check_leaves_excluded_sources_to_the_exclusion(
     so naming a directory in --exclude disabled every redirect (review 6c).
     """
     from towel.program_files import program_files, refuse_unparsed_program
-    from towel.source_files import current_source_policy, source_policy
+    from towel.source_files import current_source_policy, source_policy_context
 
     (tmp_path / "pyproject.toml").write_text("")
     (tmp_path / "broken_dir").mkdir()
     (tmp_path / "broken_dir" / "py2.py").write_text('print "python two"\n')
     (tmp_path / "mod.py").write_text("x = 1\n")
-    with source_policy(strict=False):
+
+    def analyze() -> None:
         refuse_unparsed_program(tmp_path, ["broken_dir"])
         list(program_files(tmp_path))
         policy = current_source_policy()
         assert policy is not None and policy.skipped == {}
+
+    source_policy_context(strict=False).run(analyze)
     assert not [record.message for record in caplog.records if "Skipping" in record.message]
 
 
@@ -122,7 +128,7 @@ def test_unreadable_input_warns_with_its_own_name(
     """R9: the unreadable directory itself is named, never its pyvenv.cfg marker."""
     import os
     from towel.program_files import refuse_unparsed_program
-    from towel.source_files import source_policy
+    from towel.source_files import source_policy_context
 
     (tmp_path / "pyproject.toml").write_text("")
     inaccessible = tmp_path / ("locked" if directory else "secret.py")
@@ -135,9 +141,9 @@ def test_unreadable_input_warns_with_its_own_name(
     try:
         if os.access(inaccessible, os.R_OK | (os.X_OK if directory else 0)):
             pytest.skip("Current user bypasses file permissions")
-        with source_policy(strict=False):
-            refuse_unparsed_program(tmp_path)
-            python_sources(tmp_path)
+        context = source_policy_context(strict=False)
+        context.run(refuse_unparsed_program, tmp_path)
+        context.run(python_sources, tmp_path)
         messages = [record.message for record in caplog.records if "Skipping" in record.message]
         assert len(messages) == 1
         assert str(inaccessible) in messages[0]
@@ -151,7 +157,7 @@ def test_strict_unreadable_directory_remedy_works(tmp_path: Path, mode: int) -> 
     """R9: excluding an unreadable directory clears the refusal that names it."""
     import os
     from towel.program_files import refuse_unparsed_program
-    from towel.source_files import source_policy
+    from towel.source_files import source_policy_context
 
     (tmp_path / "pyproject.toml").write_text("")
     locked = tmp_path / "locked"
@@ -161,10 +167,9 @@ def test_strict_unreadable_directory_remedy_works(tmp_path: Path, mode: int) -> 
     try:
         if os.access(locked, os.R_OK | os.X_OK):
             pytest.skip("Current user bypasses directory permissions")
-        with source_policy(strict=True), pytest.raises(PermissionError, match="--exclude locked"):
-            refuse_unparsed_program(tmp_path)
-        with source_policy(strict=True):
-            refuse_unparsed_program(tmp_path, ["locked"])
+        with pytest.raises(PermissionError, match="--exclude locked"):
+            source_policy_context(strict=True).run(refuse_unparsed_program, tmp_path)
+        source_policy_context(strict=True).run(refuse_unparsed_program, tmp_path, ["locked"])
     finally:
         locked.chmod(0o755)
 
@@ -338,3 +343,100 @@ def test_exclusion_does_not_match_the_project_root_name(tmp_path: Path) -> None:
     assert "Would apply 1 refactoring" in result.stdout
     assert result.stderr.count("Skipping ") == 1
     assert "Skipped 1 file it could not read or parse" in result.stdout
+
+
+def test_alarm_while_installing_policy_does_not_change_the_next_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Integration 8: expire between installing the binding and returning its token."""
+    import json
+    import signal
+    from contextvars import Token, copy_context
+    from tests.test_cli_integration import invoke
+    from towel import source_files
+    from towel.source_files import SourcePolicy
+
+    target = tmp_path / "valid.py"
+    target.write_text("value = 1\n")
+    skipped = tmp_path / "previous.py"
+    binding = source_files._SOURCE_POLICY
+
+    class InterruptBinding:
+        get = binding.get
+        reset = binding.reset
+
+        def set(self, policy: SourcePolicy) -> Token[SourcePolicy | None]:
+            token = binding.set(policy)
+            policy.skipped[skipped] = "from the interrupted run"
+            signal.raise_signal(signal.SIGALRM)
+            return token
+
+    def run_twice() -> None:
+        flags = ["preview", str(target), "--no-strict", "--no-types", "--json"]
+        with monkeypatch.context() as patch:
+            patch.setattr(source_files, "_SOURCE_POLICY", InterruptBinding())
+            first = invoke([*flags, "--time-limit", "30"])
+        assert first.status == 124, first
+        second = invoke(flags)
+        assert second.status == 0, second
+        assert json.loads(second.stdout)["analysed"]["skipped"] == []
+        assert source_files.current_source_policy() is None
+
+    # Keep a failing regression from changing the rest of this pytest process.
+    copy_context().run(run_twice)
+
+
+def test_interrupted_directory_discovery_does_not_change_the_next_api_census(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Integration 8: even a reused engine must forget a previous discovery's skips."""
+    from towel.api import UnificationRefactorEngine
+    from towel.execution_budget import BudgetExpired
+
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "generated.py").write_text("value = 1\n")
+    source = tmp_path / "module.py"
+    source.write_text("value = 2\n")
+    engine = UnificationRefactorEngine(strict=False)
+
+    def expire(*args: object, **kwargs: object) -> None:
+        raise BudgetExpired()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(engine, "analyze_files", expire)
+        with pytest.raises(BudgetExpired):
+            engine.analyze_directory(str(tmp_path), progress="none")
+    assert engine.analyze_file(str(source)) == []
+    assert engine.last_census.skipped == ()
+
+
+def test_deadline_during_api_cache_teardown_restores_the_callers_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Integration 8: an interrupted analysis must not replace an enclosing AST cache."""
+    from contextvars import Token, copy_context
+    from towel import analysis_sources
+    from towel.api import UnificationRefactorEngine
+    from towel.execution_budget import BudgetExpired
+
+    source = tmp_path / "module.py"
+    source.write_text("value = 1\n")
+    binding = analysis_sources._SOURCES
+
+    class InterruptReset:
+        get = binding.get
+        set = binding.set
+
+        def reset(self, token: Token[analysis_sources.AnalysisSources | None]) -> None:
+            raise BudgetExpired()
+
+    def analyze() -> None:
+        with analysis_sources.sharing_analysis_sources() as outer:
+            with monkeypatch.context() as patch:
+                patch.setattr(analysis_sources, "_SOURCES", InterruptReset())
+                with pytest.raises(BudgetExpired):
+                    UnificationRefactorEngine().analyze_file(str(source))
+            assert binding.get() is outer
+
+    copy_context().run(analyze)

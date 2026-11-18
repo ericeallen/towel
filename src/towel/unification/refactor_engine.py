@@ -56,7 +56,7 @@ from .structural_memo import (
     StoredSubstitution,
     structural_id,
 )
-from .progress import DEFAULT_PROGRESS, ProgressMode, ProgressRenderer
+from .progress import DEFAULT_PROGRESS, ProgressMode, ProgressRenderer, progress_run
 
 from .parallel import ParallelEvaluation
 from .pair_evaluation import deferring_pair_if_proofs
@@ -125,7 +125,7 @@ from ..source_files import (
     current_source_policy,
     ignored_by_git,
     python_sources,
-    source_policy,
+    with_source_policy,
     warn_skipped,
 )
 from ..source_text import read_source
@@ -553,7 +553,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.parameterize_constants = parameterize_constants
         self.parameterize_builtins = parameterize_builtins
         self.include_ignored = include_ignored
-        self._discovery_skipped: Tuple[SkippedFile, ...] = ()
         self.strict = strict
         self.complete_scope = complete_scope
         self._declared_complete_scope = complete_scope
@@ -757,6 +756,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         """
         return self.analyze_files([file_path])
 
+    @with_source_policy
     def analyze_directory(
         self,
         directory: str,
@@ -791,6 +791,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # Analyze all files together
         return self.analyze_files(python_files, progress=progress, changed_files=changed_files)
 
+    @with_source_policy
     def _find_python_files(self, directory: str, recursive: bool = True) -> List[str]:
         """
         Find all Python files in a directory.
@@ -802,41 +803,45 @@ class UnificationRefactorEngine(ParallelEvaluation):
         Returns:
             List of Python file paths
         """
-        skipped: List[SkippedFile] = []
-        with source_policy(strict=self.strict, include_ignored=self.include_ignored):
-            files = python_sources(
-                Path(directory),
-                recursive=recursive,
-                excluded=self.excluded_directories,
-                include_ignored=self.include_ignored,
-                skipped=lambda path, reason: skipped.append(SkippedFile(str(path), reason)),
-            )
+        omitted: dict[Path, str] = {}
+        files = python_sources(
+            Path(directory),
+            recursive=recursive,
+            excluded=self.excluded_directories,
+            include_ignored=self.include_ignored,
+            skipped=omitted.__setitem__,
+        )
         if self._output_origin is not None and not self.include_ignored:
             origin, stage = self._output_origin
             originals = {path: origin / path.relative_to(stage) for path in files}
             ignored = ignored_by_git(origin, originals.values())
-            skipped.extend(
-                SkippedFile(str(path), "Git ignores it (use --include-ignored to analyse it)")
+            omitted.update(
+                (path, "Git ignores it (use --include-ignored to analyse it)")
                 for path, original in originals.items()
                 if original in ignored
             )
             files = [path for path in files if originals[path] not in ignored]
-        self._discovery_skipped = tuple(skipped)
+        policy = current_source_policy()
+        assert policy is not None  # Set by with_source_policy.
+        policy.omitted = omitted
         return [str(path) for path in files]
 
     def _input_skips(self) -> Tuple[SkippedFile, ...]:
         """Include preflight omissions even when they never entered the stage."""
         policy = current_source_policy()
-        reasons = {item.path: item.reason for item in self._discovery_skipped}
-        if policy is not None:
-            for path, reason in policy.skipped.items():
-                if self._output_origin is not None:
-                    origin, stage = self._output_origin
-                    if path.is_relative_to(origin):
-                        path = stage / path.relative_to(origin)
-                reasons[str(path)] = reason
+        if policy is None:
+            return ()
+        reasons = {str(path): reason for path, reason in policy.omitted.items()}
+        for path, reason in policy.skipped.items():
+            if self._output_origin is not None:
+                origin, stage = self._output_origin
+                if path.is_relative_to(origin):
+                    path = stage / path.relative_to(origin)
+            reasons[str(path)] = reason
         return tuple(SkippedFile(path, reason) for path, reason in sorted(reasons.items()))
 
+    @with_source_policy
+    @progress_run(inherit=True)
     def analyze_files(
         self,
         file_paths: List[str],
@@ -857,7 +862,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 these files are considered (see ``incremental_global_passes``).
         """
         with (
-            source_policy(strict=self.strict, include_ignored=self.include_ignored),
             sharing_analysis_sources(check_ast_immutable=self._settings.check_ast_immutable),
             sharing_if_transfer_sources(),
             sharing_compiler_literal_facts(),

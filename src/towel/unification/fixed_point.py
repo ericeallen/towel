@@ -36,14 +36,11 @@ from towel.execution_budget import (
 
 from contextlib import contextmanager
 import dataclasses
-import logging
 import os
 from dataclasses import dataclass, field
 import textwrap
 import time
-from functools import wraps
-from typing import Concatenate, ParamSpec
-from towel.source_files import current_source_policy, source_copy, source_policy
+from towel.source_files import current_source_policy, source_copy, with_source_policy
 from towel.program_files import skip_nonprogram_file
 
 from pathlib import Path
@@ -94,11 +91,12 @@ from .progress import (
     ProgressBarFactory,
     ProgressMode,
     normalize_progress,
+    progress_run,
     wants_bar,
 )
 from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..consumers import MAXIMUM_FILES
-from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
+from ..diagnostics import LOG, REJECTIONS, debugging, public_log_paths
 from ..formatting import FormattingChangedCode, LintRejected
 from ..filesystem import (
     StagedProject,
@@ -222,21 +220,6 @@ def counted_reasons(counts: Mapping[_Reason, int]) -> str:
         f"{reason} {count}"
         for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     )
-
-
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
-
-
-def _with_source_policy(
-    method: Callable[Concatenate[FixedPointDrivers, _P], _R],
-) -> Callable[Concatenate[FixedPointDrivers, _P], _R]:
-    @wraps(method)
-    def run(self: FixedPointDrivers, /, *args: _P.args, **kwargs: _P.kwargs) -> _R:
-        with source_policy(strict=self.strict, include_ignored=self.include_ignored):
-            return method(self, *args, **kwargs)
-
-    return run
 
 
 class FixedPointDrivers(Materialization):
@@ -404,7 +387,8 @@ class FixedPointDrivers(Materialization):
             return None
         return queue.pop(0)
 
-    @_with_source_policy
+    @with_source_policy
+    @progress_run(inherit=True)
     def refactor_to_fixed_point(
         self,
         file_path: str,
@@ -814,7 +798,8 @@ class FixedPointDrivers(Materialization):
         if debugging(REJECTIONS):
             REJECTIONS.debug("RENDER FAILED: %s :: %r", proposal.description, error)
 
-    @_with_source_policy
+    @with_source_policy
+    @progress_run(inherit=True)
     def refactor_directory_to_fixed_point(
         self,
         input_dir: str,
@@ -993,55 +978,52 @@ class FixedPointDrivers(Materialization):
                 root, origin, output, limit=MAXIMUM_FILES, preview=preview, notice=write_note
             ) as stage,
             source_copy(stage.origin_root, stage.root),
+            public_log_paths(stage.public_text),
         ):
-            # Names are the program's, read from the project itself rather
-            # than from its copy (``ProgramImports``). A run that may share a
-            # helper across modules reads them now, before any pair is judged
-            # or a worker forked; one that may not, only when a question needs
-            # them: what an existing import binds, or how to spell the
-            # type-only import a helper's annotation needs.
-            self.import_graph.begin_run(stage.origin_root, stage.root)
-            if self.cross_module_helpers:
-                self.import_graph.program_for(stage.target)
-            if inner_oracle is not None:
-                # Only the target: the rest of the stage is the original, byte
-                # for byte, and restating it to the checker would make it
-                # check modules the project's configuration leaves out, whose
-                # errors the original check never saw.
-                self._type_run_oracle = relocate_oracle(
-                    inner_oracle, stage.origin_target, stage.target
-                )
-            self._output_origin = (stage.origin_root, stage.root)
-            self._analysis_paths = (str(stage.target),)
-            # Only the sources the run may rewrite matter: a hard-linked data
-            # file, or a module under an excluded directory, it never writes.
-            analyzed = (
-                {Path(path).resolve() for path in self._find_python_files(str(stage.target))}
-                if stage.hard_linked and stage.target.is_dir()
-                else set()
-            )
-            unwritable = {
-                original: links
-                for original, links in stage.hard_linked.items()
-                if stage.staged_copy(original).resolve() in analyzed
-            }
-            self._unwritable_in_place = frozenset(
-                stage.staged_copy(original).resolve() for original in unwritable
-            )
-            for original, links in sorted(unwritable.items()):
-                LOG.warning(
-                    "%s has %d hard links, and an in-place run replaces a file by renaming a new"
-                    " one over it, which would leave the other links holding the old text; no"
-                    " refactoring will change it. Run out of place to refactor it, or give it a"
-                    " single link first.",
-                    original,
-                    links,
-                )
-            rewrite = _StagePathsInLogs(stage.public_text)
-            loggers = (LOG, REJECTIONS, VALIDATION, OVERLAP, TYPES, UNIFIER)
-            for logger in loggers:
-                logger.addFilter(rewrite)
             try:
+                # Names are the program's, read from the project itself rather
+                # than from its copy (``ProgramImports``). A run that may share a
+                # helper across modules reads them now, before any pair is judged
+                # or a worker forked; one that may not, only when a question needs
+                # them: what an existing import binds, or how to spell the
+                # type-only import a helper's annotation needs.
+                self.import_graph.begin_run(stage.origin_root, stage.root)
+                if self.cross_module_helpers:
+                    self.import_graph.program_for(stage.target)
+                if inner_oracle is not None:
+                    # Only the target: the rest of the stage is the original, byte
+                    # for byte, and restating it to the checker would make it
+                    # check modules the project's configuration leaves out, whose
+                    # errors the original check never saw.
+                    self._type_run_oracle = relocate_oracle(
+                        inner_oracle, stage.origin_target, stage.target
+                    )
+                self._output_origin = (stage.origin_root, stage.root)
+                self._analysis_paths = (str(stage.target),)
+                # Only the sources the run may rewrite matter: a hard-linked data
+                # file, or a module under an excluded directory, it never writes.
+                analyzed = (
+                    {Path(path).resolve() for path in self._find_python_files(str(stage.target))}
+                    if stage.hard_linked and stage.target.is_dir()
+                    else set()
+                )
+                unwritable = {
+                    original: links
+                    for original, links in stage.hard_linked.items()
+                    if stage.staged_copy(original).resolve() in analyzed
+                }
+                self._unwritable_in_place = frozenset(
+                    stage.staged_copy(original).resolve() for original in unwritable
+                )
+                for original, links in sorted(unwritable.items()):
+                    LOG.warning(
+                        "%s has %d hard links, and an in-place run replaces a file by renaming a new"
+                        " one over it, which would leave the other links holding the old text; no"
+                        " refactoring will change it. Run out of place to refactor it, or give it a"
+                        " single link first.",
+                        original,
+                        links,
+                    )
                 yield stage
                 self._change_log = [
                     dataclasses.replace(change, path=stage.public(change.path))
@@ -1052,8 +1034,6 @@ class FixedPointDrivers(Materialization):
                 _name_public_paths(error, stage.public_text)
                 raise
             finally:
-                for logger in loggers:
-                    logger.removeFilter(rewrite)
                 # The stage is about to go; nothing may keep checking against it.
                 self._type_run_oracle = inner_oracle
                 self._output_origin = None
@@ -1301,21 +1281,6 @@ class FixedPointDrivers(Materialization):
             reporter.detail(f"Localized +{len(localized)} follow-up(s)")
             reporter.inline(run.applied, len(queue), "localized", f"+{len(localized)} follow-ups")
         return queue
-
-
-class _StagePathsInLogs(logging.Filter):
-    """Rewrite a record's stage paths to the ones the user knows, before any handler sees it."""
-
-    def __init__(self, rewrite: Callable[[str], str]) -> None:
-        super().__init__()
-        self._rewrite = rewrite
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        rewritten = self._rewrite(message)
-        if rewritten != message:
-            record.msg, record.args = rewritten, None
-        return True
 
 
 def _name_public_paths(error: BaseException, rewrite: Callable[[str], str]) -> None:
