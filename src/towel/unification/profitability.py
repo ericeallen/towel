@@ -26,11 +26,11 @@ from __future__ import annotations
 import ast
 from collections import Counter
 import copy
-from typing import Iterator, Sequence
+from typing import Iterator, Literal, Sequence
 
 from ..canonical_ast import canonical_dump
 from .argument_ownership import render_argument_handoff
-from .models import Replacement
+from .models import RejectReason, Replacement
 from .parameters import parameter_names
 from .statement_facts import mentioned_names
 
@@ -150,12 +150,15 @@ def _repeated_input_groups(
     return False
 
 
-def worthwhile_helper(
+HelperRejection = Literal[RejectReason.UNPROFITABLE_HELPER, RejectReason.REPEATED_STATEMENT_GROUP]
+
+
+def helper_rejection(
     helper: ast.FunctionDef,
     replacements: Sequence[Replacement],
     rendered_callers: Sequence[ast.AST] | None = None,
-) -> bool:
-    """Whether the complete generated syntax is smaller than the repeated work.
+) -> HelperRejection | None:
+    """Why the complete generated helper would be less useful than its call sites.
 
     The final helper must already include placement and ownership additions.
     Analysis and materialization supply the same rendered callers publication
@@ -171,11 +174,11 @@ def worthwhile_helper(
     ]
     sites = len(replacements)
     if sites < 2:
-        return False
+        return RejectReason.UNPROFITABLE_HELPER
     if rendered_callers is not None and len(rendered_callers) != sites:
         raise ValueError("Every replacement needs its rendered caller")
     if _bundles_cases(helper, statements):
-        return False
+        return RejectReason.REPEATED_STATEMENT_GROUP
     callers = (
         list(rendered_callers)
         if rendered_callers is not None
@@ -191,4 +194,13 @@ def worthwhile_helper(
     caller_cost = _syntax_cost(callers)
     original_cost = _syntax_cost(statements) * sites
     generated_cost = _syntax_cost([helper]) + caller_cost
-    return generated_cost < original_cost
+    return RejectReason.UNPROFITABLE_HELPER if generated_cost >= original_cost else None
+
+
+def worthwhile_helper(
+    helper: ast.FunctionDef,
+    replacements: Sequence[Replacement],
+    rendered_callers: Sequence[ast.AST] | None = None,
+) -> bool:
+    """Whether the helper passes every usefulness check."""
+    return helper_rejection(helper, replacements, rendered_callers) is None

@@ -177,6 +177,7 @@ the run lists ([automation](COMPATIBILITY.md)).
 | `private_name_lexical_class` | The block uses a double-underscore private name (self.__x), and the helper would live outside that class. |  |
 | `rebound_external_binding` | The block reads a variable that another function can reassign (through global, nonlocal or a closure) while the block runs. |  |
 | `relative_import_across_packages` | Only with --cross-module: the block holds a relative import that would name a different module from the module holding the helper. | Use an absolute import. |
+| `repeated_statement_group` | This helper would bundle independent repetitions of the same operation. |  |
 | `resource_lifetime_unproven` | This block creates or weakly references a resource that later code may depend on, and Towel cannot keep it alive in a helper. | Use a with statement to manage the resource, or use --strict. |
 | `return_variables_not_aligned` | The variables each block would hand back do not correspond one to one, or handing them back would change the order their objects are released in. |  |
 | `return_versus_variables` | One block ends by returning; the other is followed by code that reads its variables. |  |
@@ -214,6 +215,7 @@ the run lists ([automation](COMPATIBILITY.md)).
 | `not verifiable: the type checker does not look at the code it changes` | Towel could not establish that the type checker examines the changed code, so the change could not be verified. | To proceed without type verification, use --no-types. |
 | `not writable in place: its file is hard-linked` | Its file has more than one hard link, and an in-place run would leave the other links holding the old text. | Write the result to a new output, or give the file a single link. |
 | `refused by the type checker` | The project's type checker reported a new error with the helper in place. | To proceed without type verification, use --no-types. |
+| `repeated_statement_group` | This helper would bundle independent repetitions of the same operation. |  |
 | `the configured Ruff check failed or introduced diagnostics` | The project's Ruff check failed on the changed file, or reported something new there. |  |
 | `the formatter changed its code or failed` | The project's formatter failed on the changed code, or changed more than its layout. | Pass --no-format to leave the generated code unformatted. |
 | `unprofitable helper` | The shared code does not repay the helper: the helper and the calls that replace the blocks would not be smaller than the blocks themselves (counted in syntax, not lines). |  |

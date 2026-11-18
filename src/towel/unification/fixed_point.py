@@ -69,6 +69,7 @@ from .exceptions import (
     CheckerUnavailableError,
     TypeRejectedExtraction,
     RefactoringError,
+    RepeatedStatementGroup,
     UnprofitableHelper,
     UncheckedCodeError,
     Untypeable,
@@ -134,6 +135,7 @@ DeclineReason = Union[
         "the configured Ruff check failed or introduced diagnostics",
         "could not be rendered",
         "unprofitable helper",
+        "repeated_statement_group",
         "changed nothing",
     ],
     Untypeable,
@@ -751,6 +753,9 @@ class FixedPointDrivers(Materialization):
         its file's encoding cannot hold is a limit of that file; anything else
         is a rendering Towel could not produce.
         """
+        if isinstance(error, RepeatedStatementGroup):
+            self._decline(proposal, "repeated_statement_group")
+            return
         if isinstance(error, UnprofitableHelper):
             self._decline(proposal, "unprofitable helper")
             if debugging(REJECTIONS):

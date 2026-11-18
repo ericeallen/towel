@@ -53,7 +53,7 @@ from .argument_ownership import (
     argument_handoff_fits,
     verify_argument_handoff,
 )
-from .profitability import worthwhile_helper
+from .profitability import helper_rejection
 from ..formatting import checked, formatting_repeatability
 from ..canonical_ast import canonical_dump
 from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
@@ -61,6 +61,7 @@ from .engine_state import HelperNameClaims
 from .exceptions import (
     ProjectScanLimitError,
     RefactoringError,
+    RepeatedStatementGroup,
     TypeRejectedExtraction,
     UnprofitableHelper,
     UntypeableExtraction,
@@ -86,6 +87,7 @@ from .models import (
     AppliedChange,
     MethodKind,
     RefactoringProposal,
+    RejectReason,
     Replacement,
     is_generated_helper_name,
 )
@@ -373,14 +375,14 @@ class Materialization(
         ):
             raise RefactoringError("Type declarations require a fresh module or class helper")
         helper = self._prepare_helper_interface(proposal)
-        if (
-            self.skip_trivial_helpers
-            and proposal.reused_function is None
-            and not worthwhile_helper(
+        if self.skip_trivial_helpers and proposal.reused_function is None:
+            refusal = helper_rejection(
                 helper, proposal.replacements, self._rendered_call_sites(proposal)
             )
-        ):
-            raise UnprofitableHelper("The helper interface outweighs its shared logic")
+            if refusal is RejectReason.REPEATED_STATEMENT_GROUP:
+                raise RepeatedStatementGroup("The helper bundles independent repetitions")
+            if refusal is RejectReason.UNPROFITABLE_HELPER:
+                raise UnprofitableHelper("The helper interface outweighs its shared logic")
         replacements_by_file: Dict[str, List[Replacement]] = {}
         for repl in proposal.replacements:
             file_path = repl.file_path or proposal.file_path

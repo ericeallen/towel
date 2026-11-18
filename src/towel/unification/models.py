@@ -403,6 +403,7 @@ class RejectReason(StrEnum):
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"
     LITERAL_POOL_BOUNDARY = "literal_pool_boundary"
     UNIFICATION_FAILED = "unification_failed"
+    REPEATED_STATEMENT_GROUP = "repeated_statement_group"
     UNPROFITABLE_HELPER = "unprofitable_helper"
     UNPROVEN_IMPORT = "unproven_import"
     UNSUPPORTED_EXTRACTION = "unsupported_extraction"
