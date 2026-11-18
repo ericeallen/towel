@@ -735,14 +735,24 @@ REFLECTION_CASES: Dict[str, str] = {
 }
 
 
-def _r102_transforms_on_this_compiler(fixture: Path) -> bool:
-    """Only this fixture's comprehension parameter cells vary across compilers."""
-    parameters = {
+COMPILER_DEPENDENT_PARAMETERS: dict[str, dict[str, tuple[str, ...]]] = {
+    "r102_whole_body_reuse": {
         "scale": ("items", "factor"),
         "rescale": ("values", "k"),
         "summarize": ("data", "weight", "label"),
         "render": ("self", "data", "weight"),
-    }
+    },
+    "r7fz_grammar_u0417_augassign_after_block": {
+        "f1": ("a", "b", "c", "o"),
+        "f2": ("x", "y", "z", "w"),
+        "f3": ("a", "b", "c", "o"),
+    },
+}
+
+
+def _transforms_with_cell_free_parameters(fixture: Path) -> bool:
+    """Strict ownership transfer refuses parameters captured by a comprehension frame."""
+    parameters = COMPILER_DEPENDENT_PARAMETERS[fixture.stem]
     pending = [compile(fixture.read_text(), str(fixture), "exec", dont_inherit=True)]
     functions: list[CodeType] = []
     while pending:
@@ -750,13 +760,15 @@ def _r102_transforms_on_this_compiler(fixture: Path) -> bool:
         pending.extend(value for value in code.co_consts if isinstance(value, CodeType))
         if code.co_name in parameters:
             functions.append(code)
-    assert len(functions) == 4 and {code.co_name for code in functions} == set(parameters)
+    assert len(functions) == len(parameters) and {code.co_name for code in functions} == set(
+        parameters
+    )
     captures = []
     for code in functions:
         actual_parameters = code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
         assert actual_parameters == parameters[code.co_name]
         captures.append(bool(set(actual_parameters).intersection(code.co_cellvars)))
-    assert all(captures) or not any(captures), "Unknown mixed r102 parameter-cell facts"
+    assert all(captures) or not any(captures), f"Unknown mixed parameter cells in {fixture.name}"
     return not any(captures) and not lifetime_refusal_profile()
 
 
@@ -809,8 +821,8 @@ def test_refactoring_preserves_program_output(case: str) -> None:
             _assert_lifetime_order_refusal(after)
         if case not in KNOWN_DEFECTS:
             expected = (
-                _r102_transforms_on_this_compiler(fixture)
-                if case == "r102_whole_body_reuse"
+                _transforms_with_cell_free_parameters(fixture)
+                if case in COMPILER_DEPENDENT_PARAMETERS
                 else case in TRANSFORMED
             )
             assert transformed == expected, "rejected" if not transformed else "transformed"

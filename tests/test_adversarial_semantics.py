@@ -27,6 +27,7 @@ from typing import Callable, cast
 import pytest
 
 from tests.test_helpers import lifetime_order_certified
+from towel import cli
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.scope_analyzer import ScopeAnalyzer
@@ -71,7 +72,7 @@ def test_comprehension_iterable_uses_containing_scope(tmp_path: Path, comprehens
     outputs = _rewrites(tmp_path, source, lifetime_sensitive=True)
     function = original["first"]
     assert isinstance(function, FunctionType)
-    if set(function.__code__.co_cellvars) & {"xs", "ys"}:
+    if cli.DEFAULT_STRICT and set(function.__code__.co_cellvars) & {"xs", "ys"}:
         # On Python 3.11, the inner iterable of a nested comprehension
         # captures ys. Whole-body ownership transfer cannot certify cells.
         assert not outputs, "Cell-bound parameters must retain their ownership refusal"

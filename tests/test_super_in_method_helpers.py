@@ -43,6 +43,7 @@ from typing import List
 import pytest
 
 from tests.test_helpers import strict_lifetime_refusal
+from towel import cli
 
 from tests.test_helpers import method_helper_calls
 from tests.test_class_private_helpers import (
@@ -485,7 +486,7 @@ def test_super_moves_into_a_helper_of_the_class_holding_both_duplicates(
     if strict_lifetime_refusal() and source not in {COOPERATIVE_INIT, DIAMOND_BORROWED}:
         _assert_uncertified_refusal(outcome, source)
         return
-    if source == NESTED_SCOPES:
+    if cli.DEFAULT_STRICT and source == NESTED_SCOPES:
         module_code = compile(textwrap.dedent(source), "<nested-super-fixture>", "exec")
         class_code = next(
             code
@@ -501,11 +502,7 @@ def test_super_moves_into_a_helper_of_the_class_holding_both_duplicates(
             # Separate comprehension frames retain the original receiver cell;
             # the ownership handoff deliberately does not transfer such cells.
             assert outcome.applied == 0
-            assert (
-                "lifetime_order_uncertified"
-                if strict_lifetime_refusal()
-                else "owned_binding_frame_boundary"
-            ) in outcome.reasons
+            assert "owned_binding_frame_boundary" in outcome.reasons
             assert not _helpers_in(outcome.source, host)
             assert not _module_helpers(outcome.source)
             return
