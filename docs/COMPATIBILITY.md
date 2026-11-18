@@ -25,11 +25,23 @@ repeatable output. The runtime itself has no mandatory third-party dependency.
 ## CLI contract
 
 The supported commands are `preview`, `dry`, `rename-helpers` and `recover`.
-Use the documented long option names in scripts. Existing supported flags will
+Use the documented long option names in scripts, spelled in full: since 2.0
+an abbreviation such as `--summ` is refused with status 2. Existing supported flags will
 not be removed or repurposed without a changelog migration note and a deprecation
 period covering at least one published release. A repair needed to preserve
 source or prevent an unsafe operation can refuse a previously accepted command
 immediately; the changelog will explain the new refusal and remedy.
+`rename-helpers --llm` is deprecated as of 2.0: it still works, prints a
+warning, and will be removed in a later release.
+
+A `[tool.towel]` table in the project's `pyproject.toml` sets defaults for
+`preview` and `dry` (added in 2.0). Its keys are those commands' long option
+names without the dashes (`strict = true`, `jobs = 4`), so the option-name
+promise above covers them too; an option given on the command line overrides
+the table, and `--no-config` ignores it. A table can set any of these options,
+including `check` and `json`, so the exit status and output form of a run
+depend on it: pass `--no-config` in automation that must not inherit a
+project's settings.
 
 Always pass `--no-interactive` to unattended `dry` runs. A closed input stream
 or a declined confirmation is cancellation, not completed work.
@@ -38,8 +50,8 @@ or a declined confirmation is cancellation, not completed work.
 | --- | --- |
 | `0` | The requested operation completed; no applicable extraction is also a completed result. |
 | `1` | The operation failed, was refused, or was cancelled at confirmation. |
-| `2` | Invalid command-line arguments. For `rename-helpers`, also a rename mapping that was rejected or a consumer scope that could not be established; nothing is renamed. |
-| `3` | `preview --check` completed and would change code. |
+| `2` | Invalid command-line arguments. Also an invalid or unreadable `[tool.towel]` table (added in 2.0). For `rename-helpers`, also a rename mapping that was rejected or a consumer scope that could not be established; nothing is renamed (added in 2.0). |
+| `3` | `preview --check` completed and would change code. Added in 2.0. |
 | `124` | The elapsed-time budget expired before publication. |
 | `130` | Interrupted with SIGINT. |
 | `143` | Terminated with SIGTERM. |
@@ -58,8 +70,8 @@ generated helper names.
 ## Structured output
 
 `preview --json` and `dry --json --no-interactive` write one JSON result to
-stdout after argument parsing succeeds. Invalid arguments can fail before a
-result is created. SIGTERM or a broken output pipe can also prevent a record
+stdout after argument parsing succeeds. Invalid arguments, or an invalid
+`[tool.towel]` table, can fail before a result is created. SIGTERM or a broken output pipe can also prevent a record
 from being written. Check the exit status and require a complete result before
 treating an automated run as successful.
 Helper inventory and rename commands also provide their documented
@@ -74,7 +86,7 @@ The preview/dry result schema is version 1:
 | `command` | `"preview"` or `"dry"`. |
 | `mode` | `"relaxed"`, the default, or `"strict"` when the run was given `--strict`. Added in 2.0; a result without it came from an earlier release, which had only strict behavior. |
 | `status` | `"complete"`, `"incomplete"` or `"error"`. |
-| `types` | On completed runs, `"verified"` means a checker ran and verified the accepted changes, `"unverified"` means no checker was available (including a missing configured checker in relaxed mode), and `"off"` means `--no-types`; absent when an available checker had no readable source to check, or on failed or interrupted runs (see `status` and `error`). |
+| `types` | `"verified"` means a checker ran and verified the accepted changes, `"unverified"` means none did (no checker was available, or, in relaxed mode, the configured checker was missing or the project's own check could not run), and `"off"` means `--no-types`; absent when an available checker had no readable source to check, or on failed or interrupted runs (see `status` and `error`). On a preview stopped by its time limit it describes the changes accepted before the stop, each checked on its own; the partial diff was not checked as a whole. Added in 2.0. |
 | `input` | Absolute input path. |
 | `output` | Absolute destination path for `dry`; `null` for preview. |
 | `published` | `true` after successful `dry` publication; `false` for preview or an expired time budget; `null` when a failed or interrupted `dry` cannot confirm the publication state. |
@@ -84,8 +96,8 @@ The preview/dry result schema is version 1:
 | `helpers` | Helper inventory object, or `null` if unavailable. An optional inventory-read failure does not undo successful publication. |
 | `error` | Human-readable failure explanation, or `null`. |
 | `config_path` | Absolute path of the `pyproject.toml` whose `[tool.towel]` table the run used, or `null`. Added in 2.0. |
-| `outcome` | On a completed run, `"applied"`, `"all_left_alone"` (similar code found, none extracted), `"no_repeated_code"` or `"no_python_files"`; `null` on failure. Added in 2.0. |
-| `analysed` | `{"files": N, "functions": M, "skipped": [...]}`: what the run read, and each file it skipped with the reason; `null` on failure. Added in 2.0. |
+| `outcome` | On a completed run, `"applied"`, `"all_left_alone"` (similar code found, none extracted), `"no_repeated_code"`, `"not_fully_examined"` (no repeated code in what was examined, but some code was not examined; see `analysed.not_examined`) or `"no_python_files"`; `null` on an incomplete or failed run. Added in 2.0. |
+| `analysed` | `{"files": N, "functions": M, "skipped": [...], "not_examined": [...]}`: what the run read, each file it skipped with the reason, and each file with code it did not examine (`path`, `module_statements`, `early_return_guards`); `null` when the run failed (`status` `"error"`). Added in 2.0. |
 | `left_alone` | How many places with similar code the run lists as left alone by default; `0` on failure. Added in 2.0. |
 | `relaxed_findings` | In relaxed mode, code that may depend on what strict mode keeps: a list of `{"kind", "path", "line", "detail"}`, where `kind` is `"finalizer"`, `"weakref_callback"`, `"gc_callback"` or `"function_rebinding"`. Added in 2.0. |
 | `partial_diff`, `finally_confirmed` | Only on a preview stopped before it finished (`status` `"incomplete"`): the diff of what it had done, which was not checked as a whole, and `false`. Added in 2.0. |
@@ -131,7 +143,9 @@ The supported surface consists of:
   `min_lines`, `max_parameters`, `parameterize_constants`,
   `parameterize_builtins`, `excluded_directories`, `cross_module_helpers`,
   `skip_trivial_helpers`, `annotate_helpers`, `max_candidate_pairs` and
-  `strict` (added in 2.0).
+  `strict` (added in 2.0). `strict` defaults to `False`, relaxed mode, as the
+  CLI does; earlier releases behaved as `strict=True` does now, so pass it to
+  keep their behavior.
 - Its `analyze_file`, `analyze_files`, `plan_refactoring`,
   `refactor_to_fixed_point` and `refactor_directory_to_fixed_point` methods,
   with their documented argument and return shapes.

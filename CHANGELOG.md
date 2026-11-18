@@ -1,14 +1,16 @@
 # Changelog
 
 All notable changes to Towel are recorded here. This file summarizes releases;
-[docs/RELEASE_LOG.md](docs/maintainers/RELEASE_LOG.md) keeps the detailed engineering log,
-and [docs/PRODUCTION_READINESS.md](docs/maintainers/PRODUCTION_READINESS.md) records the
+[docs/maintainers/RELEASE_LOG.md](docs/maintainers/RELEASE_LOG.md) keeps the detailed engineering log,
+and [docs/maintainers/PRODUCTION_READINESS.md](docs/maintainers/PRODUCTION_READINESS.md) records the
 ecosystem evidence behind each claim. The format follows
-[Keep a Changelog](https://keepachangelog.com/). Versions use mathematical
-mnemonics with PEP 440 ordering; see the
+[Keep a Changelog](https://keepachangelog.com/). Versions are PEP 440
+release numbers; see the
 [version convention](docs/maintainers/RELEASING.md#version-number-convention).
 
 ## [Unreleased]
+
+## [2.0]
 
 Towel 2.0: a relaxed default that extracts far more, and plain calls in place
 of strict mode's bookkeeping. The [documentation](https://ericeallen.github.io/towel/)
@@ -17,15 +19,30 @@ is now a site, and shows every command's output.
 ### Upgrade notes
 
 - **Relaxed mode is the default.** Towel assumes a program does not depend on
-  exactly when Python frees an object it no longer uses, that reading an
-  attribute or comparing has no side effects, and that module functions are
-  not rebound while a helper runs. `--strict`, or `strict = true` under
-  `[tool.towel]`, keeps 1.949's behavior exactly
-  ([relaxed and strict](https://github.com/ericeallen/towel/blob/main/docs/RELAXED_AND_STRICT.md)).
+  exactly when Python frees an object it no longer uses; that reading an
+  attribute, indexing, comparing, arithmetic and truth tests have no side
+  effects; and that module functions, classes and imports are not rebound
+  while a helper runs. A lambda that uses only its own parameters may move
+  into a helper, which changes its `__qualname__`. Objects that clean up
+  something the program can still reach (temporary directories, open files
+  and sockets, pools, memory maps, weak references) are kept alive, or the
+  block is left alone (`resource_lifetime_unproven`). `--strict`, or
+  `strict = true` under `[tool.towel]`, keeps 1.949's behavior exactly
+  ([relaxed and strict](https://github.com/ericeallen/towel/blob/v2.0/docs/RELAXED_AND_STRICT.md)).
+  The Python API's default is relaxed too: pass `strict=True` to keep 1.949's.
+- **Formatting follows the project.** Inserted code is formatted with Ruff or
+  Black only when the project configures one (in its settings or a pre-commit
+  hook) or its analysed files are already formatted by one; otherwise Towel
+  says so and leaves formatting alone. 1.949 ran Black regardless.
 - **`preview --check` exits 3** when it would change code. Status 3 is new, and
   only `--check` returns it.
 - **Abbreviated options are refused**: `--summ` is exit 2, `unrecognized
-  arguments`. Scripts must spell options in full.
+  arguments`. Scripts must spell options in full. `preview --quick` cannot be
+  combined with `--json`, `--summary`, `--diff`, `--inventory`, `--stats` or
+  `--check` (exit 2).
+- **Console messages changed** throughout (for example, a declined prompt
+  prints "Cancelled; nothing was written." and exits 1). Scripts should read
+  `--json`, whose schema is the [compatibility contract](https://github.com/ericeallen/towel/blob/v2.0/docs/COMPATIBILITY.md).
 - **`rename-helpers --llm` is deprecated**: it prints a warning and will be
   removed; the prompt is the same for every assistant.
 - **`--time-limit` above 100,000,000 seconds is refused** (exit 2) instead of
@@ -39,29 +56,49 @@ is now a site, and shows every command's output.
 
 ### Added
 
-- Callers pass arguments as themselves wherever that cannot change what runs,
-  and call helpers directly; `lambda:` remains only where an expression must
-  run later, repeatedly or conditionally.
-- Copies that differ in an attribute of the block's own loop variable become
+- In relaxed mode, callers pass arguments as themselves wherever that cannot
+  change what runs, and call helpers directly; `lambda:` remains only where an
+  expression must run later, repeatedly or conditionally. Strict mode keeps
+  1.949's form.
+- Copies that differ in an attribute of a name the block itself binds become
   one helper with a callback (`lambda item: item.weight_kg`).
 - A block of statements that duplicates the whole body of an existing
   function becomes a call to that function ("Reuse NAME"), where nothing can
-  rebind the function while it runs. A repeated expression gets a new helper.
+  rebind the function while it runs; strict mode also needs the whole program
+  in view (`--complete-scope`) and no handoff of objects to the function.
+  Identical generated helpers become one. A repeated expression gets a new
+  helper.
 - Repeated multi-line expressions, blocks repeated inside one function, blocks
   that `await` (as `async def` helpers), differing f-string text and
-  consistently renamed locals are extracted.
-- Every run reports what it read (`Analysed N Python files`), what it skipped,
-  and why it left code alone, in a sentence per reason, with what you can do.
-  `--explain` lists every place. In relaxed mode, files that do not parse are
-  skipped with a warning; `--strict` still refuses them.
+  consistently renamed locals are extracted. With `--cross-module`, relaxed
+  mode also lets a shared helper read builtins and common imports by name and
+  take in equal literals, and a run that shares nothing between modules says
+  what each pair lacked.
+- Every run reports what it read (`Analysed 2 Python files (4 functions)`),
+  what it skipped, what it did not examine, and why it left code alone, in a
+  sentence per reason, with what you can do; an all-clear says it covers the
+  code Towel examined. `--explain` lists every place. In relaxed mode, files
+  that do not parse are skipped with a warning; `--strict` still refuses them.
+- A relaxed run first notes code that may depend on when objects are freed
+  (`__del__`, weak-reference callbacks and the like), naming each place.
+  `--quiet` hides the note; `--json` reports it in `relaxed_findings`.
 - `[tool.towel]` in `pyproject.toml` sets defaults (`--no-config` ignores it);
   a `towel-check` pre-commit hook; `--quiet`; `--jobs`; `--include-ignored`;
   `--complete-scope` on `dry` and `preview`; `dry --no-helper-metadata`;
   `rename-helpers --format`; `-V`; `python -m towel`.
-- A typed project whose configured checker is missing runs untyped with a
-  warning; unannotated changes proceed past unresolved imports.
-- JSON results gain `mode`, `types`, `config_path`, `outcome`, `analysed`,
-  `left_alone` and `relaxed_findings` (schema 1, additive).
+- `rename-helpers --preview` prints a unified diff, and the naming prompt
+  shows each helper's whole source and a call site. `recover` says what it
+  restored.
+- In relaxed mode, a typed project whose configured checker is missing, or
+  whose own check cannot run, runs untyped with a warning, and unannotated
+  changes proceed past unresolved imports. Strict mode still refuses.
+- JSON results gain `mode`, `types`, `config_path`, `outcome`, `analysed`
+  (with `skipped` and `not_examined`), `left_alone` and `relaxed_findings`,
+  and an incomplete preview's `partial_diff` and `finally_confirmed`
+  (schema 1, additive).
+- New reasons for leaving code alone: `generator_block`,
+  `coroutine_exception_boundary`, `resource_lifetime_unproven` and, in strict
+  mode, `truth_test_repeated` and `lifetime_order_uncertified`.
 - Python 3.14 and 3.15. Strict mode's lifetime guarantees are certified for
   3.11 to 3.13; on later versions it leaves alone what they cover, so install
   on 3.13 to use `--strict` (`uv tool install` now picks 3.14 or 3.15).
@@ -73,7 +110,12 @@ is now a site, and shows every command's output.
   that it needs an output.
 - Help lists options in four groups, states each default and fits the terminal.
 - Helpers keep the source's parameter order, spelling and indentation.
-- Files Git ignores, and `build/`, `dist/` and `*.egg-info`, are not analysed.
+- A helper made only of independent repeated statements, such as a run of
+  asserts or appends, is not proposed, in either mode.
+- Strict mode extracts the value of an assignment it declines to extract
+  whole.
+- Files Git ignores, and `build/`, `dist/`, `site-packages/` and `*.egg-info`,
+  are not analysed.
 
 ### Fixed
 
@@ -81,15 +123,30 @@ is now a site, and shows every command's output.
 - Group SIGINT and SIGTERM always exit 130 and 143, even when workers die first.
 - `preview` no longer fails on a file that does not decode.
 - Negative counts and huge time limits give argument errors, not tracebacks.
+- Inserted helpers keep section comments with the code they belonged to;
+  helpers shared across modules get two blank lines; `rename-helpers --list`
+  keeps method indentation; mixed line endings are preserved; `dry` warns
+  about inputs it could not copy.
 
 ### Maintenance
 
+- The documentation is a site built with Zensical (`just docs`); maintainers'
+  records moved to `docs/maintainers/` and design records to `docs/design/`.
+- The release gates refuse wording in the README, SECURITY.md, CONTRIBUTING.md,
+  the documentation index and the quick start that says whether their own
+  version is published.
 - Ecosystem harness: a refusal the manifest reviews (`expected_refusal`) is
   `REFUSED`, which passes only while it lists exactly the reviewed problems;
   any other refusal or crash still fails. The manifest pins the reviewed
   watchdog 6.0.0 (Werkzeug) and pytest 9.1.1 (Black), and the Ecosystem
   workflow stages python-dateutil's timezone archive, so the weekly run
   measures what the release campaign measures.
+- Ecosystem harness: refactors run in the requested mode (`--strict` for the
+  strict corpus). When relaxed mode changes a project's tests, the harness
+  refactors it again in strict mode and tests that; a change a reviewed
+  `relaxed_assumption` traces to a named assumption, with the strict suite
+  unchanged, is `RELAXED_ASSUMPTION`, a project for strict mode. Release
+  evidence covers the corpus in both modes.
 
 ## [1.949]
 

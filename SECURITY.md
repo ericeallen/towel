@@ -5,7 +5,7 @@ Towel rewrites source code. Review the generated diff and run the affected proje
 ## Supported versions
 
 Security fixes are provided for the latest released version.
-This source tree targets **1.949**. The
+This source tree targets **2.0**. The
 [GitHub release history](https://github.com/ericeallen/towel/releases) and the
 [PyPI package history](https://pypi.org/project/code-towel/#history) show
 which version is the latest release.

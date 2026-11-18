@@ -14,6 +14,7 @@ the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [2.0 preparation](#2026-11-18-20-preparation)
 - [1.949 completed publication](#2026-11-10-1949-published-release)
 - [1.949 preparation](#2026-11-08-1949-preparation)
 - [1.948 completed publication](#2026-11-07-1948-published-release)
@@ -38,6 +39,20 @@ the entries below do not transfer approval to a later source or version.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-11-18: 2.0 preparation
+
+Prepared **2.0**, the release that makes relaxed mode the default and keeps
+1.949's behavior as `--strict`, adds Python 3.14 and 3.15, and moves the
+documentation to a site ([changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#20)).
+It integrates the remediation of the November 14 user-perspective audit of
+1.949. Before this preparation, integration candidate `1bf3da59` passed three
+full runs with no failures: 14,742 tests in the default mode and 14,742 with
+`--towel-strict` on Python 3.13, and 15,014 in the default mode on 3.15. Those
+runs are integration evidence, not the release campaign. This entry claims
+neither the exact-candidate campaign, remote CI nor publication; the
+[readiness checkpoint](PRODUCTION_READINESS.md#20-preparation-checkpoint-november-18-2026)
+describes the scope and remaining release work.
 
 ## 2026-11-10: 1.949 published release
 

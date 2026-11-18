@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-towel"
-version = "1.949"
+version = "2.0"
 description = "Refactor duplicated Python code into shared helper functions, declining extractions that fail binding, control-flow and evaluation-order checks"
 keywords = [
     "refactoring",

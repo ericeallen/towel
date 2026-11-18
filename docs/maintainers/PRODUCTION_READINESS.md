@@ -12,6 +12,30 @@ For completed validation and publication records, see the
 The dated preparation and publication checkpoints below retain their original
 source identities, measurements and validation scope.
 
+## 2.0 preparation checkpoint, November 18, 2026
+
+**2.0** makes relaxed mode the default: Towel assumes a program does not
+depend on when Python frees objects, on side effects of reading values, or on
+module names being rebound while a helper runs, and in return extracts more
+and writes plain calls. `--strict` keeps 1.949's guarantees. 2.0 also supports
+Python 3.14 and 3.15, on which strict mode's lifetime proofs are not certified
+and it declines what they cover.
+
+The release campaign validates both modes: the full suite and coverage on
+Python 3.11–3.15, the full suite with `--towel-strict` on 3.13 and 3.15, both
+differential fuzz families in both modes, ten clean-wheel smokes, self-dogfood
+in both modes, and the 141-project corpus twice, relaxed and strict. Following
+the maintainer's ruling of November 15, 2026, a corpus project whose tests
+relaxed mode changes is not a release blocker if such projects are rare and
+each is traced to a named assumption of relaxed mode, with strict mode leaving
+its suite unchanged in the same run; the harness's `RELAXED_ASSUMPTION`
+verdict records that review. Any other change is a defect.
+
+At this checkpoint the candidate had passed integration testing only (three
+full runs on `1bf3da59` without failures); the release campaign, remote CI and
+publication had not started. Their results are recorded with the release, not
+in this file.
+
 ## 1.949 published release, November 10, 2026
 
 Towel **1.949** is published on [PyPI](https://pypi.org/project/code-towel/1.949/)

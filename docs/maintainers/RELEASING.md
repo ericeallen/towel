@@ -2,13 +2,20 @@
 
 [Maintainers' records](README.md) · [Documentation index](../README.md)
 
-This source describes **1.949**: the product-experience and maturity
-improvements in the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1949). The
+This source describes **2.0**: relaxed mode as the default, with strict mode
+keeping 1.949's behavior; Python 3.14 and 3.15; and the documentation site, as
+the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#20) describes. The
 [GitHub releases](https://github.com/ericeallen/towel/releases) record which
 versions have been published and, from 1.732 on, how each was validated. The
 [readiness report](PRODUCTION_READINESS.md) keeps the dated preparation and
-publication records of 1.949 and of earlier releases, under their original
+publication records of 2.0 and of earlier releases, under their original
 source identities and results.
+
+2.0 is validated in both modes: the full suite on Python 3.11–3.15 in the
+default mode and with `--towel-strict` on 3.13 and 3.15, both fuzz families in
+both modes, and the 141-project corpus twice, relaxed and strict. A corpus
+project whose tests relaxed mode changes passes only as a reviewed
+`RELAXED_ASSUMPTION` ([consumer evidence](#consumer-and-typing-evidence)).
 Freeze the final versioned source before the complete gates below, and keep final
 validation and publication outcomes external to the shipped source:
 [no shipped file says whether its own version has been published](#what-shipped-files-may-say-about-a-release).
@@ -249,23 +256,19 @@ No Git push is permitted under the standing repository instructions.
 
 ## Version number convention
 
-Towel uses increasing, normalized PEP 440 identifiers with mathematical
-mnemonics: 1.772 names the square root of pi, 1.792 names ln 6, and 1.946 names
-ln 7. These two-component versions are not a strict Semantic Versioning scheme.
-The maintainer selected 1.947 for audit repairs after 1.946 and 1.948 for the
-following correctness and CLI repairs. Version 1.949 continues
-that sequence for product-experience and maturity improvements; these repair
-versions do not add mathematical mnemonics.
-The 1.947 rename CLI introduced the complete-consumer scope requirement; see
-the [1.947 overview](RELEASE_1_947.md). A future 2.0 should accompany a deliberate
-major transition, rather than the size of a patch or a nearby mathematical value.
+Towel uses increasing, normalized PEP 440 identifiers. From 1.414 through
+1.949 they were two-component numbers with mathematical mnemonics (1.772 names
+the square root of pi, 1.792 names ln 6, 1.946 names ln 7), followed by the
+repair numbers 1.947 to 1.949; they were not a Semantic Versioning scheme.
+The maintainer chose **2.0** for the release that makes relaxed mode the
+default: a deliberate major transition, as this section had reserved 2.0 for.
+How releases after 2.0 are numbered is not yet decided; choose each version
+explicitly and record the choice here.
 
-At three decimal places, 1.949 leaves 50 larger labels below 2.000, from 1.950
-through 1.999. Choose each future mnemonic and identifier explicitly; the current
-choice does not schedule 2.0. Version tools compare integer components, not real
-numbers: `1.9461` sorts after `1.999`, so adding decimal precision is not a way to
-insert a release between them. Review ordering with `packaging.version.Version`
-and check live availability before reserving any future release identifier.
+Version tools compare integer components, not real numbers: `1.9461` sorts
+after `1.999`, and `2.0` sorts after every 1.x. Review ordering with
+`packaging.version.Version` and check live availability before reserving any
+future release identifier.
 
 ## Recorded release history
 
@@ -311,7 +314,7 @@ The maintainer must review the measured regression before publication.
 
 The version and documentation update changes release contents. Freeze the final
 source for the chosen version, rebuild its artifacts, and run the full declared release campaign:
-Python 3.11–3.13, coverage and quality, differential families, clean-wheel and
+Python 3.11–3.15, coverage and quality, differential families, clean-wheel and
 sdist checks, self-dogfood, dependency/diagram checks, the 141-project corpus,
 source-bound evidence verification and exact-commit CI. Historical successes
 remain evidence for their original sources. The detailed completed and pending
@@ -369,8 +372,10 @@ The example abbreviates `records`: every name exported by
 `scripts.verify_release_evidence.REQUIRED_RECORDS` is mandatory. List them with
 `python -c 'from scripts.verify_release_evidence import REQUIRED_RECORDS; print("\n".join(REQUIRED_RECORDS))'`.
 These are the retained native source/artifact inventories, five build/quality
-steps, dependency/diagram checks, both 2,000-case fuzz families, all three
-interpreter results with the matrix driver, full runtime coverage XML and logs, six clean-wheel command
+steps, dependency/diagram checks, both 2,000-case fuzz families in both modes
+(`fuzz*` relaxed, `fuzz-strict*` strict), all five interpreter results with the
+matrix driver, full runtime coverage XML and logs, the strict full suites on
+Python 3.13 and 3.15 (`matrix-strict-*`), ten clean-wheel command
 records, sdist documentation tests, complete self-dogfood tests and integrity
 records, and corpus launch/completion/environment/summary records for each of
 the two corpus runs: relaxed mode, the default, as `corpus*`, and strict mode as
@@ -459,7 +464,7 @@ Keep the original bundle and artifacts. Commit the final documentation, then:
    again with `python scripts/audit_dependencies.py`; they must match the
    original `dependencies-dev.txt` exactly. Isolated builds may resolve
    different backend versions, so they are not accepted for this shortcut.
-2. Repeat artifact inspection, strict Twine checks, the dependency audit, diagrams, all six clean
+2. Repeat artifact inspection, strict Twine checks, the dependency audit, diagrams, all ten clean
    wheel installation smokes and the documentation tests from the new sdist.
    Use the existing record formats and filenames in `REBUILD`. The verifier
    checks the actual new archive contents, wheel metadata and RECORD, and
@@ -513,8 +518,10 @@ entry points must remain identical too.
 Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`. Run `just check-diagrams` as well: GitHub renders the documentation's mermaid diagrams and no Python check looks at them, so a syntax error would otherwise appear only once the page is published. It needs Node and installs mermaid and jsdom on first use.
 Run `just ci`: formatting, lint, typing, Bandit, the dependency audit, full tests,
 coverage with the unconditional 85% gate, and a wheel/source build. Repeat the
-full tests and coverage on Python 3.11–3.13, combining coverage before each
-report. Complete this Python 3.11–3.13 matrix **before starting the corpus**.
+full tests and coverage on Python 3.11–3.15, combining coverage before each
+report, and the full suite with `--towel-strict` on 3.13 and 3.15, where every
+engine a test does not set is strict. Complete this matrix **before starting
+the corpus**.
 Every interpreter's full test suite and coverage gate must pass on the frozen
 candidate. A failed or incomplete matrix blocks the corpus run; fix the failure
 and repeat the affected validation first. A passing native Python 3.13 suite
@@ -557,7 +564,7 @@ explanation. Never update an expectation solely because a new run differs.
 ### Consumer and typing evidence
 
 Start the ecosystem harness only after the frozen candidate's Python
-3.11–3.13 matrix has completed successfully. Run it from a committed snapshot
+3.11–3.15 matrix has completed successfully. Run it from a committed snapshot
 (`--towel-src` names that snapshot's `src` directory). What runs is one wheel of that source, the one
 `--towel-wheel` names or one the harness builds from the snapshot when none is
 named, and the harness refuses a wheel whose Python files differ from
@@ -871,10 +878,10 @@ For the exact candidate commit:
 
 1. Record the commit, tool/interpreter versions, commands, exit statuses, and coverage results. Review every changed golden snapshot; regeneration is not validation.
 2. Run representative consumer projects' own tests before and after real transformations in disposable copies. Record upstream revisions, changed files/proposals, baseline failures or skips, and after-test results. A no-change run or compilation alone is not a consumer equivalence check.
-3. Inspect both distributions, check metadata and license inclusion, install the exact candidate wheel into a clean environment, and exercise its CLI entry points on Python 3.11, 3.12, and 3.13. For each interpreter do this twice: once bare, where `towel dry` must note that no formatter or checker is installed and still refactor, and once with the `format` and `types` extras, where it must format inserted code and annotate helpers on a small annotated project, report what verification will cost before its confirmation prompt, and confirm the finished project with a cold checker. Run from outside the checkout with `PYTHONPATH` unset, and verify that the imported `towel.__file__` belongs to the new environment's `site-packages`; an import from `src/towel` tests the checkout, not the wheel. Record the exact wheel path and hash, never select from stale `dist/` files with a broad wildcard. Ensure the version matches the proposed release throughout the metadata. CI builds the distributions and runs source tests on this interpreter matrix; it does not currently perform these clean-wheel smoke checks, so retain separate evidence for them.
+3. Inspect both distributions, check metadata and license inclusion, install the exact candidate wheel into a clean environment, and exercise its CLI entry points on Python 3.11, 3.12, 3.13, 3.14 and 3.15. For each interpreter do this twice: once bare, where `towel dry` must note that no formatter or checker is installed and still refactor, and once with the `format` and `types` extras, where it must format inserted code and annotate helpers on a small annotated project, report what verification will cost before its confirmation prompt, and confirm the finished project with a cold checker. Run from outside the checkout with `PYTHONPATH` unset, and verify that the imported `towel.__file__` belongs to the new environment's `site-packages`; an import from `src/towel` tests the checkout, not the wheel. Record the exact wheel path and hash, never select from stale `dist/` files with a broad wildcard. Ensure the version matches the proposed release throughout the metadata. CI builds the distributions and runs source tests on this interpreter matrix; it does not currently perform these clean-wheel smoke checks, so retain separate evidence for them.
 4. Audit the resolved runtime and development dependencies and perform a secret scan of the release contents and tracked history. Record the scope and limitations of each scan; a clean result does not guarantee absence of vulnerabilities or secrets.
 5. Review the current audit report and unresolved limitations. Confirm generated documentation claims only what [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md) verifies and states the remaining limitations.
-6. Run the differential fuzzer on the candidate, from seeds no earlier run has covered: `just fuzz` draws a random start and prints it, and `just fuzz N SEED` repeats a run exactly. Each seed generates a small project with the round-3 semantic auditor's grammar of near-duplicate blocks. Towel refactors it in the default mode and with `--cross-module`, and every twentieth seed again typed, with the strict checker its project configures. The program is observed before and after in fresh interpreters: output, exceptions, module and class structure, and public names. The default suite runs a fixed, measured subset of these seeds (`tests/test_differential_grammar.py`), so this run is the one that covers new ground. Run the scope family too, `just fuzz N SEED --family scope`: its blocks hold their function's only binding of a name the function reads elsewhere, which the grammar never writes.
+6. Run the differential fuzzer on the candidate, from seeds no earlier run has covered: `just fuzz` draws a random start and prints it, and `just fuzz N SEED` repeats a run exactly. Each seed generates a small project with the round-3 semantic auditor's grammar of near-duplicate blocks. Towel refactors it in the default mode and with `--cross-module`, and every twentieth seed again typed, with the strict checker its project configures. The program is observed before and after in fresh interpreters: output, exceptions, module and class structure, and public names. The default suite runs a fixed, measured subset of these seeds (`tests/test_differential_grammar.py`), so this run is the one that covers new ground. Run the scope family too, `just fuzz N SEED --family scope`: its blocks hold their function's only binding of a name the function reads elsewhere, which the grammar never writes. Run both families again with `--strict`, from other fresh seeds: Towel runs relaxed by default, and strict mode is a separate code path.
    - Each failure is written as a hostile fixture, ready to commit, under the directory the run prints, with a note saying which battery it belongs to and what to add there. Pass `--prefix` to name the fixtures by your branch. The run exits 1 if any case failed.
    - A failure of a class that [tests/audit_defects.py](https://github.com/ericeallen/towel/blob/main/tests/audit_defects.py) names is a known defect. Commit its fixture only when it shows the class in a shape the batteries lack.
    - Any other failure is a finding for the audit, at the owner's P1 standard. Its fixture is committed as a strict expected failure, entered in its battery's `KNOWN_DEFECTS`, until the fix lands.
@@ -1014,6 +1021,7 @@ source.
 ## Maintainer decisions before publication
 
 - Choose the exact unused version and approve the reviewed artifact hashes.
+  For 2.0 the version is chosen; the numbering of later releases is not.
 - The repository is public (done September 15, 2026). Configure CI as a required check before relying on branch protection; verify the actual remote settings.
 - GitHub private vulnerability reporting is enabled (done September 15, 2026), and [SECURITY.md](https://github.com/ericeallen/towel/blob/main/SECURITY.md) documents it as the reporting channel and names the supported version (the latest release). Confirm the "Report a vulnerability" button appears on the Security tab, and revisit the support policy as the project's release cadence settles.
 - Approve the publication destination and release notes. Preserve the historical yanks unless a separate reviewed decision changes their status.
