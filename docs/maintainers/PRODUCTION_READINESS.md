@@ -32,7 +32,9 @@ its suite unchanged in the same run; the harness's `RELAXED_ASSUMPTION`
 verdict records that review. Any other change is a defect.
 
 At this checkpoint the candidate had passed integration testing only (three
-full runs on `1bf3da59` without failures); the release campaign, remote CI and
+full runs on `1bf3da59` without failures, and a full `--towel-strict` run on
+Python 3.13 one test-only commit before the final integration candidate
+`eabb9d47`); the release campaign, remote CI and
 publication had not started. Their results are recorded with the release, not
 in this file.
 

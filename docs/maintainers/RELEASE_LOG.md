@@ -48,8 +48,11 @@ documentation to a site ([changelog](https://github.com/ericeallen/towel/blob/ma
 It integrates the remediation of the November 14 user-perspective audit of
 1.949. Before this preparation, integration candidate `1bf3da59` passed three
 full runs with no failures: 14,742 tests in the default mode and 14,742 with
-`--towel-strict` on Python 3.13, and 15,014 in the default mode on 3.15. Those
-runs are integration evidence, not the release campaign. This entry claims
+`--towel-strict` on Python 3.13, and 15,014 in the default mode on 3.15. The
+final integration candidate, `eabb9d47`, adds polish's third round and the
+source-policy repair; its full `--towel-strict` run on 3.13, one test-only
+commit earlier, passed 14,779 tests. Those runs are integration evidence, not
+the release campaign. This entry claims
 neither the exact-candidate campaign, remote CI nor publication; the
 [readiness checkpoint](PRODUCTION_READINESS.md#20-preparation-checkpoint-november-18-2026)
 describes the scope and remaining release work.
