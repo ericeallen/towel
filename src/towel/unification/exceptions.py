@@ -33,6 +33,10 @@ class RefactoringError(TowelError):
     """
 
 
+class RepeatedStatementGroup(RefactoringError):
+    """The final helper would bundle independent repetitions of the same operation."""
+
+
 class UnprofitableHelper(RefactoringError):
     """The final helper and callers cost more than the work they share.
 

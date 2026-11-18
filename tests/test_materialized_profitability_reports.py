@@ -21,10 +21,41 @@ import re
 import pytest
 
 from towel.diagnostics import REJECTIONS
+from towel.unification.models import RejectReason
 from towel.unification import materialize
 from towel.unification.exceptions import RefactoringError, UnprofitableHelper
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES, invoke
+
+
+@pytest.mark.parametrize("at_materialization", [False, True])
+def test_repeated_cases_get_their_own_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, at_materialization: bool
+) -> None:
+    """Integration 7: explain the repeated cases at whichever step declines them."""
+    from towel.unification import pair_evaluation
+
+    source = tmp_path / "cases.py"
+    source.write_text(
+        "def yes(config):\n"
+        "    assert config('yes', cast=bool) is True\n"
+        "    assert config('on', cast=bool) is True\n"
+        "    assert config('one', cast=bool) is True\n"
+        "def no(config):\n"
+        "    assert config('no', cast=bool) is False\n"
+        "    assert config('off', cast=bool) is False\n"
+        "    assert config('zero', cast=bool) is False\n"
+    )
+    if at_materialization:
+        monkeypatch.setattr(pair_evaluation, "helper_rejection", lambda *args: None)
+    result = invoke(["preview", str(source), "--explain", "--summary", "--no-types", "--no-format"])
+    assert result.status == 0, result
+    assert (
+        "1  This helper would bundle independent repetitions of the same operation."
+        in result.stdout
+    )
+    assert "[repeated_statement_group]" in result.stdout
+    assert "does not repay" not in result.stdout
 
 
 def test_materializer_raises_a_specific_usefulness_verdict(
@@ -35,7 +66,9 @@ def test_materializer_raises_a_specific_usefulness_verdict(
     engine = UnificationRefactorEngine()
     proposals = engine.analyze_file(str(source))
     assert proposals
-    monkeypatch.setattr(materialize, "worthwhile_helper", lambda *args: False)
+    monkeypatch.setattr(
+        materialize, "helper_rejection", lambda *args: RejectReason.UNPROFITABLE_HELPER
+    )
     with pytest.raises(UnprofitableHelper, match="interface outweighs"):
         engine.apply_refactoring(str(source), proposals[0])
     assert source.read_text() == DUPLICATES
@@ -49,7 +82,9 @@ def test_final_usefulness_refusal_is_counted_without_a_rendering_warning(
     root.mkdir()
     source = root / "example.py"
     source.write_text(DUPLICATES)
-    monkeypatch.setattr(materialize, "worthwhile_helper", lambda *args: False)
+    monkeypatch.setattr(
+        materialize, "helper_rejection", lambda *args: RejectReason.UNPROFITABLE_HELPER
+    )
     # The developer trace is DEBUG_PROPOSAL_REJECTIONS's, no longer --explain's (2.0).
     level = REJECTIONS.level
     REJECTIONS.setLevel(logging.DEBUG)
@@ -85,7 +120,7 @@ def test_a_real_rendering_failure_keeps_its_existing_classification(
     def broken(*args: object) -> bool:
         raise RefactoringError("test rendering failure")
 
-    monkeypatch.setattr(materialize, "worthwhile_helper", broken)
+    monkeypatch.setattr(materialize, "helper_rejection", broken)
     result = invoke(["preview", str(source), "--no-types", "--no-format", "--progress", "none"])
     assert result.status == 0, result.stderr
     assert re.search(r"^ +1  .*\[could not be rendered\]$", result.stdout, re.M)
@@ -102,7 +137,7 @@ def test_unexpected_programming_errors_still_abort_without_output(
     def broken(*args: object) -> bool:
         raise RuntimeError("unexpected implementation failure")
 
-    monkeypatch.setattr(materialize, "worthwhile_helper", broken)
+    monkeypatch.setattr(materialize, "helper_rejection", broken)
     with pytest.raises(RuntimeError, match="unexpected implementation failure"):
         invoke(
             [

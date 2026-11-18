@@ -322,9 +322,20 @@ def outcome_line(report: "RunReport", applied: int, target: str) -> Optional[str
     return None
 
 
-def not_examined_lines(report: "RunReport", relative: Callable[[str], str]) -> List[str]:
-    """State each coverage limit and its remedy, without claiming repetition was found."""
-    lines: List[str] = []
+def not_examined_lines(
+    report: "RunReport", relative: Callable[[str], str], *, nothing_found: bool, explain: bool
+) -> List[str]:
+    """Qualify an empty search once. With --explain, locate every coverage limit."""
+    count = len(report.not_examined)
+    if not count or not (nothing_found or explain):
+        return []
+    summary = (
+        f"{_plural(count, 'file')} {'holds' if count == 1 else 'hold'} module-level code "
+        "or early-return guards that Towel does not examine"
+    )
+    if not explain:
+        return [summary + "; --explain lists them."]
+    lines = [summary + "."]
     for entry in report.not_examined:
         path = relative(entry.path)
         if entry.module_statements:

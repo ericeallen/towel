@@ -411,9 +411,7 @@ def test_relaxed_mode_gives_up_a_builtin_rebound_by_code_outside_the_project(
     body = (
         "def {name}(values, callback):\n"
         "    assert values is not None\n"
-        # Not a second `is not None` check: polish refuses a helper holding a
-        # run of same-shaped independent statements.
-        "    assert callable(callback)\n"
+        "    assert callback is not None\n"
         "    return (len(values) * 1000 + (callback(), len(values))[1]) * {factor}\n"
     )
     files = {
