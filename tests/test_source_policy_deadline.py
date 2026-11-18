@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dis import opmap
+import gc
 from itertools import count
 from pathlib import Path
 import signal
@@ -74,6 +75,17 @@ def no_policy_survives_a_failed_test() -> Iterator[None]:
     """A failure here must not spread the leak it reports to the tests that follow."""
     yield
     _SOURCE_POLICY.set(None)
+
+
+@pytest.fixture(autouse=True)
+def no_collection_inside_the_window() -> Iterator[None]:
+    """Keep other tests' garbage out: Python discards a signal's exception in a weakref callback."""
+    collecting = gc.isenabled()
+    gc.collect()
+    gc.disable()
+    yield
+    if collecting:
+        gc.enable()
 
 
 @pytest.fixture(autouse=True)
