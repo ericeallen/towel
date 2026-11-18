@@ -3,7 +3,8 @@
 On a real project, let Git keep the original: work on a branch, let Towel
 change the files in place, and review the change as you would a colleague's.
 The examples on this page run in a Git repository holding a package, `shop/`,
-and its tests.
+and its tests, with Black installed; without Black, the first line of each output
+says the code is inserted unformatted.
 
 ## Look before you change anything
 
@@ -98,8 +99,12 @@ git diff --stat
  2 files changed, 14 insertions(+), 18 deletions(-)
 ```
 
-`git add -p` keeps or drops single hunks. A helper is only removable together
-with its calls, so drop a whole file's change rather than part of one helper.
+To keep only some hunks, stage them with `git add -p`, check the result with
+`git diff --cached`, then run `git restore shop/` to discard the hunks you did
+not stage. Your working tree then holds exactly what you chose, so the tests
+below run on it and the commit cannot bring a rejected hunk back. A helper is
+only removable together with its calls, which a cross-module helper can spread
+over several files, so drop a whole helper and every call or keep them all.
 To keep Towel away from some code for good, mark the function with
 `# towel: no-extract` or leave its file out with `--exclude`.
 
@@ -131,7 +136,7 @@ Save this as `renames.json`:
 ```
 
 ```bash
-towel rename-helpers shop/ --rename-file renames.json --format
+towel rename-helpers shop/ --rename-file renames.json
 python3 -m unittest
 ```
 
@@ -141,6 +146,7 @@ python3 -m unittest
   pricing.py:__extracted_func_0._param_0 -> discount_rate
 
 Applied 9 change(s)
+To restore formatting, run: black shop/cart.py shop/pricing.py
 ..
 ----------------------------------------------------------------------
 Ran 2 tests in 0.000s
@@ -153,10 +159,10 @@ Helpers are numbered across the whole run, so the method in `cart.py` is
 helper's name, with its class for a method; without `grep`, the inventory also
 shows each helper's code and call sites ([naming guide](NAMING.md)). A
 method's new name keeps its two leading underscores, which keep it private to
-its class. `rename-helpers` formats only when you pass `--format`, which runs
-the project's Ruff or Black on the renamed files, since a longer name can make
-a line too long. Then commit, without the naming
-file Towel wrote:
+its class. A longer name can make a line too long, so Towel names the formatter
+command to run. Passing `--format` runs it for you, and needs that formatter
+installed where Towel runs (the `format` extra); without it, `--format` stops with
+status 2 and renames nothing. Then commit, without the naming file Towel wrote:
 
 ```bash
 rm shop/.towel-helpers.json renames.json
@@ -174,8 +180,9 @@ Extract duplicated code with Towel
   `shop/pricing.py`. Towel still reads the rest of the project to see who
   calls what, but changes only the target.
 - **Leave things out**: `--exclude NAME` skips every file or directory of that
-  name; repeat it as needed. Towel already skips `build/`, `dist/`, virtual
-  environments and files Git ignores.
+  name; repeat it as needed. Towel already skips `build/`, `dist/`,
+  `site-packages/`, virtual environments and files Git ignores. Naming one of
+  those directories as the target analyzes it anyway.
 - **Between modules**: by default a helper serves one module.
   `--cross-module` also shares one between modules, with an import
   ([sharing across modules](CROSS_MODULE.md)).
@@ -197,7 +204,11 @@ A large project with type checking can take an hour. To keep a run in hand:
 
 If a run is stopped while it writes (Ctrl-C, a crash, a full disk), some files
 may have changed and others not. The run leaves a journal named
-`.towel-transaction-<id>` in the target; `towel recover` with that path puts
-every file back ([recovery](CLI_GUIDE.md#recovery-and-interrupted-writes)).
+`.towel-transaction-<id>` in the closest directory holding every file it was
+changing, which can be below the target. `towel recover` with that path puts
+every file back, unless you have edited one since; then it changes nothing and
+names the file ([recovery](CLI_GUIDE.md#recovery-and-interrupted-writes)).
+
+**Next:** [recipes](RECIPES.md) put Towel in CI and pre-commit.
 
 [Documentation index](README.md)
