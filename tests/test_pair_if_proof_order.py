@@ -291,12 +291,17 @@ def test_fstring_unification_retains_fresh_certificates(tmp_path: Path, deferred
     inputs = _inputs(tmp_path, source)
     with evaluation.deferring_pair_if_proofs(inputs.engine) if deferred else nullcontext():
         result = _proposal(inputs)
-    assert result is not None
     assert inputs.engine.events == (
         ["bindings", "shape", "unify", "nested"]
         if deferred
         else ["nested", "bindings", "shape", "unify"]
     )
+    if not lifetime_order_certified():
+        assert result is None
+        assert str(inputs.engine._pair_rejection) == "lifetime_order_uncertified"
+        assert inputs.engine.proofs == [("f", None, True), ("g", None, True)]
+        return
+    assert result is not None
     assert inputs.engine.proofs == [
         ("f", None, True),
         ("g", None, True),

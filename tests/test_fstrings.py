@@ -63,8 +63,16 @@ class TestFStringHandling(unittest.TestCase):
         # format_number_a and format_number_b have same f-string structure
         format_props = [p for p in proposals if "format_number" in p.description.lower()]
         if not lifetime_order_certified():
-            self.assertEqual(format_props, [])
+            # Strict mode on an uncertified interpreter declines the block that owns
+            # ``precision``; only the expression, whose inputs the caller keeps, remains.
             self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            self.assertEqual(
+                [ast.unparse(prop.extracted_function) for prop in format_props],
+                [
+                    "def __extracted_func(value, precision):\n"
+                    "    return f'Value: {value:.{precision}f}'"
+                ],
+            )
             return
         self.assertGreater(len(format_props), 0, "Should find format_number duplicates")
 
@@ -91,14 +99,21 @@ class TestFStringHandling(unittest.TestCase):
         if not lifetime_order_certified():
             # Strict mode on an uncertified interpreter: the whole block hands its
             # owned arguments over, which the Python ownership ruling declines;
-            # only the tail that needs no transfer remains.
+            # only pieces that need no transfer remain, the f-string alone among them.
             self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
-            self.assertFalse(
-                any(
-                    isinstance(node, ast.JoinedStr)
+            self.assertEqual(
+                [
+                    ast.unparse(prop.extracted_function)
                     for prop in log_props
-                    for node in ast.walk(prop.extracted_function)
-                )
+                    if any(
+                        isinstance(node, ast.JoinedStr)
+                        for node in ast.walk(prop.extracted_function)
+                    )
+                ],
+                [
+                    "def __extracted_func(name, __param_0, __param_1, /, status):\n"
+                    "    return f'{__param_0} {name} (ID: {__param_1}) is {status}'"
+                ],
             )
             return
         self.assertTrue(
@@ -127,8 +142,15 @@ class TestFStringHandling(unittest.TestCase):
 
         mixed = [p for p in proposals if "mixed_fstring" in p.description.lower()]
         if not lifetime_order_certified():
-            self.assertEqual(mixed, [])
+            # As above: the assignment is declined, and the expression alone remains.
             self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            self.assertEqual(
+                [ast.unparse(prop.extracted_function) for prop in mixed],
+                [
+                    "def __extracted_func(x, y):\n"
+                    "    return f'Processing {x}' + ' and ' + f'also {y}'"
+                ],
+            )
             return
         self.assertGreater(len(mixed), 0, "Should find mixed f-string duplicates")
 
