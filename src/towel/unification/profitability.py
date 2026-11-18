@@ -88,12 +88,17 @@ def _independent_cases(
             if isinstance(node, ast.Name) and node.id in group:
                 # Not a legal identifier: cannot collide with source names.
                 node.id = names.setdefault(node.id, f"!case-input-{len(names)}")
-            elif isinstance(node, ast.Call):
-                # Literal arguments can be case data. Keep the actual operations
-                # that produce an argument: x + 1 and x + 2 are different steps.
-                for argument in [*node.args, *(kw.value for kw in node.keywords)]:
-                    if isinstance(argument, ast.Constant):
-                        argument.value = f"!literal-{type(argument.value).__name__}"
+            elif isinstance(node, (ast.Call, ast.Compare)):
+                # Literal inputs and expected results are case data. Keep the
+                # operations that produce them: x + 1 and x + 2 are distinct.
+                values = (
+                    [*node.args, *(kw.value for kw in node.keywords)]
+                    if isinstance(node, ast.Call)
+                    else [node.left, *node.comparators]
+                )
+                for value in values:
+                    if isinstance(value, ast.Constant):
+                        value.value = f"!literal-{type(value.value).__name__}"
         shapes.append(canonical_dump(normalized))
     return len(set(shapes)) == 1
 
