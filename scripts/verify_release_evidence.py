@@ -73,11 +73,17 @@ REQUIRED_RECORDS = (
     "selfdogfood/tests.log",
     "selfdogfood/imported-source.log",
     "selfdogfood/typecheck.log",
-    "corpus-report/summary.json",
-    "corpus-command.json",
-    "corpus-exit.json",
-    "corpus.log",
-    "corpus-environment.json",
+    *(
+        name
+        for prefix in ("corpus", "corpus-strict")
+        for name in (
+            f"{prefix}-report/summary.json",
+            f"{prefix}-command.json",
+            f"{prefix}-exit.json",
+            f"{prefix}.log",
+            f"{prefix}-environment.json",
+        )
+    ),
     "sdist-docs-result.json",
     "sdist-docs-tests.log",
 ) + tuple(
@@ -845,11 +851,11 @@ def verify_review(root: Path, value: object) -> dict[str, object]:
 
 
 def phase_outcome(
-    records: Records, raw: object, project: Mapping[str, object]
+    records: Records, raw: object, project: Mapping[str, object], logs: str = "corpus-logs"
 ) -> tuple[ecosystem.TestOutcome, frozenset[str]]:
     """Recompute a completed test outcome from retained output, not its summary field."""
     phase = table(raw)
-    output = records.text("corpus-logs/" + Path(text(phase.get("log"))).name)
+    output = records.text(f"{logs}/" + Path(text(phase.get("log"))).name)
     outcome = ecosystem._test_outcome(output)
     if outcome is None:
         raise EvidenceError("Corpus phase has no completed test outcome")
@@ -870,19 +876,24 @@ def phase_outcome(
     return ecosystem.TestOutcome(outcome.summary, status, outcome.collected), failed
 
 
-def verify_pass(records: Records, row: Mapping[str, object], project: Mapping[str, object]) -> None:
-    before = phase_outcome(records, row.get("baseline"), project)
-    after = phase_outcome(records, row.get("after"), project)
+def verify_pass(
+    records: Records,
+    row: Mapping[str, object],
+    project: Mapping[str, object],
+    logs: str = "corpus-logs",
+) -> None:
+    before = phase_outcome(records, row.get("baseline"), project, logs)
+    after = phase_outcome(records, row.get("after"), project, logs)
     require(before[0].collected == after[0].collected, "PASS changed the collected test count")
     if before == after:
         return
     # A flaky initial difference requires both isolated and whole-suite retests.
     name = text(row.get("name"))
-    retest = records.table(f"corpus-logs/{name}-retest.json")
+    retest = records.table(f"{logs}/{name}-retest.json")
     ids = set(strings(retest.get("test_ids")))
     require(ids == before[1] ^ after[1], "Retest does not cover every initial failure difference")
-    first = phase_outcome(records, retest.get("before"), project)
-    second = phase_outcome(records, retest.get("after"), project)
+    first = phase_outcome(records, retest.get("before"), project, logs)
+    second = phase_outcome(records, retest.get("after"), project, logs)
     require(
         first == second and first[0].collected == len(ids) and first[1] <= ids,
         "Isolated retests do not establish the same outcome",
@@ -893,12 +904,59 @@ def verify_pass(records: Records, row: Mapping[str, object], project: Mapping[st
         and full.get("initial_after") == row.get("after"),
         "Retest refers to another initial run",
     )
-    first = phase_outcome(records, full.get("before"), project)
-    second = phase_outcome(records, full.get("after"), project)
+    first = phase_outcome(records, full.get("before"), project, logs)
+    second = phase_outcome(records, full.get("after"), project, logs)
     require(
         first == second and first[0].collected == before[0].collected,
         "Full retests do not establish the same complete outcome",
     )
+
+
+def verify_relaxed_assumption(
+    records: Records, row: Mapping[str, object], project: Mapping[str, object], logs: str
+) -> None:
+    """A reviewed relaxed-mode change, held to the evidence the harness gave it.
+
+    Only the tests the manifest names differ, the count is unchanged, and the
+    same tree refactored in strict mode left the suite as it was (or was not
+    changed by strict mode at all).
+    """
+    name = text(row.get("name"))
+    pinned = project.get("relaxed_assumption")
+    require(isinstance(pinned, dict), f"Unpinned relaxed assumption: {name}")
+    reviewed = table(pinned)
+    patterns = strings(reviewed.get("tests"))
+    require(
+        bool(patterns)
+        and row.get("detail")
+        == f"{text(reviewed.get('assumption'))}: {text(reviewed.get('reason'))}",
+        f"Unpinned relaxed assumption: {name}",
+    )
+    before = phase_outcome(records, row.get("baseline"), project, logs)
+    after = phase_outcome(records, row.get("after"), project, logs)
+    differing = before[1] ^ after[1]
+    require(
+        before[0].collected == after[0].collected
+        and bool(differing)
+        and all(any(pattern in test for pattern in patterns) for test in differing),
+        f"Relaxed assumption changed unnamed tests or the test count: {name}",
+    )
+    check = table(row.get("strict_check"))
+    strict_refactor = table(check.get("refactor"))
+    require(
+        integer(strict_refactor.get("returncode")) == 0
+        and bool(records.bytes(f"{logs}/" + Path(text(strict_refactor.get("log"))).name).strip()),
+        f"Relaxed assumption has no completed strict refactor: {name}",
+    )
+    if check.get("verdict") == "NO_CHANGE":
+        require(
+            check.get("after") is None and integer(check.get("changed_files")) == 0,
+            f"Strict check claims no change but tested a change: {name}",
+        )
+        return
+    require(check.get("verdict") == "PASS", f"Strict mode also changed the suite: {name}")
+    strict_after = phase_outcome(records, check.get("after"), project, logs)
+    require(strict_after == before, f"Strict suite differs from the baseline: {name}")
 
 
 def verify_corpus(
@@ -907,15 +965,27 @@ def verify_corpus(
     wheel: str,
     source: Mapping[str, bytes],
     review: Mapping[str, object],
+    mode: ecosystem.TowelMode = "relaxed",
 ) -> None:
+    """One complete corpus run in ``mode``, its records named ``corpus*`` or ``corpus-strict*``.
+
+    The relaxed run's decisions are the review's top-level maps; the strict run's
+    sit under the review's ``strict_corpus`` table, in maps of the same names.
+    """
+    prefix = "corpus" if mode == "relaxed" else "corpus-strict"
+    logs = f"{prefix}-logs"
+    if mode == "strict":
+        review = table(review.get("strict_corpus"))
     manifest_bytes = source["scripts/ecosystem/manifest.toml"]
     projects = rows(tomllib.loads(manifest_bytes.decode()).get("project"))
     manifest = {text(row.get("name")): row for row in projects}
     require(bool(manifest) and len(manifest) == len(projects), "Empty/duplicate corpus manifest")
-    summary = records.table("corpus-report/summary.json")
+    summary = records.table(f"{prefix}-report/summary.json")
     require(
-        summary.get("towel") == commit and summary.get("typing_mode") == "default",
-        "Corpus source/typing mode mismatch",
+        summary.get("towel") == commit
+        and summary.get("typing_mode") == "default"
+        and summary.get("towel_mode") == mode,
+        f"Corpus source/typing/Towel mode mismatch: {prefix}",
     )
     require(table(summary.get("candidate")).get("sha256") == wheel, "Corpus tested another wheel")
     results = rows(summary.get("results"))
@@ -928,7 +998,7 @@ def verify_corpus(
     require(observed_counts == counts, "Corpus verdict totals mismatch")
     console = re.findall(
         r"^([A-Z_]+)\s+([\w.-]+)\s+files=\d+\s+refactor=\s*[\d.]+s.*$",
-        records.text("corpus.log"),
+        records.text(f"{prefix}.log"),
         re.MULTILINE,
     )
     require(
@@ -945,13 +1015,19 @@ def verify_corpus(
             "reviewed_fallbacks",
             "reviewed_known_failures",
             "reviewed_baseline_failures",
+            "reviewed_relaxed_assumptions",
         )
     }
+    accepted = {"PASS", "NO_CHANGE", "BROKEN_KNOWN", "CRASH", "UNSUPPORTED", "REFUSED"}
+    if mode == "relaxed":
+        accepted.add("RELAXED_ASSUMPTION")
     for row in results:
         name, verdict = text(row.get("name")), text(row.get("verdict"))
         require(
-            records.table(f"corpus-report/{name}.json") == row, f"Corpus detail mismatch: {name}"
+            records.table(f"{prefix}-report/{name}.json") == row,
+            f"Corpus detail mismatch: {name}",
         )
+        require(row.get("towel_mode") == mode, f"Corpus row ran in another mode: {name}")
         pin = text(manifest[name].get("rev"))
         require(
             bool(re.fullmatch(r"[0-9a-f]{40}", text(row.get("commit"))))
@@ -959,10 +1035,10 @@ def verify_corpus(
             f"Corpus input revision mismatch: {name}",
         )
         require(
-            verdict in {"PASS", "NO_CHANGE", "BROKEN_KNOWN", "CRASH", "UNSUPPORTED", "REFUSED"},
+            verdict in accepted,
             f"Incomplete or unaccepted corpus verdict: {name}/{verdict}",
         )
-        before = phase_outcome(records, row.get("baseline"), manifest[name])
+        before = phase_outcome(records, row.get("baseline"), manifest[name], logs)
         if verdict in {"CRASH", "UNSUPPORTED", "REFUSED"}:
             require(
                 row.get("after") is None
@@ -991,7 +1067,7 @@ def verify_corpus(
                 f"Unpinned known failure: {name}",
             )
             patterns = strings(manifest[name].get("known_failures"))
-            after = phase_outcome(records, row.get("after"), manifest[name])
+            after = phase_outcome(records, row.get("after"), manifest[name], logs)
             introduced = after[1] - before[1]
             require(
                 before[0].collected == after[0].collected
@@ -1001,8 +1077,11 @@ def verify_corpus(
                 f"Known limitation changed unpinned failures or test count: {name}",
             )
             categories["reviewed_known_failures"].add(name)
+        if verdict == "RELAXED_ASSUMPTION":
+            verify_relaxed_assumption(records, row, manifest[name], logs)
+            categories["reviewed_relaxed_assumptions"].add(name)
         if verdict == "PASS":
-            verify_pass(records, row, manifest[name])
+            verify_pass(records, row, manifest[name], logs)
         elif verdict == "NO_CHANGE":
             require(
                 row.get("after") is None and integer(row.get("changed_files")) == 0,
@@ -1014,18 +1093,24 @@ def verify_corpus(
                 require(verdict != "PASS", f"PASS omitted {phase}: {name}")
                 continue
             detail = table(step)
-            log = records.bytes("corpus-logs/" + Path(text(detail.get("log"))).name)
+            log = records.bytes(f"{logs}/" + Path(text(detail.get("log"))).name)
             require(bool(log.strip()), f"Empty corpus phase log: {name}/{phase}")
             status = integer(detail.get("returncode"))
             if phase == "baseline" and status != 0:
                 categories["reviewed_baseline_failures"].add(name)
-            if phase == "refactor" and verdict in {"PASS", "NO_CHANGE", "BROKEN_KNOWN"}:
+            if phase == "refactor" and verdict in {
+                "PASS",
+                "NO_CHANGE",
+                "BROKEN_KNOWN",
+                "RELAXED_ASSUMPTION",
+            }:
                 require(status == 0, f"Accepted refactor failed: {name}")
     dispositions = {
         "reviewed_nonaccepted": "accepted-refusal",
         "reviewed_fallbacks": "typed-fallback",
         "reviewed_known_failures": "known-limitation",
         "reviewed_baseline_failures": "pre-existing-baseline",
+        "reviewed_relaxed_assumptions": "relaxed-assumption",
     }
     for category, names in categories.items():
         decisions = table(review.get(category))
@@ -1043,13 +1128,13 @@ def verify_corpus(
                 require(
                     bool(FileRef.read(ref).bytes(records.root)), f"Empty review evidence: {name}"
                 )
-    exit_ = records.table("corpus-exit.json")
+    exit_ = records.table(f"{prefix}-exit.json")
     require(
         exit_.get("oom_killed") is False
         and integer(exit_.get("status")) == int(unaccepted_refusals),
         "Corpus incomplete/resource-killed/exit mismatch",
     )
-    launch = records.table("corpus-command.json")
+    launch = records.table(f"{prefix}-command.json")
     require(launch.get("commit") == commit, "Corpus launch source mismatch")
     require(
         datetime.fromisoformat(text(exit_.get("finished")))
@@ -1057,7 +1142,8 @@ def verify_corpus(
         "Corpus completion time missing/invalid",
     )
     require(
-        records.table("corpus-environment.json").get("manifest_sha256") == digest(manifest_bytes),
+        records.table(f"{prefix}-environment.json").get("manifest_sha256")
+        == digest(manifest_bytes),
         "Corpus used another harness manifest",
     )
 
@@ -1374,7 +1460,8 @@ def verify(
         review.get("validation_commit") == commit and review.get("wheel_sha256") == wheel,
         "Review source/artifact identity mismatch",
     )
-    verify_corpus(records, commit, wheel, source, review)
+    verify_corpus(records, commit, wheel, source, review, "relaxed")
+    verify_corpus(records, commit, wheel, source, review, "strict")
     artifacts: Mapping[str, object] = table(bundle["artifacts"])
     if rebuild is not None:
         artifacts = verify_documentation_rebuild(

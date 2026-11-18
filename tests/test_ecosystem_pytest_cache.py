@@ -155,7 +155,7 @@ def test_check_project_cannot_copy_cached_results_over_a_behavior_change(
     towel.write_text(
         f"#!{sys.executable}\nimport sys\nfrom pathlib import Path\n"
         "if sys.argv[1:] == ['dry', '--help']:\n"
-        "    print('usage: towel dry --cross-module')\n"
+        "    print('usage: towel dry --cross-module --strict')\n"
         "else:\n"
         f"    Path(sys.argv[3]).write_text({generated!r})\n"
         "    print('Applied 1 refactoring')\n"

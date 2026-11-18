@@ -25,7 +25,8 @@ status and normalized summary. Matching pre-existing test failures are allowed;
 failed-test ids are compared with each tree's own path written as ``{tree}``,
 since pytest builds some ids from absolute paths.
 Progress is printed as each phase completes; only PASS, NO_CHANGE, and the
-explicitly matched BROKEN_KNOWN and REFUSED verdicts satisfy the gate. Setup
+explicitly matched BROKEN_KNOWN, REFUSED and RELAXED_ASSUMPTION verdicts
+satisfy the gate. Setup
 failures, incomplete test runs, crashes, refusals the manifest does not expect
 and unknown verdicts make it fail. An isolated retest match requires matching
 full-suite confirmations with the original test count before it can qualify.
@@ -81,6 +82,18 @@ holds the refusal to its promised wording -- the reason and the way forward --
 and then reruns that project with ``--no-types`` so its behaviour is still
 covered. The report says which projects that was, and their verdicts are
 evidence about the untyped path only.
+
+Refactors run in relaxed mode, Towel's default, unless ``--strict`` asks for
+strict mode; the mode is passed explicitly both ways, so a project's
+``[tool.towel]`` cannot choose it. Relaxed mode assumes things a few programs
+do not satisfy (docs/RELAXED_AND_STRICT.md), so a relaxed run that changes a
+test also refactors the same tree in strict mode and runs the suite on that,
+for the review. A manifest ``relaxed_assumption`` entry records a review that
+traced the change to one named assumption; with it, a change confined to the
+tests it names, with the test count unchanged and the strict suite as before,
+is RELAXED_ASSUMPTION: a project for strict mode, which satisfies the gate
+(Eric's ruling of 2026-11-15). Without it, or when the strict suite also
+changes, the project stays BROKEN.
 
 A refactor that exits with an error is a crash, unless the manifest expects
 that refusal: an ``expected_refusal`` entry gives the reviewed reason and the
@@ -180,6 +193,26 @@ ENVIRONMENT_LAYOUT = 7
 """What a project environment holds; raised when that changes, so an older one is rebuilt."""
 CROSS_MODULE_FLAG = "--cross-module"
 """The option that turns on extraction across modules, where the Towel under test has it."""
+STRICT_FLAG = "--strict"
+"""The option that selects strict mode, which Towel 2.0 added; relaxed mode is its default."""
+TowelMode = Literal["relaxed", "strict"]
+"""Which of Towel's modes the corpus refactors in. A Towel before 2.0 has only strict."""
+RELAXED_ASSUMPTIONS: FrozenSet[str] = frozenset(
+    {
+        "object_lifetimes",
+        "side_effect_free_reads",
+        "stable_module_names",
+        "lambda_qualname",
+    }
+)
+"""The assumptions of relaxed mode a reviewed ``relaxed_assumption`` may name.
+
+They are the three that docs/RELAXED_AND_STRICT.md lists (a program does not depend
+on when objects are freed; reading, indexing, comparing and arithmetic have no side
+effects; module names are not rebound while a helper runs) and the one it adds (a
+lambda moved into a helper has another ``__qualname__``)."""
+RELAXED_NOTICE = re.compile(r"^Note: relaxed mode assumes .*$", re.M)
+"""The notice a relaxed run prints first when it sees code that may lean on what it assumes."""
 
 
 SITE_PACKAGES = "{site-packages}"
@@ -221,6 +254,40 @@ class ExpectedRefusal:
 
 
 @dataclasses.dataclass(frozen=True)
+class RelaxedAssumption:
+    """A project whose tests relaxed mode changes, traced in review to one of its assumptions.
+
+    The project is then one for strict mode, not a Towel defect (Eric's ruling of
+    2026-11-15), but only while the same run shows it: every test whose outcome
+    differs is one ``tests`` names, the test count is unchanged, and the project's
+    suite passes after a strict refactor of the same tree.
+    """
+
+    assumption: str
+    """One of :data:`RELAXED_ASSUMPTIONS`."""
+    reason: str
+    """How the project's code leans on that assumption, with where."""
+    tests: Tuple[str, ...]
+    """Substrings of the failed-test ids relaxed mode may change, as ``known_failures``."""
+
+    def __post_init__(self) -> None:
+        if self.assumption not in RELAXED_ASSUMPTIONS:
+            raise ValueError(
+                f"relaxed_assumption names {self.assumption!r}, not one of "
+                f"{', '.join(sorted(RELAXED_ASSUMPTIONS))}"
+            )
+        if type(self.reason) is not str or not self.reason.strip():
+            raise ValueError("relaxed_assumption needs a reason tracing the change to it")
+        if (
+            type(self.tests) is not tuple
+            or not self.tests
+            or any(type(test) is not str or not test.strip() for test in self.tests)
+            or len(set(self.tests)) != len(self.tests)
+        ):
+            raise ValueError("relaxed_assumption needs tests: distinct, nonempty test ids")
+
+
+@dataclasses.dataclass(frozen=True)
 class Project:
     name: str
     url: str
@@ -245,6 +312,8 @@ class Project:
     """Literal argv run after installation and before baseline; {python} names that interpreter."""
     expected_refusal: Optional[ExpectedRefusal] = None
     """The refusal the refactor gives, reviewed as right; it is then REFUSED, not a crash."""
+    relaxed_assumption: Optional[RelaxedAssumption] = None
+    """The relaxed-mode assumption reviewed as the cause of a change; RELAXED_ASSUMPTION then."""
 
     def __post_init__(self) -> None:
         if type(self.post_install) is not tuple or any(
@@ -409,6 +478,23 @@ class UncheckedCode:
     """Proposals declined because they would change such code, from the run's closing count."""
 
 
+@dataclasses.dataclass(frozen=True)
+class StrictCheck:
+    """The same tree refactored in strict mode and tested, after relaxed mode changed a test.
+
+    ``verdict`` is ``PASS`` when the suite after the strict refactor has the
+    baseline's outcome and failed tests, ``NO_CHANGE`` when strict mode changed
+    nothing, and otherwise says what went wrong: ``REFACTOR_FAILED``,
+    ``AFTER_ERROR`` or ``BROKEN``. No retest is attempted.
+    """
+
+    verdict: str
+    refactor: Phase
+    after: Optional[Phase] = None
+    changed_files: int = 0
+    detail: str = ""
+
+
 @dataclasses.dataclass
 class Result:
     name: str
@@ -432,6 +518,12 @@ class Result:
     cross_module: Optional[CrossModule] = None
     """Whether the refactor extracted across modules; absent when no refactor ran."""
     post_install: Optional[Preparation] = None
+    towel_mode: TowelMode = "relaxed"
+    """The mode every refactor of this project ran in."""
+    relaxed_notice: str = ""
+    """The notice the relaxed refactor printed about code that may lean on its assumptions."""
+    strict_check: Optional[StrictCheck] = None
+    """A strict refactor and suite, run when relaxed mode changed a test's outcome."""
 
 
 def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
@@ -460,6 +552,7 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
             cross_module=entry.get("cross_module", True),
             cross_module_reason=entry.get("cross_module_reason", ""),
             expected_refusal=_expected_refusal(entry["name"], entry.get("expected_refusal")),
+            relaxed_assumption=_relaxed_assumption(entry["name"], entry.get("relaxed_assumption")),
         )
         if not only or project.name in only:
             projects.append(project)
@@ -477,6 +570,23 @@ def _expected_refusal(name: str, entry: object) -> Optional[ExpectedRefusal]:
         raise ValueError(f"{name}: expected_refusal problems must be a list of lines")
     try:
         return ExpectedRefusal(entry["reason"], tuple(problems))
+    except ValueError as error:
+        raise ValueError(f"{name}: {error}") from error
+
+
+def _relaxed_assumption(name: str, entry: object) -> Optional[RelaxedAssumption]:
+    """The manifest's ``relaxed_assumption`` table for project ``name``, checked; ``None`` if absent."""
+    if entry is None:
+        return None
+    if not isinstance(entry, dict) or set(entry) != {"assumption", "reason", "tests"}:
+        raise ValueError(
+            f"{name}: relaxed_assumption must be a table of exactly assumption, reason and tests"
+        )
+    tests = entry["tests"]
+    if type(tests) is not list:
+        raise ValueError(f"{name}: relaxed_assumption tests must be a list of test ids")
+    try:
+        return RelaxedAssumption(entry["assumption"], entry["reason"], tuple(tests))
     except ValueError as error:
         raise ValueError(f"{name}: {error}") from error
 
@@ -3043,9 +3153,23 @@ def _prepare_test_command(command: Sequence[str]) -> List[str]:
 _CROSS_MODULE_OPTION = re.compile(rf"(?<![\w-]){re.escape(CROSS_MODULE_FLAG)}(?![\w-])")
 
 
-def accepts_cross_module(towel: Path, cwd: Path, env: Mapping[str, str]) -> bool:
-    """Whether this ``towel dry`` takes ``--cross-module``, by its own help, run as a refactor."""
+_STRICT_OPTION = re.compile(rf"(?<![\w-]){re.escape(STRICT_FLAG)}(?![\w-])")
+
+
+@dataclasses.dataclass(frozen=True)
+class DryOptions:
+    """Which of the options the corpus passes this ``towel dry`` takes."""
+
+    cross_module: bool
+    """``--cross-module``; a Towel without it extracts across modules by default."""
+    strict: bool
+    """``--strict``; a Towel without it is older than 2.0 and has only strict mode."""
+
+
+def dry_options(towel: Path, cwd: Path, env: Mapping[str, str]) -> DryOptions:
+    """What this ``towel dry`` takes, by its own help, run where and as the refactor runs."""
     try:
+
         completed = subprocess.run(
             [str(towel), "dry", "--help"],
             cwd=cwd,
@@ -3061,7 +3185,26 @@ def accepts_cross_module(towel: Path, cwd: Path, env: Mapping[str, str]) -> bool
         raise EnvironmentFailure(
             f"{towel} dry --help failed (exit {completed.returncode}): {completed.stderr[-300:]}"
         )
-    return _CROSS_MODULE_OPTION.search(completed.stdout) is not None
+    return DryOptions(
+        cross_module=_CROSS_MODULE_OPTION.search(completed.stdout) is not None,
+        strict=_STRICT_OPTION.search(completed.stdout) is not None,
+    )
+
+
+def mode_arguments(mode: TowelMode, accepted: bool) -> Tuple[str, ...]:
+    """The refactor's mode option, explicit both ways so a project's ``[tool.towel]`` cannot pick.
+
+    A Towel without ``--strict`` is older than 2.0 and strict already; asking it
+    for relaxed mode is an error, not a run in a mode nobody asked for.
+    """
+    if not accepted:
+        if mode == "relaxed":
+            raise EnvironmentFailure(
+                f"the Towel under test has no {STRICT_FLAG} option, so no relaxed mode: "
+                f"run the corpus with {STRICT_FLAG}"
+            )
+        return ()
+    return (STRICT_FLAG,) if mode == "strict" else ("--no-strict",)
 
 
 def cross_module_arguments(project: Project, accepted: bool) -> Tuple[Tuple[str, ...], CrossModule]:
@@ -3115,7 +3258,12 @@ def prepare_installed_project(
 
 
 def check_project(
-    project: Project, work: Path, candidate: Candidate, timeout: int, no_types: bool = False
+    project: Project,
+    work: Path,
+    candidate: Candidate,
+    timeout: int,
+    no_types: bool = False,
+    mode: TowelMode = "relaxed",
 ) -> Result:
     # A project may carry its own per-phase budget when it is far larger
     # than the rest of the corpus (networkx: 198k lines with its tests).
@@ -3124,7 +3272,12 @@ def check_project(
     logs.mkdir(parents=True, exist_ok=True)
     source = work / project.name
     setup_log = logs / f"{project.name}-environment.log"
-    result = Result(project.name, "PENDING", typing_mode="no-types" if no_types else "default")
+    result = Result(
+        project.name,
+        "PENDING",
+        typing_mode="no-types" if no_types else "default",
+        towel_mode=mode,
+    )
     try:
         result.commit = clone(project, source, logs)
         installed = environment(project, work, source, candidate, setup_log)
@@ -3182,10 +3335,11 @@ def check_project(
     if "TOWEL_WORKERS" in os.environ:
         towel_env["TOWEL_WORKERS"] = os.environ["TOWEL_WORKERS"]
     try:
-        accepted = accepts_cross_module(towel, ready, towel_env)
+        options = dry_options(towel, ready, towel_env)
+        mode_argument = mode_arguments(mode, options.strict)
     except (EnvironmentFailure, subprocess.TimeoutExpired) as error:
         return _setup_failed(result, error)
-    cross_module, result.cross_module = cross_module_arguments(project, accepted)
+    cross_module, result.cross_module = cross_module_arguments(project, options.cross_module)
     # Refactor OUT OF PLACE to a differently named directory, then adopt the
     # cleaned copy back over the package. This mirrors the documented workflow
     # ("write to a new directory, diff, then adopt") and exercises import paths
@@ -3205,7 +3359,7 @@ def check_project(
     cleaned_root.mkdir(parents=True)
     cleaned = cleaned_root / f"{project.name}-cleaned"
 
-    def refactor(without_types: bool, log_name: str) -> Phase:
+    def refactor(without_types: bool, log_name: str, mode_argument: Tuple[str, ...]) -> Phase:
         if cleaned_root.exists():
             shutil.rmtree(cleaned_root)
         cleaned_root.mkdir(parents=True)
@@ -3219,6 +3373,7 @@ def check_project(
                 "--progress",
                 "none",
                 *cross_module,
+                *mode_argument,
                 *(["--no-types"] if without_types else []),
                 *(argument for name in project.exclude for argument in ("--exclude", name)),
             ],
@@ -3229,7 +3384,7 @@ def check_project(
         )
 
     log_name = f"{project.name}-refactor.log"
-    result.refactor = refactor(no_types, log_name)
+    result.refactor = refactor(no_types, log_name, mode_argument)
     if not no_types:
         # A project whose check already reports errors is refactored with
         # types all the same, each change compared with those errors; what the
@@ -3256,7 +3411,9 @@ def check_project(
             result.detail = declined.summary
             result.typing_mode = "no-types"
             log_name = f"{project.name}-refactor-no-types.log"
-            result.refactor = refactor(True, log_name)
+            result.refactor = refactor(True, log_name, mode_argument)
+    if mode == "relaxed":
+        result.relaxed_notice = _relaxed_notice(logs / log_name)
     if result.refactor.timed_out:
         result.verdict = "TIMEOUT"
         result.detail = f"refactor exceeded {timeout}s"
@@ -3281,20 +3438,53 @@ def check_project(
             else:
                 result.detail = f"not the expected refusal: {difference}"[:500]
         return result
-    # Adopt: replace the package with the cleaned copy in place. A package
-    # directory is swapped wholesale (dropping the non-source helper sidecar the
-    # CLI writes for naming); a single-file module is copied over directly.
     package_path = ready / project.package
-    if cleaned.is_dir():
-        (cleaned / ".towel-helpers.json").unlink(missing_ok=True)
-        shutil.rmtree(package_path)
-        shutil.copytree(cleaned, package_path, symlinks=True)
-    else:
-        shutil.copyfile(cleaned, package_path)
+
+    def adopt(output: Path) -> None:
+        # Replace the package with ``output`` in place. A package directory is
+        # swapped wholesale (dropping the non-source helper sidecar the CLI
+        # writes for naming); a single-file module is copied over directly.
+        if output.is_dir():
+            (output / ".towel-helpers.json").unlink(missing_ok=True)
+            shutil.rmtree(package_path)
+            shutil.copytree(output, package_path, symlinks=True)
+        else:
+            shutil.copyfile(output, package_path)
+
+    adopt(cleaned)
     result.changed_files, result.diff_stat = changed(ready, project.package)
     if result.changed_files == 0:
         result.verdict = "NO_CHANGE"
         return result
+
+    def checked_strictly() -> StrictCheck:
+        """Refactor the original package again in strict mode, adopt that, and test it."""
+        original_package = source / project.package
+        if original_package.is_dir():
+            shutil.rmtree(package_path)
+            shutil.copytree(original_package, package_path, symlinks=True)
+        else:
+            shutil.copyfile(original_package, package_path)
+        strict_log = f"{project.name}-strict-refactor.log"
+        strict = refactor(
+            result.typing_mode == "no-types", strict_log, mode_arguments("strict", options.strict)
+        )
+        if strict.timed_out or strict.returncode != 0:
+            return StrictCheck(
+                "REFACTOR_FAILED", strict, detail=_refusal(logs / strict_log) or strict.summary
+            )
+        adopt(cleaned)
+        files, _ = changed(ready, project.package)
+        if files == 0:
+            return StrictCheck("NO_CHANGE", strict)
+        after = run(test, ready, env, timeout, logs / f"{project.name}-strict-after.log")
+        outcome = _completed_test_run(after, project.failure_exit_codes)
+        if outcome is None:
+            return StrictCheck("AFTER_ERROR", strict, after, files, after.summary)
+        if outcome == baseline_outcome and phase_failures(after) == before_failed:
+            return StrictCheck("PASS", strict, after, files)
+        return StrictCheck("BROKEN", strict, after, files, after.summary)
+
     result.after = run(test, ready, env, timeout, logs / f"{project.name}-after.log")
     after_outcome = _completed_test_run(result.after, project.failure_exit_codes)
     if after_outcome is None:
@@ -3316,6 +3506,9 @@ def check_project(
             f"test count changed from {baseline_outcome.collected} to {after_outcome.collected}: "
             f"before: {result.baseline.summary} | after: {result.after.summary}"
         )
+        if mode == "relaxed":
+            # Evidence for the review; a changed test count is never a reviewed assumption.
+            result.strict_check = checked_strictly()
         return result
     differing = sorted(before_failed ^ after_failed)
     # A retest runs the original again, and it must find the original wherever the
@@ -3360,6 +3553,20 @@ def check_project(
         result.detail = f"before: {result.baseline.summary} | after: {result.after.summary}"
         if unexpected:
             result.detail = f"{len(unexpected)} unexpected: {' '.join(unexpected)[:200]}"
+    if result.verdict == "BROKEN" and mode == "relaxed":
+        # Relaxed mode changed a test. That is a defect unless review traced it to
+        # one of relaxed mode's assumptions, and strict mode, which makes none of
+        # them, leaves the suite as it was; this run shows the second either way.
+        result.strict_check = checked_strictly()
+        reviewed = project.relaxed_assumption
+        if (
+            reviewed is not None
+            and differing
+            and all(any(pattern in test for pattern in reviewed.tests) for test in differing)
+            and result.strict_check.verdict in {"PASS", "NO_CHANGE"}
+        ):
+            result.verdict = "RELAXED_ASSUMPTION"
+            result.detail = f"{reviewed.assumption}: {reviewed.reason}"
     return result
 
 
@@ -3609,6 +3816,16 @@ class BaselineRefusal:
 
     kind: str
     summary: str
+
+
+def _relaxed_notice(log_path: Path) -> str:
+    """The notice a relaxed refactor printed about code leaning on its assumptions, or ``""``."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    match = RELAXED_NOTICE.search(text)
+    return match.group(0)[:1000] if match else ""
 
 
 def _baseline_refusal(refused: str) -> Optional[BaselineRefusal]:
@@ -3991,6 +4208,12 @@ def main() -> int:
         "projects Towel declines to verify, which the report names",
     )
     parser.add_argument(
+        STRICT_FLAG,
+        action="store_true",
+        help="refactor every project in strict mode; default: relaxed mode, which users get, "
+        "and a strict refactor and suite of each project whose tests relaxed mode changed",
+    )
+    parser.add_argument(
         OPT_IN_FLAG,
         action="store_true",
         help=f"acknowledge that the manifest's projects run with your privileges "
@@ -4004,6 +4227,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     typing_mode: TypingMode = "no-types" if args.no_types else "default"
+    towel_mode: TowelMode = "strict" if args.strict else "relaxed"
     if args.print_pins:
         if args.work is None:
             parser.error("--print-pins needs --work, the directory of the run to read")
@@ -4038,7 +4262,7 @@ def main() -> int:
     print(
         f"ecosystem check: {len(projects)} projects, towel {displayed_commit}, "
         f"candidate {candidate.wheel.name} (sha256 {candidate.sha256[:12]}), "
-        f"typing mode: {typing_mode}",
+        f"typing mode: {typing_mode}, Towel mode: {towel_mode}",
         flush=True,
     )
     # Every project runs the candidate wheel, fixed before the first one starts, so
@@ -4064,7 +4288,13 @@ def main() -> int:
     ) as pool:
         futures = {
             pool.submit(
-                check_project, project, args.work, candidate, args.timeout, args.no_types
+                check_project,
+                project,
+                args.work,
+                candidate,
+                args.timeout,
+                args.no_types,
+                towel_mode,
             ): project
             for project in projects
         }
@@ -4081,6 +4311,7 @@ def main() -> int:
                     "HARNESS_ERROR",
                     detail=f"{error!r}\n{traceback.format_exc()}",
                     typing_mode=typing_mode,
+                    towel_mode=towel_mode,
                 )
             results.append(result)
             seconds = result.refactor.seconds if result.refactor else 0.0
@@ -4131,6 +4362,27 @@ def main() -> int:
         for result in results
         if result.name in expecting_refusal and result.verdict != "REFUSED"
     }
+    relaxed_assumptions = {
+        result.name: result.detail for result in results if result.verdict == "RELAXED_ASSUMPTION"
+    }
+    expecting_assumption = {project.name for project in projects if project.relaxed_assumption}
+    assumptions_not_seen = (
+        {
+            result.name: result.verdict
+            for result in results
+            if result.name in expecting_assumption and result.verdict != "RELAXED_ASSUMPTION"
+        }
+        if towel_mode == "relaxed"
+        else {}
+    )
+    strict_checks = {
+        result.name: result.strict_check.verdict
+        for result in results
+        if result.strict_check is not None
+    }
+    relaxed_notices = {
+        result.name: result.relaxed_notice for result in results if result.relaxed_notice
+    }
     lines = [
         f"# Ecosystem check — towel `{towel_commit or 'unavailable (source archive)'}`",
         "",
@@ -4155,6 +4407,11 @@ def main() -> int:
         "declined by Towel and rerun here without types; its row says so, and its verdict "
         "is evidence about the untyped path only. Runtime test outcomes do not establish "
         "type-checking coverage either way.",
+        "",
+        f"Towel mode: `{towel_mode}`. A project whose tests relaxed mode changes is BROKEN "
+        "unless its manifest entry traces the change to a named assumption of relaxed mode "
+        "and a strict refactor of the same tree, run here, leaves its suite as it was: it is "
+        "then RELAXED_ASSUMPTION, a project for strict mode.",
         "",
         f"Every refactor extracts across modules ({CROSS_MODULE_FLAG}, or the default of a "
         "Towel without that option) unless its manifest entry turns that off with a "
@@ -4220,6 +4477,37 @@ def main() -> int:
                 f"{name} ({verdict})" for name, verdict in sorted(refusals_not_seen.items())
             ),
         ]
+    if relaxed_assumptions:
+        lines += [
+            "",
+            f"Changed under relaxed mode, reviewed as a project for strict mode "
+            f"({len(relaxed_assumptions)}): "
+            + "; ".join(
+                f"{name} ({why}; relaxed notice: {'yes' if name in relaxed_notices else 'no'})"
+                for name, why in sorted(relaxed_assumptions.items())
+            ),
+        ]
+    if assumptions_not_seen:
+        lines += [
+            "",
+            "Reviewed relaxed assumptions not seen (the manifest names one; this run gave "
+            "another verdict): "
+            + "; ".join(
+                f"{name} ({verdict})" for name, verdict in sorted(assumptions_not_seen.items())
+            ),
+        ]
+    if strict_checks:
+        lines += [
+            "",
+            "Strict refactor and suite after relaxed mode changed a test: "
+            + "; ".join(f"{name} ({verdict})" for name, verdict in sorted(strict_checks.items())),
+        ]
+    if towel_mode == "relaxed":
+        lines += [
+            "",
+            f"Relaxed-mode notice printed: {len(relaxed_notices)} project(s)"
+            + (": " + ", ".join(sorted(relaxed_notices)) if relaxed_notices else ""),
+        ]
     lines += [
         "",
         "Cross-module extraction off: "
@@ -4245,6 +4533,7 @@ def main() -> int:
                     "sha256": candidate.sha256,
                 },
                 "typing_mode": typing_mode,
+                "towel_mode": towel_mode,
                 "counts": counts,
                 "declined_typed_path": fallbacks,
                 "pre_existing_errors": {
@@ -4257,6 +4546,10 @@ def main() -> int:
                 "cross_module_opt_out_not_applied": opt_out_not_applied,
                 "refused_as_expected": refused,
                 "expected_refusals_not_seen": refusals_not_seen,
+                "relaxed_assumptions": relaxed_assumptions,
+                "relaxed_assumptions_not_seen": assumptions_not_seen,
+                "strict_checks": strict_checks,
+                "relaxed_notices": relaxed_notices,
                 "results": [dataclasses.asdict(r) for r in results],
             },
             indent=2,
@@ -4276,12 +4569,16 @@ def main() -> int:
                     "Cross-module extraction off",
                     "Refused as expected",
                     "Expected refusals not seen",
+                    "Changed under relaxed mode",
+                    "Reviewed relaxed assumptions not seen",
+                    "Strict refactor and suite",
+                    "Relaxed-mode notice",
                 )
             )
         ),
         flush=True,
     )
-    accepted = {"PASS", "NO_CHANGE", "BROKEN_KNOWN", "REFUSED"}
+    accepted = {"PASS", "NO_CHANGE", "BROKEN_KNOWN", "REFUSED", "RELAXED_ASSUMPTION"}
     return 0 if results and all(result.verdict in accepted for result in results) else 1
 
 

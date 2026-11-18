@@ -66,7 +66,7 @@ def test_colour_controls_apply_only_to_towel_subprocesses(
         "assert os.environ['TOWEL_WORKERS'] == '1'\n"
         "if sys.argv[1:] == ['dry', '--help']:\n"
         "    record('help')\n"
-        "    print('usage: towel dry --cross-module')\n"
+        "    print('usage: towel dry --cross-module --strict')\n"
         "else:\n"
         "    record('refactor')\n"
         "    Path(sys.argv[3]).write_text('value = 2\\n')\n"

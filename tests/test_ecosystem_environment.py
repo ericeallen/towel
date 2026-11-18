@@ -400,15 +400,52 @@ def test_cross_module_support_is_read_from_the_towel_that_runs(
     tmp_path: Path, help_text: str, accepted: bool
 ) -> None:
     towel = _fake_towel(tmp_path / "bin", help_text)
-    assert ecosystem.accepts_cross_module(towel, tmp_path, {"PATH": "/usr/bin:/bin"}) is accepted
+    options = ecosystem.dry_options(towel, tmp_path, {"PATH": "/usr/bin:/bin"})
+    assert options.cross_module is accepted
+
+
+@pytest.mark.parametrize(
+    "help_text,accepted",
+    [
+        ("  --strict, --no-strict  Preserve exactly when objects are released", True),
+        ("usage: towel dry [-h] [--strict | --no-strict] INPUT OUTPUT", True),
+        ("usage: towel dry [-h] [--cross-module] INPUT OUTPUT", False),
+        ("  --strict-config", False),
+    ],
+)
+def test_strict_mode_support_is_read_from_the_same_help(
+    tmp_path: Path, help_text: str, accepted: bool
+) -> None:
+    towel = _fake_towel(tmp_path / "bin", help_text)
+    assert ecosystem.dry_options(towel, tmp_path, {"PATH": "/usr/bin:/bin"}).strict is accepted
+
+
+@pytest.mark.parametrize(
+    "mode,accepted,arguments",
+    [
+        ("relaxed", True, ("--no-strict",)),
+        ("strict", True, ("--strict",)),
+        ("strict", False, ()),
+    ],
+)
+def test_the_mode_is_passed_explicitly_both_ways(
+    mode: ecosystem.TowelMode, accepted: bool, arguments: tuple[str, ...]
+) -> None:
+    # Explicit both ways, so a project's [tool.towel] cannot choose the corpus's mode.
+    assert ecosystem.mode_arguments(mode, accepted) == arguments
+
+
+def test_relaxed_mode_cannot_be_asked_of_a_towel_without_it() -> None:
+    with pytest.raises(ecosystem.EnvironmentFailure, match="no relaxed mode"):
+        ecosystem.mode_arguments("relaxed", False)
 
 
 def test_a_towel_whose_help_fails_is_a_setup_failure(tmp_path: Path) -> None:
     towel = _fake_towel(tmp_path / "bin", "Traceback: broken", status=1)
     with pytest.raises(ecosystem.EnvironmentFailure, match="dry --help failed"):
-        ecosystem.accepts_cross_module(towel, tmp_path, {"PATH": "/usr/bin:/bin"})
+        ecosystem.dry_options(towel, tmp_path, {"PATH": "/usr/bin:/bin"})
     with pytest.raises(ecosystem.EnvironmentFailure, match="could not be started"):
-        ecosystem.accepts_cross_module(tmp_path / "absent/towel", tmp_path, {"PATH": "/bin"})
+        ecosystem.dry_options(tmp_path / "absent/towel", tmp_path, {"PATH": "/bin"})
 
 
 @pytest.mark.parametrize(
@@ -535,10 +572,10 @@ def _orchestrated(
         trace.installs.append(tree)
         return dataclasses.replace(environment.record, installed_from=str(tree))
 
-    def accepts(towel: Path, cwd: Path, env: Mapping[str, str]) -> bool:
+    def options(towel: Path, cwd: Path, env: Mapping[str, str]) -> ecosystem.DryOptions:
         trace.steps.append("help")
         trace.helps.append((towel, cwd, "PYTHONPATH" in env))
-        return accepted
+        return ecosystem.DryOptions(accepted, True)
 
     def run(
         command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, log: Path
@@ -558,7 +595,7 @@ def _orchestrated(
         return ecosystem.Phase(0, 0.0, "3 passed", str(log))
 
     monkeypatch.setattr(ecosystem, "install_from", install_from)
-    monkeypatch.setattr(ecosystem, "accepts_cross_module", accepts)
+    monkeypatch.setattr(ecosystem, "dry_options", options)
     monkeypatch.setattr(ecosystem, "run", run)
     project = project or ecosystem.Project("fixture", "unused", "pinned", "package.py")
     return ecosystem.check_project(project, work, CANDIDATE, 10), trace

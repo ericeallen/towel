@@ -372,9 +372,11 @@ These are the retained native source/artifact inventories, five build/quality
 steps, dependency/diagram checks, both 2,000-case fuzz families, all three
 interpreter results with the matrix driver, full runtime coverage XML and logs, six clean-wheel command
 records, sdist documentation tests, complete self-dogfood tests and integrity
-records, and corpus launch/completion/environment/summary records. Also include
-each `corpus-report/PROJECT.json` and every referenced raw phase log as
-`corpus-logs/BASENAME`. A PASS reached through retesting also requires its
+records, and corpus launch/completion/environment/summary records for each of
+the two corpus runs: relaxed mode, the default, as `corpus*`, and strict mode as
+`corpus-strict*`. Also include each `corpus-report/PROJECT.json` and every
+referenced raw phase log as `corpus-logs/BASENAME` (and the same under
+`corpus-strict-report/` and `corpus-strict-logs/`). A PASS reached through retesting also requires its
 `corpus-logs/PROJECT-retest.json` and isolated/full before-and-after logs.
 Missing, partial, failed or inconsistent records refuse the gate. A free-form
 `status: passed` is insufficient; the verifier examines exit records, actual
@@ -383,14 +385,17 @@ corpus membership/pins, and completed before/after outcomes and failed-test IDs.
 
 The structured review has `validation_commit`, `wheel_sha256`, `reviewer`, a
 nonempty `report` file reference, `open_findings: []`, and four maps:
-`reviewed_nonaccepted`, `reviewed_fallbacks`, `reviewed_known_failures`, and
-`reviewed_baseline_failures`. Each map must contain exactly the projects in
+`reviewed_nonaccepted`, `reviewed_fallbacks`, `reviewed_known_failures`,
+`reviewed_baseline_failures` and `reviewed_relaxed_assumptions`, for the
+relaxed corpus; a `strict_corpus` table holds the same five maps for the strict
+corpus. Each map must contain exactly the projects in
 that category, with no missing or stale entries. Each entry contains a
 nonempty `reason`, `disposition` (`accepted-refusal`, `typed-fallback`,
-`known-limitation`, or `pre-existing-baseline`) and a nonempty `evidence`
-array of file references. Those dispositions respectively belong to
-`reviewed_nonaccepted`, `reviewed_fallbacks`, `reviewed_known_failures` and
-`reviewed_baseline_failures`.
+`known-limitation`, `pre-existing-baseline` or `relaxed-assumption`) and a
+nonempty `evidence` array of file references. Those dispositions respectively
+belong to `reviewed_nonaccepted`, `reviewed_fallbacks`,
+`reviewed_known_failures`, `reviewed_baseline_failures` and
+`reviewed_relaxed_assumptions`.
 Describe a baseline failure as pre-existing **in this run/environment**, not
 as a claim about upstream CI. NO_CHANGE and early refusals do not establish
 a transformed-suite result. Known differences still require pinned manifest
@@ -702,6 +707,27 @@ test configs and isort's `stdlibs` copy the name of something else, and the
 three Towel entries are Towel itself, whose running candidate is an installed
 `towel` outside the tree wherever it is installed.
 
+Run the corpus twice, once in each mode: relaxed, the default and what users
+run, and strict, with the harness's `--strict`. The harness passes the mode to
+every refactor explicitly (`--no-strict` or `--strict`), so a project's
+`[tool.towel]` cannot choose it, and records it in every result. Relaxed mode
+assumes things a few programs do not satisfy
+([relaxed and strict](../RELAXED_AND_STRICT.md)), and a project whose tests
+it changes is a project for strict mode, not by itself a release blocker, if
+such projects are rare and the change is explained (the maintainer's ruling of
+November 15, 2026). The harness holds that to evidence. When a relaxed refactor
+changes a test, the harness refactors the same tree again in strict mode and
+runs the suite on that (`strict_check` in the result). A manifest entry's
+`relaxed_assumption` records a review that traced the change to one named
+assumption (`object_lifetimes`, `side_effect_free_reads`,
+`stable_module_names` or `lambda_qualname`), with the reason and the tests it
+may change. With it, a change confined to those tests, with the test count
+unchanged and the strict suite as the baseline was, is `RELAXED_ASSUMPTION`,
+which passes. Without it, or when the strict suite changes too, the project is
+`BROKEN`: a Towel defect until shown otherwise. The report counts the
+`RELAXED_ASSUMPTION` projects, says for each whether relaxed mode printed its
+notice, and lists reviewed entries the run did not see.
+
 `--no-types` remains available and answers a narrower question: whether the
 transformation preserves behaviour with verification out of the picture. It
 exercises none of the type inference or checking, so a release whose changes
@@ -789,6 +815,9 @@ docker run -d --name towel-eco -e TOWEL_WORKERS=1 \
     python scripts/ecosystem_check.py --run-untrusted-code \
         --towel-src /snapshot/src --towel-wheel /opt/towel --work /work --workers 1
 ```
+
+Run the strict corpus the same way with `--strict`, in a fresh work volume
+staged the same way, after the relaxed run has finished.
 
 Verify the default policy separately: an original whose check reports errors
 is refactored against them, a change that adds one is rejected and one that

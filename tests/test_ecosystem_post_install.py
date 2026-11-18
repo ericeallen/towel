@@ -156,7 +156,7 @@ def prepared_run(
 
     monkeypatch.setattr(ecosystem, "clone", clone)
     monkeypatch.setattr(ecosystem, "environment", environment)
-    monkeypatch.setattr(ecosystem, "accepts_cross_module", lambda *_: True)
+    monkeypatch.setattr(ecosystem, "dry_options", lambda *_: ecosystem.DryOptions(True, True))
     monkeypatch.setattr(ecosystem, "changed", lambda *_: (1, "fixture"))
     monkeypatch.setattr(ecosystem, "run", run)
     project = ecosystem.Project("fixture", "unused", "pinned", "package.py", post_install=command)

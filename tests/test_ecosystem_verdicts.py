@@ -76,6 +76,7 @@ def _phase(path: Path, code: int, output: str, *, timed_out: bool = False) -> ec
         ("NO_CHANGE", 0),
         ("BROKEN_KNOWN", 0),
         ("REFUSED", 0),
+        ("RELAXED_ASSUMPTION", 0),
         ("SETUP_ERROR", 1),
         ("BASELINE_ERROR", 1),
         ("REFUSAL_MALFORMED", 1),
@@ -157,24 +158,40 @@ def _check(
     refactor_timed_out: bool = False,
     refactor_retry: Optional[tuple[int, str]] = None,
     expected_refusal: Optional[ecosystem.ExpectedRefusal] = None,
+    mode: ecosystem.TowelMode = "relaxed",
+    strict_after: Optional[tuple[int, str]] = None,
+    strict_refactor: tuple[int, str] = (0, "Applied 1 refactoring\n"),
+    relaxed_assumption: Optional[ecosystem.RelaxedAssumption] = None,
+    strict_calls: Optional[list[Sequence[str]]] = None,
 ) -> ecosystem.Result:
     source = root / "fixture"
     source.mkdir()
     (source / "package.py").write_text("value = 1\n")
     monkeypatch.setattr(ecosystem, "clone", lambda *_: "pinned")
     monkeypatch.setattr(ecosystem, "environment", lambda *_: ENVIRONMENT)
-    monkeypatch.setattr(ecosystem, "accepts_cross_module", lambda *_: True)
+    monkeypatch.setattr(ecosystem, "dry_options", lambda *_: ecosystem.DryOptions(True, True))
     monkeypatch.setattr(ecosystem, "base_env", lambda *_: {})
     monkeypatch.setattr(ecosystem, "changed", lambda *_: (int(changed), "fixture"))
-    phases = iter([before, after])
+    # The third suite, if any, is the one after a strict refactor; it passes unless told.
+    phases = iter([before, after, strict_after or before])
     refactor_calls = 0
 
     def run(
         command: Sequence[str], cwd: Path, env: dict[str, str], timeout: int, log: Path
     ) -> ecosystem.Phase:
         nonlocal refactor_calls
+        if _is_refactor(command) and mode == "relaxed" and ecosystem.STRICT_FLAG in command:
+            # A relaxed run that changed a test refactors again in strict mode.
+            if strict_calls is not None:
+                strict_calls.append(command)
+            cleaned = Path(command[command.index("dry") + 2])
+            cleaned.parent.mkdir(parents=True, exist_ok=True)
+            cleaned.write_text("value = 3\n")
+            return _phase(log, *strict_refactor)
         if _is_refactor(command):
             refactor_calls += 1
+            assert command.count("--no-strict") == int(mode == "relaxed")
+            assert command.count(ecosystem.STRICT_FLAG) == int(mode == "strict")
             assert ecosystem.CROSS_MODULE_FLAG in command, "every attempt extracts across modules"
             outcome = refactor
             if refactor_calls == 1:
@@ -209,8 +226,9 @@ def _check(
         failure_exit_codes=failure_exit_codes,
         test=test,
         expected_refusal=expected_refusal,
+        relaxed_assumption=relaxed_assumption,
     )
-    return ecosystem.check_project(project, root, CANDIDATE, 10, no_types)
+    return ecosystem.check_project(project, root, CANDIDATE, 10, no_types, mode)
 
 
 @pytest.mark.parametrize(
@@ -856,9 +874,11 @@ def test_main_forwards_and_records_typing_mode_in_every_report(
         candidate: ecosystem.Candidate,
         timeout: int,
         requested_no_types: bool = False,
+        mode: ecosystem.TowelMode = "relaxed",
     ) -> ecosystem.Result:
         assert candidate is CANDIDATE
         assert requested_no_types is no_types
+        assert mode == "relaxed", "relaxed mode is what users run, and the default"
         if worker_fails:
             raise RuntimeError("fixture worker failed")
         return ecosystem.Result(
@@ -1800,7 +1820,7 @@ def test_check_project_requires_full_context_before_accepting_isolated_agreement
     ).strip()
     monkeypatch.setattr(ecosystem, "clone", lambda *_: commit)
     monkeypatch.setattr(ecosystem, "environment", lambda *_: ENVIRONMENT)
-    monkeypatch.setattr(ecosystem, "accepts_cross_module", lambda *_: False)
+    monkeypatch.setattr(ecosystem, "dry_options", lambda *_: ecosystem.DryOptions(False, True))
     actual_run = ecosystem.run
     refactor_calls = 0
 
@@ -1831,7 +1851,13 @@ def test_check_project_requires_full_context_before_accepting_isolated_agreement
     )
     result = ecosystem.check_project(project, tmp_path, CANDIDATE, 20)
     assert result.verdict == ("BROKEN" if regression else "PASS")
-    assert result.commit == commit and result.changed_files == 1 and refactor_calls == 1
+    # A relaxed run that changed a test refactors once more, in strict mode, for the review.
+    assert result.commit == commit and result.changed_files == 1
+    assert refactor_calls == (2 if regression else 1)
+    if regression:
+        assert result.strict_check is not None and result.strict_check.verdict == "BROKEN"
+    else:
+        assert result.strict_check is None
     assert (source / "package/original.py").read_text() == original
     assert result.baseline is not None and result.baseline.returncode == 0
     assert result.after is not None and result.after.returncode == int(regression)

@@ -363,51 +363,55 @@ def bundle(tmp_path: Path) -> Bundle:
             "all_generated_runtime_files_included": True,
         },
     )
-    row = {
-        "name": "example",
-        "commit": "a" * 40,
-        "verdict": "PASS",
-        "fallback": "",
-        "baseline": {"returncode": 0, "log": "/logs/example-before.log"},
-        "after": {"returncode": 0, "log": "/logs/example-after.log"},
-        "refactor": {"returncode": 0, "log": "/logs/example-refactor.log"},
-    }
-    result.write(
-        "corpus-report/summary.json",
-        {
-            "towel": commit,
-            "typing_mode": "default",
-            "candidate": {"sha256": wheel},
-            "counts": {"PASS": 1},
-            "results": [row],
-        },
-    )
-    result.write("corpus-report/example.json", row)
-    for phase in ("before", "after", "refactor"):
-        result.write(f"corpus-logs/example-{phase}.log", SUMMARY)
-    result.write("corpus.log", "PASS example files=1 refactor=1.0s\n")
-    result.write("corpus-command.json", {"commit": commit, "started": START})
-    result.write("corpus-exit.json", {"status": 0, "oom_killed": False, "finished": FINISH})
-    result.write(
-        "corpus-environment.json",
-        {"manifest_sha256": gate.digest(initial["scripts/ecosystem/manifest.toml"])},
-    )
+    # The release runs the corpus in both modes: relaxed, the default, and strict.
+    for prefix, mode in (("corpus", "relaxed"), ("corpus-strict", "strict")):
+        row = {
+            "name": "example",
+            "commit": "a" * 40,
+            "verdict": "PASS",
+            "fallback": "",
+            "towel_mode": mode,
+            "baseline": {"returncode": 0, "log": "/logs/example-before.log"},
+            "after": {"returncode": 0, "log": "/logs/example-after.log"},
+            "refactor": {"returncode": 0, "log": "/logs/example-refactor.log"},
+        }
+        result.write(
+            f"{prefix}-report/summary.json",
+            {
+                "towel": commit,
+                "typing_mode": "default",
+                "towel_mode": mode,
+                "candidate": {"sha256": wheel},
+                "counts": {"PASS": 1},
+                "results": [row],
+            },
+        )
+        result.write(f"{prefix}-report/example.json", row)
+        for phase in ("before", "after", "refactor"):
+            result.write(f"{prefix}-logs/example-{phase}.log", SUMMARY)
+        result.write(f"{prefix}.log", "PASS example files=1 refactor=1.0s\n")
+        result.write(f"{prefix}-command.json", {"commit": commit, "started": START})
+        result.write(f"{prefix}-exit.json", {"status": 0, "oom_killed": False, "finished": FINISH})
+        result.write(
+            f"{prefix}-environment.json",
+            {"manifest_sha256": gate.digest(initial["scripts/ecosystem/manifest.toml"])},
+        )
     report = result.ref("review.md", b"Independent synthetic review\n")
+    categories = (
+        "reviewed_nonaccepted",
+        "reviewed_fallbacks",
+        "reviewed_known_failures",
+        "reviewed_baseline_failures",
+        "reviewed_relaxed_assumptions",
+    )
     review = {
         "validation_commit": commit,
         "wheel_sha256": wheel,
         "reviewer": "fixture",
         "report": report,
         "open_findings": [],
-        **{
-            name: {}
-            for name in (
-                "reviewed_nonaccepted",
-                "reviewed_fallbacks",
-                "reviewed_known_failures",
-                "reviewed_baseline_failures",
-            )
-        },
+        **{name: {} for name in categories},
+        "strict_corpus": {name: {} for name in categories},
     }
     result.value["review"] = result.ref("review.json", json.dumps(review).encode())
     result.save()
@@ -1141,7 +1145,10 @@ def set_corpus_row(bundle: Bundle, row: dict[str, object]) -> None:
     bundle.alter(
         "corpus-exit.json",
         lambda record: record.update(
-            status=int(verdict not in {"PASS", "NO_CHANGE", "BROKEN_KNOWN", "REFUSED"})
+            status=int(
+                verdict
+                not in {"PASS", "NO_CHANGE", "BROKEN_KNOWN", "REFUSED", "RELAXED_ASSUMPTION"}
+            )
         ),
     )
 
@@ -1186,6 +1193,96 @@ def _verify_corpus_with_manifest(bundle: Bundle, entry: bytes) -> None:
     )
     review = gate.table(bundle.read("review.json"))
     gate.verify_corpus(records, bundle.commit, gate.text(review["wheel_sha256"]), source, review)
+
+
+RELAXED_ASSUMPTION = (
+    b'[project.relaxed_assumption]\nassumption = "object_lifetimes"\n'
+    b'reason = "test_del waits for a __del__"\ntests = ["t.py::test_del"]\n'
+)
+RELAXED_AFTER = "FAILED t.py::test_del - closed late\n1 failed, 19 passed in 1.00s\n"
+
+
+@pytest.mark.parametrize(
+    "mutation,refusal",
+    [
+        ("none", ""),
+        ("strict_no_change", ""),
+        ("unpinned", "Unpinned relaxed assumption"),
+        ("other_reason", "Unpinned relaxed assumption"),
+        ("unnamed_test", "changed unnamed tests"),
+        ("strict_broken", "Strict mode also changed the suite"),
+        ("strict_differs", "Strict suite differs from the baseline"),
+        ("strict_refactor_failed", "no completed strict refactor"),
+        ("unreviewed", "Unreviewed or stale corpus category: reviewed_relaxed_assumptions"),
+    ],
+)
+def test_a_relaxed_assumption_is_pinned_reviewed_and_checked_against_strict_mode(
+    bundle: Bundle, mutation: str, refusal: str
+) -> None:
+    after = (
+        RELAXED_AFTER.replace("test_del", "test_sum")
+        if mutation == "unnamed_test"
+        else RELAXED_AFTER
+    )
+    bundle.write("corpus-logs/example-after.log", after)
+    bundle.write("corpus-logs/example-strict-refactor.log", "Applied 1 refactoring\n")
+    bundle.write(
+        "corpus-logs/example-strict-after.log",
+        RELAXED_AFTER if mutation == "strict_differs" else SUMMARY,
+    )
+    strict_check: dict[str, object] = {
+        "verdict": "BROKEN" if mutation == "strict_broken" else "PASS",
+        "refactor": {
+            "returncode": 1 if mutation == "strict_refactor_failed" else 0,
+            "log": "/logs/example-strict-refactor.log",
+        },
+        "after": {
+            "returncode": int(mutation == "strict_differs"),
+            "log": "/logs/example-strict-after.log",
+        },
+        "changed_files": 1,
+        "detail": "",
+    }
+    if mutation == "strict_no_change":
+        strict_check.update(verdict="NO_CHANGE", after=None, changed_files=0)
+    row = gate.table(bundle.read("corpus-report/example.json"))
+    row.update(
+        verdict="RELAXED_ASSUMPTION",
+        detail=(
+            "object_lifetimes: "
+            + ("another reason" if mutation == "other_reason" else "test_del waits for a __del__")
+        ),
+        after={"returncode": 1, "log": "/logs/example-after.log"},
+        strict_check=strict_check,
+    )
+    set_corpus_row(bundle, row)
+    if mutation != "unreviewed":
+        reviewed_exception(bundle, "reviewed_relaxed_assumptions", "relaxed-assumption")
+    entry = b"" if mutation == "unpinned" else RELAXED_ASSUMPTION
+    if not refusal:
+        _verify_corpus_with_manifest(bundle, entry)
+    else:
+        with pytest.raises(gate.EvidenceError, match=refusal):
+            _verify_corpus_with_manifest(bundle, entry)
+
+
+def test_strict_mode_has_no_relaxed_assumptions_to_review(bundle: Bundle) -> None:
+    row = gate.table(bundle.read("corpus-strict-report/example.json"))
+    row.update(verdict="RELAXED_ASSUMPTION")
+    bundle.write("corpus-strict-report/example.json", row)
+    bundle.alter(
+        "corpus-strict-report/summary.json",
+        lambda summary: summary.update(results=[row], counts={"RELAXED_ASSUMPTION": 1}),
+    )
+    bundle.write("corpus-strict.log", "RELAXED_ASSUMPTION example files=1 refactor= 1.0s\n")
+    with pytest.raises(gate.EvidenceError, match="unaccepted corpus verdict"):
+        bundle.check()
+
+
+def test_a_corpus_run_in_the_wrong_mode_refuses(bundle: Bundle) -> None:
+    bundle.alter("corpus-report/summary.json", lambda summary: summary.update(towel_mode="strict"))
+    with pytest.raises(gate.EvidenceError, match="Towel mode mismatch: corpus"):
+        bundle.check()
 
 
 EXPECTED_REFUSAL = (
