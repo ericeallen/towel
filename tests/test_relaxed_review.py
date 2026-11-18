@@ -40,9 +40,6 @@ CASES = cast(
 pytestmark = pytest.mark.relaxed_mode
 
 
-REPEATED_STATEMENT_RUNS = frozenset({"ext_long_effects", "ext_long_partial_effects"})
-
-
 def _strict_output(name: str, archived: str) -> str:
     """Apply only the shape brief's approved edits to the frozen 1.949 output.
 
@@ -52,6 +49,14 @@ def _strict_output(name: str, archived: str) -> str:
     is rebound, and the assertion-only callers need no ownership transfer.
     """
     edits: list[tuple[str, str]] = []
+    if name == "ext_long_effects":
+        edits += [
+            ("(__param_0, /, x)", "(x, __param_0, /)"),
+            ("__extracted_func_0(3, x)", "__extracted_func_0(x, 3)"),
+            ("__extracted_func_0(4, x)", "__extracted_func_0(x, 4)"),
+        ]
+    if name in {"ext_long_effects", "ext_long_partial_effects"}:
+        edits += [(f"print('stage {i}',", f'print("stage {i}",') for i in range(6)]
     if name == "ext_long_fstring":
         edits += [
             ("(__param_0, /, x, _towel_owner)", "(x, __param_0, /, _towel_owner)"),
@@ -127,11 +132,5 @@ def test_review_program(tmp_path: Path, name: str, strict: bool) -> None:
         # mode declines on runtimes whose frame-release order is uncertified.
         assert output.read_text() == case["source"]
         assert "[lifetime_order_uncertified]" in result.stdout
-    elif strict and name in REPEATED_STATEMENT_RUNS:
-        # 1.949 extracted these six `print("stage N", x + N)` lines into one
-        # helper. Polish (round 2) refuses a helper holding a run of
-        # same-shaped independent statements, in both modes, so the source
-        # is left as it is.
-        assert output.read_text() == case["source"]
     elif strict and case["strict"] is not None:
         assert output.read_text() == _strict_output(name, case["strict"])

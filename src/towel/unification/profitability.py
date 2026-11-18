@@ -24,13 +24,15 @@ ownership boxes, deletions and calls all count against the benefit.
 from __future__ import annotations
 
 import ast
+from collections import Counter
 import copy
-from typing import Sequence
+from typing import Iterator, Sequence
 
 from ..canonical_ast import canonical_dump
 from .argument_ownership import render_argument_handoff
 from .models import Replacement
 from .parameters import parameter_names
+from .statement_facts import mentioned_names
 
 
 def _syntax_cost(nodes: Sequence[ast.AST]) -> int:
@@ -42,53 +44,110 @@ def _syntax_cost(nodes: Sequence[ast.AST]) -> int:
     )
 
 
-def _independent_statement_groups(helper: ast.FunctionDef, statements: Sequence[ast.stmt]) -> bool:
-    """Recognize a run of one operation with a fresh argument group per case.
-
-    Shared inputs such as a receiver or language are context, not an argument
-    group. Every other input must belong to exactly one statement, and the
-    statements must match after renaming those private inputs in encounter
-    order. Literal values may differ; operations and shared-input positions
-    stay exact. A run with no private inputs is still a repeated operation.
-    """
-    if len(statements) < 2:
+def _independent_cases(
+    cases: Sequence[ast.AST], parameters: set[str], *, signature_uses: Counter[str] | None = None
+) -> bool:
+    """Compare complete operations, keeping shared inputs and dependencies in place."""
+    if len(cases) < 2 or any(type(case) is not type(cases[0]) for case in cases):
         return False
-    statement_names = [
-        {node.id for node in ast.walk(statement) if isinstance(node, ast.Name)}
-        for statement in statements
-    ]
-    for index, statement in enumerate(statements):
+    statement_names = [mentioned_names(case) for case in cases]
+    for index, statement in enumerate(cases):
         written = {
             node.id
             for node in ast.walk(statement)
             if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
         }
-        if any(written & used for other, used in enumerate(statement_names) if other != index):
+        if written and any(
+            written & used for other, used in enumerate(statement_names) if other != index
+        ):
             # A normalization pipeline may repeat its syntax while each step
             # consumes the preceding result. It is one computation, not a
             # bundle of independent test cases.
             return False
-    parameters = set(parameter_names(helper.args))
-    uses = [used & parameters for used in statement_names]
+    uses = [parameters & used for used in statement_names]
     shared = set.intersection(*uses)
     groups = [used - shared for used in uses]
+    if signature_uses is not None:
+        if not groups[0] or set.union(*uses) != parameters:
+            return False
+        # A private input used elsewhere in the helper links its case to other
+        # work. Shared context (such as a receiver) may also appear outside.
+        inside = _name_counts(cases)
+        if any(inside[name] != signature_uses[name] for group in groups for name in group):
+            return False
     if any(len(group) != len(groups[0]) for group in groups):
         return False
     if sum(map(len, groups)) != len(set.union(*groups)):
         return False
 
     shapes: list[str] = []
-    for statement, group in zip(statements, groups):
+    for statement, group in zip(cases, groups):
         normalized = copy.deepcopy(statement)
         names: dict[str, str] = {}
         for node in ast.walk(normalized):
             if isinstance(node, ast.Name) and node.id in group:
                 # Not a legal identifier: cannot collide with source names.
                 node.id = names.setdefault(node.id, f"!case-input-{len(names)}")
-            elif isinstance(node, ast.Constant):
-                node.value = f"!literal-{type(node.value).__name__}"
+            elif isinstance(node, ast.Call):
+                # Literal arguments can be case data. Keep the actual operations
+                # that produce an argument: x + 1 and x + 2 are different steps.
+                for argument in [*node.args, *(kw.value for kw in node.keywords)]:
+                    if isinstance(argument, ast.Constant):
+                        argument.value = f"!literal-{type(argument.value).__name__}"
         shapes.append(canonical_dump(normalized))
     return len(set(shapes)) == 1
+
+
+def _name_counts(nodes: Sequence[ast.AST]) -> Counter[str]:
+    return Counter(
+        node.id for tree in nodes for node in ast.walk(tree) if isinstance(node, ast.Name)
+    )
+
+
+def _nested_suites(statements: Sequence[ast.stmt]) -> Iterator[list[ast.stmt]]:
+    for statement in statements:
+        for node in ast.walk(statement):
+            for _, field in ast.iter_fields(node):
+                if isinstance(field, list) and len(field) >= 2 and isinstance(field[0], ast.stmt):
+                    yield field
+
+
+def _bundles_cases(helper: ast.FunctionDef, statements: Sequence[ast.stmt]) -> bool:
+    """Refuse a whole repeated operation, or a signature made of copies of one input group."""
+    parameters = set(parameter_names(helper.args))
+    if _independent_cases(statements, parameters):
+        return True
+    if len(parameters) < 2:
+        return False
+
+    signature_uses = _name_counts(statements)
+    return any(
+        _repeated_input_groups(suite, parameters, signature_uses)
+        for suite in (statements, *_nested_suites(statements))
+    )
+
+
+def _repeated_input_groups(
+    suite: Sequence[ast.stmt], parameters: set[str], signature_uses: Counter[str]
+) -> bool:
+    # A batch can have fixed setup and each case can take several statements.
+    # Every parameter must occur in the repeated units. Code that only uses
+    # their shared context does not contribute another group.
+    uses = [parameters & mentioned_names(stmt) for stmt in suite]
+    if len(uses) < 2 or set.union(*uses) != parameters:
+        return False
+    context = set.intersection(*(used for used in uses if used))
+    inputs = [stmt for stmt, used in zip(suite, uses) if used - context]
+    for width in range(1, len(inputs) // 2 + 1):
+        if len(inputs) % width or len(inputs) // width > len(parameters):
+            continue
+        cases = [
+            ast.Module(body=inputs[start : start + width], type_ignores=[])
+            for start in range(0, len(inputs), width)
+        ]
+        if _independent_cases(cases, parameters, signature_uses=signature_uses):
+            return True
+    return False
 
 
 def worthwhile_helper(
@@ -115,10 +174,7 @@ def worthwhile_helper(
         return False
     if rendered_callers is not None and len(rendered_callers) != sites:
         raise ValueError("Every replacement needs its rendered caller")
-    # A setup or a different final check must not hide a repeated run inside
-    # the candidate. In particular, do not bundle the last few test cases
-    # merely because their combined syntax repays a larger signature.
-    if _contains_independent_statement_run(helper):
+    if _bundles_cases(helper, statements):
         return False
     callers = (
         list(rendered_callers)
@@ -136,18 +192,3 @@ def worthwhile_helper(
     original_cost = _syntax_cost(statements) * sites
     generated_cost = _syntax_cost([helper]) + caller_cost
     return generated_cost < original_cost
-
-
-def _contains_independent_statement_run(helper: ast.FunctionDef) -> bool:
-    """Find repeated cases in any suite, including inside a branch or exception handler."""
-    for node in ast.walk(helper):
-        for _, value in ast.iter_fields(node):
-            if not isinstance(value, list):
-                continue
-            statements = [statement for statement in value if isinstance(statement, ast.stmt)]
-            if any(
-                _independent_statement_groups(helper, statements[index : index + 2])
-                for index in range(len(statements) - 1)
-            ):
-                return True
-    return False
