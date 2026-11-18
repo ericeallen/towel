@@ -182,7 +182,9 @@ class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
     """
 
     def _split_lines(self, text: str, width: int) -> List[str]:
-        return textwrap.wrap(" ".join(text.split()), width, break_on_hyphens=False)
+        return textwrap.wrap(
+            " ".join(text.split()), width, break_on_hyphens=False, break_long_words=False
+        )
 
 
 def _towel_version() -> str:
@@ -213,6 +215,9 @@ def _source_tree_version(root: Path) -> Optional[str]:
     return declared if isinstance(declared, str) else None
 
 
+DOCS_URL = "https://ericeallen.github.io/towel"
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """The command-line parser, shared by ``main`` and the tests."""
     parser = _TowelParser(
@@ -222,7 +227,7 @@ def _build_parser() -> argparse.ArgumentParser:
 Towel finds repeated code in Python files, including copies that differ in a
 few names or values, and replaces it with calls to new helper functions.""",
         formatter_class=_HelpFormatter,
-        epilog="""\
+        epilog=f"""\
 Examples, in a directory holding src/:
   towel preview src/          # Show what would change, changing nothing
   towel dry src/ cleaned/     # Write a refactored copy of src/ to cleaned/
@@ -230,7 +235,7 @@ Examples, in a directory holding src/:
   towel rename-helpers src/ --complete-scope    # Name the new helpers
 
 Run towel COMMAND --help for a command's options and examples, and see
-docs/QUICKSTART.md for a first run.
+{DOCS_URL}/QUICKSTART/ for a first run.
 
 Exit status: 0 done, including when there was nothing to change; 1 failed,
 refused, or answered "no"; 2 invalid arguments, or a rename refused; 3 preview
@@ -514,7 +519,7 @@ def _add_cross_module_flag(options: argparse._ActionsContainer) -> None:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Also extract duplicates that span modules: the helper goes in one module and the "
-        "others import it (docs/CROSS_MODULE.md explains when this is refused). Default: off: "
+        f"others import it ({DOCS_URL}/CROSS_MODULE/ explains when this is refused). Default: off: "
         "only duplicates within one module are extracted, so no module starts importing "
         "another.",
     )
@@ -553,7 +558,7 @@ def _add_parameterize_builtins_flag(options: argparse._ActionsContainer) -> None
         help="Also extract duplicates that use a builtin such as len where the copies may not "
         "mean the same len: copies in different modules (with --cross-module), or copies of "
         "which only one has its own variable named len; each call then hands the helper its "
-        "own len. Default: off, and such duplicates are left alone; docs/GENERATED_CODE.md "
+        f"own len. Default: off, and such duplicates are left alone; {DOCS_URL}/GENERATED_CODE/ "
         "lists the cases left alone even with this option.",
     )
 
@@ -740,7 +745,7 @@ def _add_json_flag(options: argparse._ActionsContainer) -> None:
     options.add_argument(
         "--json",
         action="store_true",
-        help="Print the result as one JSON object on stdout, for scripts (docs/COMPATIBILITY.md "
+        help=f"Print the result as one JSON object on stdout, for scripts ({DOCS_URL}/COMPATIBILITY/ "
         "lists its fields); messages go to stderr. dry also needs --no-interactive.",
     )
 
@@ -785,7 +790,7 @@ def _add_limit_flags(options: argparse._ActionsContainer) -> None:
         help="Extract only duplicates whose differences need at most N parameters (default: "
         f"{DEFAULT_MAX_PARAMETERS}); each distinct difference becomes a parameter of the helper. "
         "Variables the copies read are passed as further arguments and usually do not count "
-        "(docs/GENERATED_CODE.md says when they do).",
+        f"({DOCS_URL}/GENERATED_CODE/ says when they do).",
     )
     options.add_argument(
         "--max-refactorings",

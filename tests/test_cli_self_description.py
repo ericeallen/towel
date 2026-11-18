@@ -74,6 +74,16 @@ def test_help_fits_the_terminal(command: List[str], monkeypatch: pytest.MonkeyPa
     assert not long_lines, long_lines
 
 
+def test_help_links_to_pages_an_installed_wheel_can_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Documentation audit A15: the wheel has no repository-relative Markdown guides."""
+    pages = set()
+    for command in COMMANDS:
+        text = _help(command, monkeypatch, columns=60)
+        assert not re.search(r"docs/[^\s]+\.md", text)
+        pages.update(re.findall(r"https://ericeallen\.github\.io/towel/(\w+)/", text))
+    assert pages == {"QUICKSTART", "COMPATIBILITY", "CROSS_MODULE", "GENERATED_CODE"}
+
+
 def _command(name: str) -> argparse.ArgumentParser:
     """The parser of ``towel <name>``."""
     for action in cli._build_parser()._actions:

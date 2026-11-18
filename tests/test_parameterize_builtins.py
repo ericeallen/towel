@@ -509,7 +509,10 @@ def test_the_flag_reaches_the_engine_from_the_command_line(
         assert "only one has its own variable named len" in help_text
         assert "each call then hands the helper its own len" in help_text
         assert "Default: off, and such duplicates are left alone" in help_text
-        assert "docs/GENERATED_CODE.md lists the cases left alone even with this" in help_text
+        assert (
+            "https://ericeallen.github.io/towel/GENERATED_CODE/ lists the cases left alone even with this"
+            in help_text
+        )
     assert not DryOptions.from_namespace(parser.parse_args(["dry", "a", "b"])).parameterize_builtins
     dry = DryOptions.from_namespace(parser.parse_args(["dry", "a", "b", "--parameterize-builtins"]))
     assert dry.parameterize_builtins
