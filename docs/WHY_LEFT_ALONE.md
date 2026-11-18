@@ -50,11 +50,12 @@ methods, and found no two alike. It does not examine code outside functions:
 statements at a module's top level, or a script's, are never extracted, and
 neither is an early-return guard (`if not x: return`) on its own. When a file
 holds such code, the run says "No repeated code found in the code Towel
-examined in N files." and adds a note per file with how many statements or
-guards it did not examine; every run, not only an empty one, prints these
-notes. To have Towel compare module-level statements, move them into a
-function; for guards, extract the shared condition into a function and keep
-each `return` in its caller.
+examined in N files." A single line counts the files that hold such code.
+With `--explain`, any run lists the affected files and the number of statements
+or guards in each. JSON includes these counts in `analysed.not_examined`.
+To have Towel compare module-level statements, move them into a function.
+For guards, extract the shared condition into a function and keep each
+`return` in its caller.
 
 **"Found N places with similar code and extracted none."** Towel found code of
 the same shape and the reasons above say why it left each place alone. Similar

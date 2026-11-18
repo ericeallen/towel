@@ -1926,6 +1926,7 @@ def _left_alone_report(
     relative: Callable[[str], str],
     *,
     shared: bool = False,
+    complete: bool = True,
 ) -> List[str]:
     """Why code was left alone, then where: the largest places, or with --explain all of them.
 
@@ -1944,7 +1945,12 @@ def _left_alone_report(
         reason_lines(report, pairs=pairs, first_unverifiable=problem)
         + left_alone_lines(report, relative, every=options.explain, pairs=pairs)
         + (cross_module_lines(report, relative) if options.cross_module and not shared else [])
-        + not_examined_lines(report, relative)
+        + not_examined_lines(
+            report,
+            relative,
+            nothing_found=complete and run_outcome(report, applied) == "not_fully_examined",
+            explain=options.explain,
+        )
     )
 
 
@@ -2411,6 +2417,7 @@ def _print_complete_preview(
                 applied,
                 relative,
                 shared=shared_across_modules(engine.change_log),
+                complete=not engine.preview_incomplete,
             ),
         ),
         end="",
@@ -2607,7 +2614,12 @@ def _run_quick_preview_with_policy(options: PreviewOptions) -> None:
     relative = _relative_to_run(options.dry_options(target))
     print()
     print(census_line(report))
-    for line in not_examined_lines(report, relative):
+    for line in not_examined_lines(
+        report,
+        relative,
+        nothing_found=not all_proposals and run_outcome(report, 0) == "not_fully_examined",
+        explain=options.explain,
+    ):
         print(line)
     outcome = outcome_line(report, 0, target) if not all_proposals else None
     if outcome is not None:

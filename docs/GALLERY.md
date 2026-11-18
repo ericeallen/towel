@@ -57,7 +57,6 @@ Would change 1 file(s):
 +            raise ValueError(
 +                "fractional years or months not supported" " for date calculations"
 +            )
-Early-return guards are not examined on their own: duration.py has 14 guards. Extract the shared condition into a function, keeping each return in its caller.
 Input files were not changed.
 ```
 
@@ -208,7 +207,6 @@ Would change 1 file(s):
 +            self._proxies.append((data, k, result, _obj_setvalue))
 +
 +        self._namestack.pop()
-Early-return guards are not examined on their own: unpickler.py has 16 guards. Extract the shared condition into a function, keeping each return in its caller.
 Input files were not changed.
 ```
 
@@ -383,13 +381,12 @@ Analysed 1 Python file (17 functions).
 Would change 1 file(s):
   duration.py: 1 refactoring(s)
     - Extract common code from __add__ and __rsub__
-Early-return guards are not examined on their own: duration.py has 14 guards. Extract the shared condition into a function, keeping each return in its caller.
 Input files were not changed.
 ```
 
-The note about early-return guards counts code Towel does not compare on its
-own; [Why something was left alone](WHY_LEFT_ALONE.md#when-towel-finds-nothing-to-do)
-says what to do about it. The [quick start](QUICKSTART.md) takes a change from
+Add `--explain` to see which files contain module-level statements or early-return
+guards that Towel does not examine. [Why something was left alone](WHY_LEFT_ALONE.md#when-towel-finds-nothing-to-do)
+explains those limits. The [quick start](QUICKSTART.md) takes a change from
 preview to a tested commit.
 
 [Documentation index](README.md)
