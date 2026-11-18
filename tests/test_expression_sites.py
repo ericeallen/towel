@@ -197,7 +197,7 @@ def test_a_single_call_is_not_a_candidate_but_its_arguments_are() -> None:
         # An annotation is not evaluated in a function.
         f"value: {CONDITION} = now",
         # A field of an f-string is part of its text.
-        f'value = f"{{{CONDITION}}}"',
+        f'value = f"""{{{CONDITION}}}"""',
         # A lambda's body runs when the lambda is called.
         f"value = lambda member: {CONDITION}",
         # A nested definition's decorators and defaults are left to it.

@@ -123,6 +123,18 @@ def test_review_program(tmp_path: Path, name: str, strict: bool) -> None:
         timeout=180,
         check=False,
     )
+    if name == "iso_30_generics" and sys.version_info < (3, 12):
+        # PEP 695 cannot run here. Check the command's actual source policy in both modes.
+        if strict:
+            assert result.returncode == 1
+            assert "input.py: line 1:" in result.stderr
+            assert "Run Towel on a Python that parses it" in result.stderr
+            assert not output.exists()
+        else:
+            assert result.returncode == 0
+            assert "Skipping" in result.stderr and "input.py: line 1:" in result.stderr
+            assert output.read_bytes() == source.read_bytes()
+        return
     assert result.returncode == 0, result.stdout + result.stderr
     before, after = _run(source), _run(output)
     assert before[0] == 0, before
