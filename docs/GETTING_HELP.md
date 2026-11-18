@@ -25,20 +25,25 @@ A report that lets someone run what you ran gets an answer fastest. Include:
 - **What you expected,** and, if Towel changed your program's behavior, the test
   or output that shows the difference.
 
-**What Towel promises.** A change Towel makes keeps what your program
-computes and does: its results, output, exceptions and the order of its side
-effects. That holds for programs that do not use reflection or
-self-instrumentation, including through code they call. Reflection here means
-reading frames, source or line numbers, as `inspect.stack()` does, or a log
-format with `%(funcName)s`; self-instrumentation means a tool that rewrites
-functions, such as pytest's assertion rewriting. Mark a function that depends
-on these with `# towel: no-extract`. In relaxed mode, the default, Towel also
-assumes that your program does not depend on when Python frees an object it no
-longer uses; that reading an attribute, indexing, comparing and arithmetic have
-no side effects; and that a module's functions, classes and imports are not
-rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
-none of these three assumptions. A change that breaks a program meeting these
-conditions is a bug.
+**What Towel promises.** A change Towel makes preserves the program's results,
+output, exceptions and order of side effects. This holds for programs that do
+not use reflection or self-instrumentation, including through code they call.
+Examples include reading frames, source or line numbers with `inspect.stack()`,
+logging the caller with `%(funcName)s` and rewriting functions as pytest does
+when it rewrites assertions. Mark functions that depend on these behaviors with
+`# towel: no-extract`.
+
+In relaxed mode, the default, the program must tolerate changes in when Python
+frees objects it no longer uses. Attribute reads, indexing, comparisons,
+arithmetic and truth tests must have no side effects, and repeated truth tests
+must give the same answer. A module's functions, classes and imports must keep
+their bindings while a helper runs. If a lambda uses only its own parameters, the
+program must tolerate a change to its `__qualname__` when Towel moves it.
+With `--cross-module`, code outside
+the project must leave each module's builtin bindings alone, and the program
+must not depend on the identity of equal literals from different modules.
+`--strict` removes these relaxed-mode assumptions. A change that breaks a
+program meeting these conditions is a bug.
 
 The bug-report template on the [new-issue page](https://github.com/ericeallen/towel/issues/new/choose)
 asks for the same things.
