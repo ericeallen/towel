@@ -265,20 +265,31 @@ def bundle(tmp_path: Path) -> Bundle:
         "twine-313.log",
         f"code_towel-{VERSION}-py3-none-any.whl: PASSED\ncode_towel-{VERSION}.tar.gz: PASSED\n",
     )
+    for version in gate.STRICT_VERSIONS:
+        strict = command(
+            commit=commit,
+            runtime_tree=runtime,
+            python_job=version,
+            python=version + ".9",
+            flags=gate.STRICT_MATRIX_FLAGS,
+        )
+        result.write(f"matrix-strict-{version}-result.json", strict)
+        result.write(f"matrix-strict-{version}.log", SUMMARY + json.dumps(strict) + "\n")
     result.write("dependencies-audit-command.json", command())
     result.write("dependencies-dev-audit.log", "No known vulnerabilities found\n")
     result.write("dependencies-dev.txt", "pytest==9.0.3\n")
     result.write("diagrams-command.json", command())
     result.write("diagrams-writable-cache.log", "1 diagram(s) checked, 0 broken\n")
-    result.write(
-        "fuzz-results.json",
-        [
-            command(family=family, args=["--count", "2000", "--seed", "1"])
-            for family in ("grammar", "scope")
-        ],
-    )
-    for family in ("grammar", "scope"):
-        result.write(f"fuzz-{family}.log", "Done in 1s: 0 failure(s).\n")
+    for prefix, mode_flags in (("fuzz", []), ("fuzz-strict", ["--strict"])):
+        result.write(
+            f"{prefix}-results.json",
+            [
+                command(family=family, args=["--count", "2000", "--seed", "1", *mode_flags])
+                for family in ("grammar", "scope")
+            ],
+        )
+        for family in ("grammar", "scope"):
+            result.write(f"{prefix}-{family}.log", "Done in 1s: 0 failure(s).\n")
     smokes = []
     for version in gate.VERSIONS:
         for mode in ("bare", "extras"):
@@ -1264,6 +1275,32 @@ def test_a_relaxed_assumption_is_pinned_reviewed_and_checked_against_strict_mode
     else:
         with pytest.raises(gate.EvidenceError, match=refusal):
             _verify_corpus_with_manifest(bundle, entry)
+
+
+def test_a_fuzz_run_in_the_wrong_mode_refuses(bundle: Bundle) -> None:
+    runs = bundle.read("fuzz-strict-results.json")
+    assert isinstance(runs, list)
+    for run in runs:
+        run["args"].remove("--strict")
+    bundle.write("fuzz-strict-results.json", runs)
+    with pytest.raises(gate.EvidenceError, match="Fuzz run in another mode: fuzz-strict"):
+        bundle.check()
+
+
+def test_a_strict_suite_needs_the_strict_flag_and_a_clean_summary(bundle: Bundle) -> None:
+    row = gate.table(bundle.read("matrix-strict-3.15-result.json"))
+    row["flags"] = dict(gate.STRICT_MATRIX_FLAGS, pytest="-q")
+    bundle.write("matrix-strict-3.15-result.json", row)
+    bundle.write("matrix-strict-3.15.log", SUMMARY + json.dumps(row) + "\n")
+    with pytest.raises(gate.EvidenceError, match="Strict matrix 3.15 flags mismatch"):
+        bundle.check()
+    row["flags"] = gate.STRICT_MATRIX_FLAGS
+    bundle.write("matrix-strict-3.15-result.json", row)
+    bundle.write(
+        "matrix-strict-3.15.log", "1 failed, 19 passed in 1.00s\n" + json.dumps(row) + "\n"
+    )
+    with pytest.raises(gate.EvidenceError, match="Test summary contains failures"):
+        bundle.check()
 
 
 def test_strict_mode_has_no_relaxed_assumptions_to_review(bundle: Bundle) -> None:

@@ -18,7 +18,7 @@ Usage::
 
     python -m tests.differential.fuzz [--count N] [--seed START] [--modes default,cross]
         [--forms grammar,bindings] [--typed-every K] [--family grammar|scope]
-        [--jobs J] [--out DIR] [--product-policy]
+        [--jobs J] [--out DIR] [--product-policy] [--strict]
 
 Seeds ``START`` to ``START + N - 1`` are generated (:mod:`tests.differential.grammar`,
 or with ``--family scope`` :mod:`tests.differential.scope_grammar`) and each
@@ -37,6 +37,9 @@ The default semantic campaign bypasses only the optional usefulness filter
 all transformation safety checks. ``--product-policy`` instead uses the normal
 usefulness filter. The run header and each failure record identify the policy;
 the reproduction command preserves it.
+
+Towel runs in relaxed mode, its default, unless ``--strict`` asks for strict
+mode; a release campaign runs both families in both modes.
 
 Each failure is written under ``DIR`` as a hostile fixture ready to commit,
 named with ``--prefix``, with a note saying where it goes and what the
@@ -183,6 +186,11 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
         help="apply the normal usefulness filter; by default exercise safe low-value extractions too",
     )
     parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="refactor in strict mode; by default relaxed mode, Towel's default",
+    )
+    parser.add_argument(
         "--family",
         choices=sorted(GENERATORS),
         default="grammar",
@@ -223,13 +231,19 @@ def main(argv: Sequence[str]) -> int:
     else:
         jobs = jobs_for(seeds, arguments.modes, arguments.typed_every, arguments.forms, family)
     jobs = [
-        replace(job, mode=replace(job.mode, skip_trivial_helpers=arguments.product_policy))
+        replace(
+            job,
+            mode=replace(
+                job.mode, skip_trivial_helpers=arguments.product_policy, strict=arguments.strict
+            ),
+        )
         for job in jobs
     ]
     print(
         f"Fuzzing {family} seeds {start}..{start + arguments.count - 1}: {len(jobs)} runs"
         f" on {arguments.jobs} worker(s); usefulness "
         f"{'product default' if arguments.product_policy else 'semantic coverage opt-out'}; "
+        f"Towel mode {'strict' if arguments.strict else 'relaxed'}; "
         f"failures go to {out}",
         flush=True,
     )

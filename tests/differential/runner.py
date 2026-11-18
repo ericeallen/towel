@@ -85,16 +85,19 @@ case, or the checker a typed case configures is not installed.
 
 @dataclass(frozen=True)
 class Mode:
-    """How Towel is run: with or without ``--cross-module``, and typed or ``--no-types``."""
+    """How Towel is run: with or without ``--cross-module``, typed or ``--no-types``, and
+    relaxed, the default, or ``--strict``."""
 
     cross_module: bool = False
     types: bool = False
     skip_trivial_helpers: bool = False
+    strict: bool = False
 
     @property
     def label(self) -> str:
         """The mode as ``towel dry`` flags."""
         flags = ["--cross-module"] if self.cross_module else []
+        flags += ["--strict"] if self.strict else []
         return " ".join(flags + ([] if self.types else ["--no-types"]))
 
 
@@ -209,6 +212,7 @@ def _refactor(
         skip_trivial_helpers=mode.skip_trivial_helpers,
         cross_module_helpers=mode.cross_module,
         annotate_helpers=mode.types,
+        strict=mode.strict,
         type_oracle=oracle,
         settings=Settings.from_environ({"TOWEL_WORKERS": "1"}),
         file_finisher=scopes,

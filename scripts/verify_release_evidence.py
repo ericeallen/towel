@@ -50,6 +50,9 @@ if not __package__:
 from scripts import ecosystem_check as ecosystem  # noqa: E402
 
 VERSIONS = ("3.11", "3.12", "3.13", "3.14", "3.15")
+STRICT_VERSIONS = ("3.13", "3.15")
+"""Interpreters whose full suite also runs with ``--towel-strict``: the last on which strict
+mode's lifetime proofs are certified, and the newest, on which it declines what they cover."""
 REQUIRED_RECORDS = (
     "source.json",
     "run-matrix.sh",
@@ -62,9 +65,16 @@ REQUIRED_RECORDS = (
     "dependencies-dev.txt",
     "diagrams-command.json",
     "diagrams-writable-cache.log",
-    "fuzz-results.json",
-    "fuzz-grammar.log",
-    "fuzz-scope.log",
+    *(
+        f"{prefix}{name}"
+        for prefix in ("fuzz", "fuzz-strict")
+        for name in ("-results.json", "-grammar.log", "-scope.log")
+    ),
+    *(
+        f"matrix-strict-{version}{name}"
+        for version in STRICT_VERSIONS
+        for name in ("-result.json", ".log")
+    ),
     "wheel-smoke/results.json",
     "self-generation-result.json",
     "selfdogfood/source.json",
@@ -282,6 +292,36 @@ MATRIX_FLAGS = {
 }
 
 
+STRICT_MATRIX_FLAGS = {
+    "UV_LINK_MODE": "hardlink",
+    "bytecode": "on",
+    "pytest": "-q --towel-strict",
+}
+"""How the strict full suites run: without coverage, which the default-mode matrix measures."""
+
+
+def verify_strict_matrix(records: Records, commit: str, runtime: str) -> None:
+    """The full suite with every engine strict unless a test chooses, on each strict version."""
+    for version in STRICT_VERSIONS:
+        row = records.table(f"matrix-strict-{version}-result.json")
+        completed(row)
+        require(
+            row.get("commit") == commit and row.get("runtime_tree") == runtime,
+            f"Strict matrix {version} source mismatch",
+        )
+        require(
+            row.get("python_job") == version and text(row.get("python")).startswith(version + "."),
+            f"Strict matrix {version} interpreter mismatch",
+        )
+        require(row.get("flags") == STRICT_MATRIX_FLAGS, f"Strict matrix {version} flags mismatch")
+        log = records.text(f"matrix-strict-{version}.log")
+        require(
+            decode(log.splitlines()[-1].encode()) == row,
+            f"Strict matrix {version} result/log mismatch",
+        )
+        suite(log)
+
+
 def verify_matrix(records: Records, commit: str, runtime: str, source: Mapping[str, bytes]) -> None:
     driver = records.text("run-matrix.sh")
     commands = set(driver.splitlines())
@@ -437,25 +477,29 @@ def verify_commands(records: Records, version: str) -> None:
         ),
         "Diagram check incomplete",
     )
-    steps = named_steps(records.value("fuzz-results.json"), ("grammar", "scope"), "family")
-    for step in steps:
-        completed(step)
-        arguments = strings(step.get("args"))
-        require("--count" in arguments, "Missing fuzz count")
-        count = int(arguments[arguments.index("--count") + 1])
-        require(
-            count >= 2000 and "--seed" in arguments, "Fuzzing needs 2000 cases and retained seed"
-        )
-        require(
-            bool(
-                re.search(
-                    r"^Done in [\d.]+s: 0 failure\(s\)\.\s*$",
-                    records.text(f"fuzz-{step['family']}.log"),
-                    re.MULTILINE,
-                )
-            ),
-            "Fuzz run incomplete or failed",
-        )
+    # Both families run in both modes: relaxed, the default, and strict.
+    for prefix, strict in (("fuzz", False), ("fuzz-strict", True)):
+        steps = named_steps(records.value(f"{prefix}-results.json"), ("grammar", "scope"), "family")
+        for step in steps:
+            completed(step)
+            arguments = strings(step.get("args"))
+            require("--count" in arguments, "Missing fuzz count")
+            count = int(arguments[arguments.index("--count") + 1])
+            require(
+                count >= 2000 and "--seed" in arguments,
+                "Fuzzing needs 2000 cases and retained seed",
+            )
+            require(("--strict" in arguments) == strict, f"Fuzz run in another mode: {prefix}")
+            require(
+                bool(
+                    re.search(
+                        r"^Done in [\d.]+s: 0 failure\(s\)\.\s*$",
+                        records.text(f"{prefix}-{step['family']}.log"),
+                        re.MULTILINE,
+                    )
+                ),
+                "Fuzz run incomplete or failed",
+            )
 
 
 def archive_files(path: Path) -> dict[str, bytes]:
@@ -1452,6 +1496,7 @@ def verify(
         rebuilt=rebuild is not None,
     )
     verify_matrix(records, commit, runtime, source)
+    verify_strict_matrix(records, commit, runtime)
     verify_commands(records, version)
     verify_smokes(records, wheel, archive, version)
     verify_self(records, commit, source)
