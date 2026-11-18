@@ -27,7 +27,8 @@ is now a site, and shows every command's output.
   something the program can still reach (temporary directories, open files
   and sockets, pools, memory maps, weak references) are kept alive, or the
   block is left alone (`resource_lifetime_unproven`). `--strict`, or
-  `strict = true` under `[tool.towel]`, keeps 1.949's behavior exactly
+  `strict = true` under `[tool.towel]`, keeps 1.949's guarantees, though it
+  extracts some shapes 1.949 did not and declines others
   ([relaxed and strict](https://github.com/ericeallen/towel/blob/v2.0/docs/RELAXED_AND_STRICT.md)).
   The Python API's default is relaxed too: pass `strict=True` to keep 1.949's.
 - **Formatting follows the project.** Inserted code is formatted with Ruff or
@@ -77,9 +78,10 @@ is now a site, and shows every command's output.
   mode also lets a shared helper read builtins and common imports by name and
   take in equal literals, and a run that shares nothing between modules says
   what each pair lacked.
-- Every run reports what it read (`Analysed 2 Python files (4 functions)`),
-  what it skipped, and why it left code alone, in a sentence per reason, with
-  what you can do. In relaxed mode, files that do not parse are skipped with a
+- Every run reports what it read (`Analysed 2 Python files (4 functions)`) and
+  what it skipped. A run that extracts nothing says why, in a sentence per
+  reason, with what you can do; after a run that extracted something,
+  `--explain` lists the pairs it declined. In relaxed mode, files that do not parse are skipped with a
   warning; `--strict` still refuses them.
 - An empty search says when it could not see everything: `No repeated code
   found in the code Towel examined in 12 files.`, then `12 files hold
@@ -114,7 +116,7 @@ is now a site, and shows every command's output.
   `lifetime_order_uncertified`.
 - Python 3.14 and 3.15. Strict mode's lifetime guarantees are certified for
   3.11 to 3.13; on later versions it leaves alone what they cover, so install
-  on 3.13 to use `--strict` (`uv tool install` now picks 3.14 or 3.15).
+  on 3.13 to use `--strict` (`uv tool install --python 3.13 code-towel`).
 
 ### Changed
 

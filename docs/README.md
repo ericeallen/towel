@@ -1,11 +1,7 @@
 # Towel documentation
 
 Towel finds repeated Python code and moves it into a shared helper function,
-replacing each copy with a call. These pages describe Towel 2.0;
-`towel --version` shows the version you have. Versions before 2.0 have no
-relaxed mode (they behave as `--strict` does), no `--check` and no
-`[tool.towel]`; the [releases page](https://github.com/ericeallen/towel/releases)
-has each version's notes.
+replacing each copy with a call.
 
 ```bash
 uv tool install code-towel     # or: pipx install code-towel
@@ -36,7 +32,14 @@ Input files were not changed.
 Two functions checked a form the same way; the helper takes what differed,
 the variable and the shortest name allowed, as arguments. The
 [quick start](QUICKSTART.md) takes you from here to a named, tested change in
-ten minutes.
+ten minutes. This output comes from an install with Black available; the plain
+install prints a different first line.
+
+These pages describe Towel 2.0; `towel --version` shows the version you have.
+Versions before 2.0 have no relaxed mode (they behave as `--strict` does), no
+`--check` and no `[tool.towel]`; the
+[releases page](https://github.com/ericeallen/towel/releases) has each version's
+notes.
 
 ## Getting started
 

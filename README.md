@@ -44,16 +44,7 @@ Would change 1 file(s):
 -        raise ValueError("name is too short")
 -    return save(user)
 +    return __extracted_func_0(user, 2)
-
-
- def register_admin(form):
-     admin = dict(form, role="admin")
--    if not admin.get("name"):
--        raise ValueError("name is required")
--    if len(admin["name"]) < 8:
--        raise ValueError("name is too short")
--    return save(admin)
-+    return __extracted_func_0(admin, 8)
+...
 Input files were not changed.
 ```
 
@@ -72,6 +63,10 @@ towel preview src/             # show what would change; writes nothing
 towel dry src/ src/            # make the change in place: commit your work first
 towel rename-helpers src/ --list   # the helpers to name, and their parameters
 ```
+
+The output above comes from an install with Black available. The plain install
+prints a different first line, saying the code is inserted unformatted; the
+[`format` extra](#install) adds Black.
 
 Giving the input path again as the output, as here, refactors the project in
 place. To keep the original, give `dry` a new directory instead:
@@ -94,6 +89,13 @@ no side effects; and that a module's functions, classes and imports are not
 rebound while a helper runs, as a test's monkeypatch can do. `--strict` makes
 none of these three assumptions. A change that breaks a program meeting these
 conditions is a bug.
+
+Relaxed mode's assumptions reach a little further than that summary. Testing a
+value's truth (`__bool__` or `__len__`) must have no side effects and give the
+same answer twice. Nothing may depend on the `__qualname__` of a lambda that
+uses only its own parameters. With `--cross-module`, code outside the project
+must not rebind a builtin in one module, and equal literals must not be
+compared with `is`. `--strict` assumes none of these.
 
 [Relaxed and strict](https://github.com/ericeallen/towel/blob/v2.0/docs/RELAXED_AND_STRICT.md)
 explains each assumption and when to use `--strict`.
@@ -121,8 +123,8 @@ towel --version
 towel --help
 ```
 
-uv picks the newest Python it can, now 3.14 or 3.15, and downloads one when
-the machine has none. On Python 3.14 and later, `--strict` leaves alone what
+uv chooses a compatible Python by its own rules, which can mean 3.14 or 3.15,
+and downloads one when the machine has none. On Python 3.14 and later, `--strict` leaves alone what
 depends on the order Python frees objects, which CPython 3.14 changed, so it
 extracts less; the default, relaxed mode, is the same on every version. If you
 will use `--strict`, install on 3.13 with

@@ -178,7 +178,7 @@ All code contributions should include tests:
 uv run --frozen pytest -q
 
 # Run specific test file
-uv run --frozen pytest -q tests/test_file.py
+uv run --frozen pytest -q tests/test_readme_links.py
 
 # Run with coverage (pair evaluation forks workers, so each process writes
 # its own data file and `combine` must precede the report)
