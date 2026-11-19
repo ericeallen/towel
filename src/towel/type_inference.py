@@ -73,6 +73,7 @@ from typing import (
     cast,
 )
 
+from .shared_locks import restoring_lock_depth
 from .diagnostics import LOG
 from .mypy_ci_policy import UnsupportedMypyPolicy, declared_mypy_root, mypy_policy
 from .project_tools import ToolChoice, python_tool_environment
@@ -622,7 +623,7 @@ class MypyInferrer:
         used to walk back in the directories ``--exclude`` had left out of the
         baseline, and failed there for every candidate.
         """
-        with self._lock:
+        with restoring_lock_depth(self._lock), self._lock:
             self._run_targets = frozenset(os.path.realpath(path) for path in analyzed)
             self._reporting = {}
             self._group_roots = set()
@@ -666,7 +667,7 @@ class MypyInferrer:
         """Reap the owned worker and remove its cache; safe after partial construction."""
         if self._owner_pid != os.getpid():
             return  # A forked analysis worker never owns its parent's checker.
-        with self._lock:
+        with restoring_lock_depth(self._lock), self._lock:
             self._closed = True
             self._stop_worker()
             if self._stderr is not None:
@@ -686,7 +687,7 @@ class MypyInferrer:
         A cache directory the caller supplied is left alone; a new owned one
         replaces it.
         """
-        with self._lock:
+        with restoring_lock_depth(self._lock), self._lock:
             self._stop_worker()
             if self._cache is not None:
                 self._cache.cleanup()
@@ -756,7 +757,7 @@ class MypyInferrer:
     ) -> _BuildMessages | CheckFailure:
         if self._owner_pid != os.getpid():
             return CheckFailure("Create a new mypy oracle after fork")
-        with self._lock:
+        with restoring_lock_depth(self._lock), self._lock:
             if self._closed:
                 return CheckFailure("mypy oracle is closed")
             if not sources:
@@ -994,7 +995,7 @@ class MypyInferrer:
         reported: set[str] = set()
         groups = _source_groups(sources, "mypy")
         every = {path: text for grouped in groups.values() for path, text in grouped.items()}
-        with self._lock:
+        with restoring_lock_depth(self._lock), self._lock:
             self._group_roots.update(groups)
             known = sorted(self._group_roots)
         for root in known:
@@ -1033,7 +1034,7 @@ class MypyInferrer:
                 if diagnostic is not None
             )
             reported.update(os.path.realpath(path) for path in result.reported)
-        with self._lock:
+        with restoring_lock_depth(self._lock), self._lock:
             for path in every:
                 resolved = os.path.realpath(path)
                 self._reporting.setdefault(resolved, resolved in reported)

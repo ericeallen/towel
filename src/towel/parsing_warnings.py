@@ -28,6 +28,7 @@ import sys
 import threading
 import tokenize
 
+from .shared_locks import restoring_lock_depth
 from .unification.bounded_cache import BoundedCache, memoizing
 
 _POSSIBLE_WARNING = re.compile(r"\\(?:[^\\'\"abfnrtv0-7x\r\n]|[4-7][0-7]{2})|[0-9]\.?[a-zA-Z_]")
@@ -238,7 +239,7 @@ class _LexicalCache:
         max_source_bytes: int = _CACHE_SOURCE_BYTES,
     ) -> None:
         self.pid = os.getpid()
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self._max_source_bytes = max_source_bytes
         self.entries: BoundedCache[str, _Eligibility] = BoundedCache(
             max_entries,
@@ -247,7 +248,7 @@ class _LexicalCache:
         )
 
     def cannot_warn(self, source: str) -> bool:
-        with self.lock:
+        with restoring_lock_depth(self.lock), self.lock:
             known = self.entries.get(source)
         if known is not None:
             return known.cannot_warn
@@ -261,7 +262,7 @@ class _LexicalCache:
             _POSSIBLE_WARNING.search(source) is None or _tokens_cannot_warn(source), source_bytes
         )
         if answer.source_bytes <= self._max_source_bytes:
-            with self.lock:
+            with restoring_lock_depth(self.lock), self.lock:
                 self.entries.put(source, answer)
         return answer.cannot_warn
 

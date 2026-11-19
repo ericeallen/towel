@@ -73,6 +73,7 @@ from typing import (
     cast,
 )
 
+from .shared_locks import restoring_lock_depth
 from .checker_project import UnusableConfiguration, _settings_chain
 from .diagnostics import LOG
 from .source_files import PROBE_PREFIX
@@ -473,9 +474,9 @@ class PyrightSession:
         except OSError as error:
             raise SessionFailure(f"could not start pyright: {error}") from error
         self._next_id = 0
-        self._writing = threading.Lock()
-        self._replies: "queue.Queue[Tuple[int, object]]" = queue.Queue()
-        self._events: "queue.Queue[Tuple[str, object]]" = queue.Queue()
+        self._writing = threading.RLock()
+        self._replies: "queue.SimpleQueue[Tuple[int, object]]" = queue.SimpleQueue()
+        self._events: "queue.SimpleQueue[Tuple[str, object]]" = queue.SimpleQueue()
         # The server states a file's diagnostics once and stays silent about it
         # until they change, so the current picture has to be kept here. A
         # settle that returned only what was said during it would forget every
@@ -487,7 +488,7 @@ class PyrightSession:
         self._closed = False
         # A request that the reader end at its next message boundary, and
         # whether the reader took it (see ``_server_speaks_before_a_stop``).
-        self._stopping = threading.Lock()
+        self._stopping = threading.RLock()
         self._stop_asked = False
         self._stop_taken = False
         self._reader = self._new_reader()
@@ -516,7 +517,7 @@ class PyrightSession:
         """
         raw = json.dumps(payload).encode("utf-8")
         frame = b"Content-Length: %d\r\n\r\n%s" % (len(raw), raw)
-        with self._writing:
+        with restoring_lock_depth(self._writing), self._writing:
             stream = self._process.stdin
             if stream is None or self._process.poll() is not None:
                 raise SessionFailure("pyright exited")
@@ -613,7 +614,7 @@ class PyrightSession:
         if stream is None:
             return True  # The read that follows reports the end of the stream.
         while True:
-            with self._stopping:
+            with restoring_lock_depth(self._stopping), self._stopping:
                 if self._stop_asked:
                     self._stop_asked, self._stop_taken = False, True
                     return False
@@ -625,13 +626,13 @@ class PyrightSession:
         """Ask the reader to end at its next message boundary; the thread, for the caller to join."""
         if self._closed or not self._reader.is_alive():
             return None
-        with self._stopping:
+        with restoring_lock_depth(self._stopping), self._stopping:
             self._stop_asked, self._stop_taken = True, False
         return self._reader
 
     def _resume_reading(self) -> None:
         """After ``_ask_reader_to_end``: a new reader if the old one ended, else the old one carries on."""
-        with self._stopping:
+        with restoring_lock_depth(self._stopping), self._stopping:
             taken = self._stop_taken
             self._stop_asked = self._stop_taken = False
         if taken:

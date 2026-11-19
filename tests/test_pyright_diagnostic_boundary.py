@@ -44,7 +44,7 @@ def session_state(path: Path) -> PyrightSession:
     session._state = {str(path): [Diagnostic(str(path), 2, "error", "known error")]}
     session._marker = pyright_session._Marker()
     session._marker_answered = False
-    session._events = queue.Queue()
+    session._events = queue.SimpleQueue()
     return session
 
 

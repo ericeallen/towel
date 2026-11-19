@@ -352,3 +352,40 @@ def test_a_session_that_cannot_start_leaves_no_process_behind(
     assert started, "no server was started, so this proved nothing"
     for process in started:
         assert process.poll() is not None, "the server outlived the failed constructor"
+
+
+@pytest.mark.skipif(sys.version_info[:2] != (3, 14), reason="3.14 checks signals at lock entry")
+def test_interrupt_at_write_lock_entry_leaves_the_reader_able_to_answer() -> None:
+    """Alarm review C: interrupt the native acquire before 3.14 registers its exit."""
+    from types import FrameType
+
+    session = object.__new__(pyright_session.PyrightSession)
+    session._writing = threading.RLock()
+    previous = sys.getprofile()
+
+    def at_acquisition(frame: FrameType, event: str, function: object) -> None:
+        if (
+            event == "c_return"
+            and getattr(function, "__self__", None) is session._writing
+            and getattr(function, "__name__", None) == "__enter__"
+        ):
+            raise KeyboardInterrupt
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            sys.setprofile(at_acquisition)
+            session._write({})
+    finally:
+        sys.setprofile(previous)
+
+    acquired = threading.Event()
+
+    def reader() -> None:
+        if session._writing.acquire(blocking=False):
+            session._writing.release()
+            acquired.set()
+
+    peer = threading.Thread(target=reader)
+    peer.start()
+    peer.join(timeout=2)
+    assert acquired.is_set(), "the main thread stranded the pyright reader's write lock"

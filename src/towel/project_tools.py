@@ -29,6 +29,8 @@ import time
 import weakref
 from typing import Generic, Literal, Mapping, Optional, TypeVar, cast
 
+from .shared_locks import restoring_lock_depth
+
 T = TypeVar("T")
 
 
@@ -172,7 +174,7 @@ class IsolatedFormatTool:
         """One serialized response, or an explicit tool/protocol failure."""
         if os.getpid() != self._owner:
             raise ToolFailure("Create a new formatter after fork")
-        with self._lock:
+        with restoring_lock_depth(self._lock), self._lock:
             if self._closed:
                 raise ToolFailure("Formatter is closed")
             try:
@@ -206,7 +208,7 @@ class IsolatedFormatTool:
     def close(self) -> None:
         if os.getpid() != self._owner:
             return
-        with self._lock:
+        with restoring_lock_depth(self._lock), self._lock:
             if not self._closed:
                 self._closed = True
                 self._removal()
