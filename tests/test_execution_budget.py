@@ -180,3 +180,28 @@ def test_deadline_at_disarm_cannot_strand_the_signal_handler(
     finally:
         real_setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
+
+
+def test_kernel_alarm_after_a_deadline_poll_cannot_interrupt_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+    from towel import execution_budget
+
+    cleaned = False
+
+    def work() -> None:
+        nonlocal cleaned
+        # The monotonic deadline is visible before the kernel delivers SIGALRM.
+        monkeypatch.setattr(
+            execution_budget, "time", SimpleNamespace(monotonic=lambda: float("inf"))
+        )
+        try:
+            execution_budget.check_budget()
+        finally:
+            signal.raise_signal(signal.SIGALRM)
+            cleaned = True
+
+    with pytest.raises(BudgetExpired):
+        run_with_budget(60, work)
+    assert cleaned

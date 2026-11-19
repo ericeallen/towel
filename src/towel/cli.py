@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from towel.unification.models import RefactoringProposal
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, journals_covering, pending_journal_remedy, recover
-from towel.execution_budget import BudgetExpired, TimerConflict, run_with_budget
+from towel.execution_budget import BudgetExpired, TimerConflict, raise_interrupt, run_with_budget
 from towel.cli_reporting import (
     BindingRecord as BindingRecord,
     CallRecord as CallRecord,
@@ -117,6 +117,7 @@ from towel.unification.defaults import (
 )
 from towel.unification.progress import (
     DEFAULT_PROGRESS,
+    ERASE_LINE,
     ProgressMode,
     normalize_progress,
     open_terminal_output,
@@ -335,6 +336,7 @@ def _exit_interrupted(parser: argparse.ArgumentParser, status: int, message: str
                 except OSError:
                     pass
             parser.exit(status)
+        message = ERASE_LINE + message
     parser.exit(status, message)
 
 
@@ -364,7 +366,7 @@ def _install_signal_handling() -> None:
     them. Standard output is reconfigured so a non-ASCII path or source
     line cannot fail the run under an ASCII locale.
     """
-    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+    signal.signal(signal.SIGTERM, raise_interrupt)
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if reconfigure is not None:
         try:

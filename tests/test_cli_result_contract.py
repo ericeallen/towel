@@ -470,13 +470,15 @@ def test_exit_notice_reaches_stderr_when_the_terminal_cannot_be_reopened(
     with pytest.raises(SystemExit) as raised:
         cli._exit_interrupted(argparse.ArgumentParser(), 130, "Interrupted.\n")
     assert raised.value.code == 130
-    assert capsys.readouterr().err == "Interrupted.\n"
+    assert capsys.readouterr().err == "\r\x1b[2KInterrupted.\n"
 
 
 def _cancel_after_peer_draw(number: int) -> None:
     import threading
     from towel.unification.progress import ProgressRenderer
 
+    inherited_stderr = sys.stderr
+    assert os.get_blocking(2)
     renderer = ProgressRenderer("tqdm", total=10, desc="apply", unit="it")
     peer = threading.Thread(target=renderer.refresh, daemon=True)
     peer.start()
@@ -487,14 +489,23 @@ def _cancel_after_peer_draw(number: int) -> None:
         signal.raise_signal(number)
     finally:
         renderer.close()
+        # Both Python finalizers and native code bypass the progress writer.
+        os.write(2, b"cleanup\n")
+        print("cleanup", file=inherited_stderr, flush=True)
+        sys.stderr.write("finished cleanup\n")
+        sys.stderr.flush()
 
 
 @pytest.mark.parametrize(
     "number, status, termination",
-    [(signal.SIGINT, 130, "interrupted"), (signal.SIGALRM, 124, "time_limit")],
+    [
+        (signal.SIGINT, 130, "interrupted"),
+        (signal.SIGALRM, 124, "time_limit"),
+        (signal.SIGTERM, 143, None),
+    ],
 )
 def test_cancellation_reports_json_while_terminal_output_is_stopped(
-    tmp_path: Path, number: int, status: int, termination: str
+    tmp_path: Path, number: int, status: int, termination: str | None
 ) -> None:
     """Alarm review: the optional terminal notice must not block the exit or the JSON."""
     import pty
@@ -515,7 +526,8 @@ def test_cancellation_reports_json_while_terminal_output_is_stopped(
             "import signal, sys; from towel import cli; n = int(sys.argv.pop(1)); "
             "signal.signal(signal.SIGINT, signal.default_int_handler); "
             "from tests.test_cli_result_contract import _cancel_after_peer_draw; "
-            "cli._dispatch = lambda *_: _cancel_after_peer_draw(n); cli.main()"
+            "cli._dispatch = lambda *_: _cancel_after_peer_draw(n); "
+            "import runpy; runpy.run_module('towel', run_name='__main__')"
         )
         run = subprocess.run(
             [
@@ -537,7 +549,10 @@ def test_cancellation_reports_json_while_terminal_output_is_stopped(
             timeout=5,
         )
         assert run.returncode == status
-        assert json.loads(run.stdout)["termination"] == termination
+        if termination is None:
+            assert run.stdout == ""
+        else:
+            assert json.loads(run.stdout)["termination"] == termination
         assert os.get_blocking(slave)
     finally:
         os.close(master)

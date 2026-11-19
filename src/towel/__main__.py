@@ -14,7 +14,47 @@
 
 """``python -m towel``: the ``towel`` command."""
 
-from towel.cli import main
+import os
+import signal
+import sys
+
+from towel import cli
+from towel.execution_budget import before_interrupt, raise_interrupt
+from towel.unification.progress import open_terminal_output
+
+
+def _prepare_terminal_interrupts() -> None:
+    stream = sys.stderr
+    if stream is not sys.__stderr__ or stream is None or not os.isatty(2):
+        return
+    output = open_terminal_output(stream)
+    if output is None:
+        return
+    try:
+        sink = open(os.devnull, "wb", buffering=0)
+    except OSError:
+        output.close()
+        return
+
+    def switch_terminal() -> None:
+        # Python notices keep their best-effort terminal. Raw fd 2 writers
+        # and saved buffered streams can neither block nor raise EAGAIN
+        # over the cancellation. The shell keeps its original descriptor.
+        os.dup2(sink.fileno(), 2)
+        sys.stderr = output
+
+    # Retain both descriptors through interpreter shutdown. The signal handler
+    # can switch them even if the interrupted operation used the last free fd.
+    before_interrupt.set(switch_terminal)
+    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        signal.signal(signal.SIGINT, raise_interrupt)
+
+
+def main() -> None:
+    """Let terminal diagnostics during cancellation finish even when the terminal stops."""
+    _prepare_terminal_interrupts()
+    cli.main()
+
 
 if __name__ == "__main__":
     main()

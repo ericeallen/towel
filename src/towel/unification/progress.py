@@ -344,7 +344,7 @@ _TQDM_NOTED = False
 
 _DRAWING = threading.RLock()
 _ACTIVE: List["ProgressRenderer"] = []
-_ERASE_LINE = "\r\x1b[2K"
+ERASE_LINE = "\r\x1b[2K"
 
 
 def open_terminal_output(stream: TextIO) -> Optional[io.TextIOWrapper]:
@@ -445,7 +445,7 @@ class ProgressRenderer:
             quietly(self._bar.close)
             self._bar = None
         if self._visible:
-            print(_ERASE_LINE, end="", file=self._output or sys.stderr, flush=True)
+            print(ERASE_LINE, end="", file=self._output or sys.stderr, flush=True)
             self._visible = False
 
     def _draw(self) -> None:
@@ -475,7 +475,7 @@ class ProgressRenderer:
             line = _fit_line(
                 f"{self._desc}: {count} {self._unit} | {elapsed:.1f}m | {detail}", _terminal_width()
             )
-            print(f"{_ERASE_LINE}{line}", end="", file=self._output or sys.stderr, flush=True)
+            print(f"{ERASE_LINE}{line}", end="", file=self._output or sys.stderr, flush=True)
         self._visible = True
 
     def note(self, message: str) -> None:
@@ -543,34 +543,32 @@ class ProgressRenderer:
                 quietly(self._draw)
 
     def close(self) -> None:
+        self._closed = True
+        interruptions = (BudgetExpired, KeyboardInterrupt, SystemExit)
         try:
-            self._close_display()
+            self._heartbeat.stop()
+            if not isinstance(sys.exception(), interruptions):
+                with restoring_lock_depth(_DRAWING), _DRAWING:
+                    quietly(self._clear)
+                    if self in _ACTIVE:
+                        _ACTIVE.remove(self)
+                        if _ACTIVE:
+                            quietly(_ACTIVE[-1]._draw)
         finally:
+            # Cancellation can begin inside stop() or the normal clear. Detach
+            # the bar before closing its stream so the run can safely close again.
+            if isinstance(sys.exception(), interruptions):
+                if self._output is not None and _ACTIVE and _ACTIVE[-1] is self:
+                    with suppress(OSError):
+                        self._output.write(ERASE_LINE)
+                if self._bar is not None and hasattr(self._bar, "disable"):
+                    self._bar.disable = True  # tqdm.__del__ calls close()
+                self._visible = False
+                self._bar = None
+                if self in _ACTIVE:
+                    _ACTIVE.remove(self)
             if self._output is not None:
                 self._output.close()
-
-    def _close_display(self) -> None:
-        self._closed = True
-        self._heartbeat.stop()
-        if isinstance(sys.exc_info()[1], (BudgetExpired, KeyboardInterrupt, SystemExit)):
-            # Even an interrupted first draw may have written part of the line.
-            # Erase it directly on the nonblocking stream, without the drawing lock.
-            if self._output is not None and _ACTIVE and _ACTIVE[-1] is self:
-                with suppress(OSError):
-                    self._output.write(_ERASE_LINE)
-            if self._bar is not None and hasattr(self._bar, "disable"):
-                self._bar.disable = True  # tqdm.__del__ calls close()
-            self._visible = False
-            self._bar = None
-            if self in _ACTIVE:
-                _ACTIVE.remove(self)
-            return
-        with restoring_lock_depth(_DRAWING), _DRAWING:
-            quietly(self._clear)
-            if self in _ACTIVE:
-                _ACTIVE.remove(self)
-                if _ACTIVE:
-                    quietly(_ACTIVE[-1]._draw)
 
 
 def _note_missing_tqdm() -> None:

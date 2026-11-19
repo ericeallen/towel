@@ -362,3 +362,27 @@ def test_interrupted_run_does_not_try_the_stalled_display_again(
             renderer.refresh()
     assert attempts == 1
     assert renderer not in progress._ACTIVE
+
+
+def test_deadline_during_close_preserves_the_exception_and_erases_the_bar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import signal
+    from towel.execution_budget import run_with_budget
+
+    with terminal() as (stream, master), contextlib.redirect_stderr(stream):
+        with pytest.raises(BudgetExpired), progress.progress_run():
+            renderer = ProgressRenderer("tqdm", total=3, desc="apply", unit="it")
+            renderer.update()
+            assert "apply" in read_terminal(master)
+            stop = renderer._heartbeat.stop
+
+            def expire() -> None:
+                monkeypatch.setattr(renderer._heartbeat, "stop", stop)
+                signal.raise_signal(signal.SIGALRM)
+
+            monkeypatch.setattr(renderer._heartbeat, "stop", expire)
+            run_with_budget(60, renderer.close)
+
+        assert renderer not in progress._ACTIVE
+        assert read_terminal(master).endswith("\r\x1b[2K")

@@ -24,7 +24,7 @@ import signal
 import time
 import threading
 from types import FrameType
-from typing import Callable, Iterator
+from typing import Callable, Iterator, NoReturn
 
 
 class TimerConflict(ValueError):
@@ -44,9 +44,34 @@ class _Budget:
     owner: int
     deadline: float
     abandoned: bool = False
+    expiry_delivered: bool = False
 
 
 _active: ContextVar[_Budget | None] = ContextVar("towel_execution_budget", default=None)
+
+
+# The standalone CLI can switch its terminal to best-effort output before
+# unwinding. Library calls keep their caller's signal and stream semantics.
+before_interrupt: ContextVar[Callable[[], None] | None] = ContextVar(
+    "towel_before_interrupt", default=None
+)
+
+
+def raise_interrupt(signum: int, frame: FrameType | None = None) -> NoReturn:
+    if signum == signal.SIGALRM:
+        budget = _current_budget()
+        if budget is not None:
+            # A poll can beat delivery of the kernel timer. Its pending
+            # SIGALRM must not interrupt the same deadline's cleanup.
+            budget.expiry_delivered = True
+    prepare = before_interrupt.get()
+    if prepare is not None:
+        prepare()
+    if signum == signal.SIGALRM:
+        raise BudgetExpired()
+    if signum == signal.SIGINT:
+        raise KeyboardInterrupt()
+    raise SystemExit(128 + signum)
 
 
 def _current_budget() -> _Budget | None:
@@ -56,8 +81,8 @@ def _current_budget() -> _Budget | None:
 
 def _expire(signum: int, frame: FrameType | None) -> None:
     budget = _current_budget()
-    if budget is not None and os.getpid() == budget.owner:
-        raise BudgetExpired()
+    if budget is not None and os.getpid() == budget.owner and not budget.expiry_delivered:
+        raise_interrupt(signal.SIGALRM)
 
 
 def run_with_budget(seconds: float | None, action: Callable[[], None]) -> None:
@@ -102,14 +127,14 @@ def finish_before_publication() -> None:
         return
     signal.setitimer(signal.ITIMER_REAL, 0)
     if time.monotonic() >= budget.deadline:
-        raise BudgetExpired()
+        raise_interrupt(signal.SIGALRM)
 
 
 def check_budget() -> None:
     """Poll the owner's deadline between units of work, even with its alarm deferred."""
     budget = _current_budget()
     if budget is not None and os.getpid() == budget.owner and time.monotonic() >= budget.deadline:
-        raise BudgetExpired()
+        raise_interrupt(signal.SIGALRM)
 
 
 @contextmanager
@@ -127,11 +152,7 @@ def polling_interrupts() -> Iterator[Callable[[], None]]:
 
     def check() -> None:
         if pending:
-            if pending[0] == signal.SIGINT:
-                raise KeyboardInterrupt()
-            if pending[0] == signal.SIGALRM:
-                raise BudgetExpired()
-            raise SystemExit(128 + pending[0])
+            raise_interrupt(pending[0])
         check_budget()
 
     if threading.current_thread() is not threading.main_thread():
