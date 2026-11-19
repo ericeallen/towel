@@ -124,39 +124,42 @@ class TestComprehensionBindings(unittest.TestCase):
         """Verify test_examples file was never modified."""
         assert_file_not_modified(self.example_path, self.original_content)
 
-    def test_list_comprehension_variables(self):
-        """Test that list comprehension variables are recognized as bindings."""
-        proposals = self.engine.analyze_file(str(self.example_path))
-
-        # Find list comprehension proposals
-        list_comp = [p for p in proposals if "list_comp" in p.description.lower()]
+    def _check_comprehension(self, prefix: str, items: object) -> None:
+        path = str(self.example_path)
+        functions = (f"{prefix}_a", f"{prefix}_b")
+        (proposal,) = (
+            p
+            for p in self.engine.analyze_file(path)
+            if p.description == f"Extract common code from {functions[0]} and {functions[1]}"
+        )
         if not lifetime_order_certified():
-            self.assertFalse(list_comp)
+            # Both callers keep the assignment and return. Only its RHS moves.
+            self.assertEqual(len(proposal.replacements), 2)
+            self.assertTrue(all(site.expression is not None for site in proposal.replacements))
             self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
-            return
-        self.assertGreater(len(list_comp), 0, "Should find list comprehension duplicates")
+
+        def evaluate(source: str) -> list[object]:
+            namespace: dict[str, object] = {}
+            exec(source, namespace)
+            results: list[object] = []
+            for name in functions:
+                function = namespace[name]
+                assert callable(function)
+                results.append(function(items))
+            return results
+
+        rendered = self.engine.apply_refactoring(path, proposal)
+        self.assertNotEqual(rendered, self.original_content)
+        self.assertEqual(evaluate(rendered), evaluate(self.original_content))
+
+    def test_list_comprehension_variables(self):
+        self._check_comprehension("list_comp", [2, -1, 0, 3])
 
     def test_dict_comprehension_variables(self):
-        """Test dict comprehension variable binding."""
-        proposals = self.engine.analyze_file(str(self.example_path))
-
-        dict_comp = [p for p in proposals if "dict_comp" in p.description.lower()]
-        if not lifetime_order_certified():
-            self.assertFalse(dict_comp)
-            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
-            return
-        self.assertGreater(len(dict_comp), 0, "Should find dict comprehension duplicates")
+        self._check_comprehension("dict_comp", [("a", 2), ("b", -1), ("a", 3)])
 
     def test_nested_comprehensions(self):
-        """Test nested comprehension variables."""
-        proposals = self.engine.analyze_file(str(self.example_path))
-
-        nested = [p for p in proposals if "nested_comp" in p.description.lower()]
-        if not lifetime_order_certified():
-            self.assertFalse(nested)
-            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
-            return
-        self.assertGreater(len(nested), 0, "Should find nested comprehension duplicates")
+        self._check_comprehension("nested_comp", [[1, 2], [], [3]])
 
     def test_generator_expressions(self):
         """Test generator expression variables."""
