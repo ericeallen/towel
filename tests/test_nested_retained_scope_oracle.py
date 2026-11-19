@@ -344,14 +344,39 @@ def _retained_handler(loop: bool) -> tuple[str, str]:
     return caller(block), helper + caller("_towel_keep_owner = __extracted_func_0()\n")
 
 
+def _run_handler_case(source: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run([sys.executable, "-I", "-c", source], capture_output=True, timeout=10)
+
+
+@pytest.mark.parametrize("loop", [True, False], ids=["moved-try", "renamed-handler"])
+def test_handler_keep_holds_the_producer_through_the_caller_return(loop: bool) -> None:
+    """The return expression runs while the owner is alive, even after a caught exception."""
+    preamble = (
+        "released = []\n" "class Owner:\n" "    def __del__(self): released.append('released')\n"
+    )
+    before, after = (
+        preamble
+        + source.replace("owner = 37", "owner = Owner()")
+        .replace("raise ValueError(owner)", "raise ValueError(37)")
+        .replace("return 0", "return released.copy()")
+        for source in _retained_handler(loop)
+    )
+    lost = after.replace("return owner", "return None")
+    for source, expected in [(before, b"[]"), (after, b"[]"), (lost, b"['released']")]:
+        observed = _run_handler_case(source)
+        assert observed.returncode == 0 and observed.stdout.splitlines()[-1] == expected
+    assert scope_changes(before, after) == {}
+    assert scope_changes(before, lost) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
 @pytest.mark.parametrize("loop", [True, False], ids=["moved-try", "renamed-handler"])
 def test_retained_handler_requires_an_unread_keep_local(loop: bool) -> None:
     before, after = _retained_handler(loop)
 
     def output(source: str) -> bytes:
-        return subprocess.run(
-            [sys.executable, "-c", source], check=True, capture_output=True, timeout=10
-        ).stdout
+        result = _run_handler_case(source)
+        result.check_returncode()
+        return result.stdout
 
     assert scope_changes(before, after) == {}
     assert output(before) == output(after)
@@ -380,8 +405,7 @@ def test_moved_loop_handler_cannot_return_an_unbound_local(change: str) -> None:
     after = after.replace("return owner", "return " + name).replace(
         "_towel_keep_owner", "_towel_keep_" + name
     )
-    original = subprocess.run([sys.executable, "-c", before], capture_output=True, timeout=10)
-    changed = subprocess.run([sys.executable, "-c", after], capture_output=True, timeout=10)
+    original, changed = map(_run_handler_case, (before, after))
     assert original.returncode == 0
     assert changed.returncode != 0 and b"UnboundLocalError" in changed.stderr
     assert scope_changes(before, after) == {"f#0": [f"gains local _towel_keep_{name}"]}
@@ -431,16 +455,102 @@ def test_moved_handler_must_not_change_a_caller_local(live: str) -> None:
         return source.replace("return 0", f"return {live}")
 
     before, after = (observe_local(source) for source in _retained_handler(True))
-    original, changed = (
-        subprocess.run([sys.executable, "-c", source], capture_output=True, timeout=10)
-        for source in (before, after)
-    )
+    original, changed = map(_run_handler_case, (before, after))
     assert changed.returncode == 0 and changed.stdout.endswith(b"11\n")
     if live == "caught":
         assert original.returncode != 0 and b"UnboundLocalError" in original.stderr
     else:
         assert original.returncode == 0 and original.stdout.endswith(b"37\n")
     assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
+@pytest.mark.parametrize("loop", [True, False], ids=["moved-try", "renamed-handler"])
+def test_handler_retention_cannot_hide_an_observed_frame(loop: bool) -> None:
+    """Both release shapes must report a binding visible through locals()."""
+    before, after = (
+        s.replace("return 0", "return sorted(locals())") for s in _retained_handler(loop)
+    )
+    old, new = map(_run_handler_case, (before, after))
+    assert old.returncode == new.returncode == 0
+    assert old.stdout.endswith(b"['owner']\n") and new.stdout.endswith(b"['_towel_keep_owner']\n")
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
+@pytest.mark.parametrize("loop", [True, False], ids=["moved-try", "renamed-handler"])
+def test_handler_input_must_be_bound_at_the_call(loop: bool) -> None:
+    """An input used only on the try's untaken path cannot be loaded eagerly."""
+    before, after = _retained_handler(loop)
+    before, after = (
+        s.replace("def f():\n", "def f():\n    if False: missing = 5\n").replace(
+            "raise ValueError(owner)", "raise ValueError(owner if owner else missing)"
+        )
+        for s in (before, after)
+    )
+    after = after.replace("__extracted_func_0()", "__extracted_func_0(missing)")
+    old, new = map(_run_handler_case, (before, after))
+    assert old.returncode == 0 and new.returncode != 0 and b"UnboundLocalError" in new.stderr
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
+def test_renamed_handler_cannot_hide_cleanup_of_a_prebound_target() -> None:
+    """The original handler clears the caller's old target even when the helper renames it."""
+    before, after = (
+        s.replace("def f():\n", "def f():\n    caught = 11\n").replace("return 0", "return caught")
+        for s in _retained_handler(False)
+    )
+    old, new = map(_run_handler_case, (before, after))
+    assert old.returncode != 0 and b"UnboundLocalError" in old.stderr
+    assert new.returncode == 0 and new.stdout.endswith(b"11\n")
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement"),
+    [
+        ("owner = 37", "if False: owner = 37"),
+        ("raise ValueError(owner)", "return 9"),
+        ("print('finished')", "try: raise KeyError()\n        except KeyError as owner: pass"),
+        ("print('finished')", "del owner"),
+        ("print(type(", 'print("before", type('),
+    ],
+    ids=["unbound", "early-return", "nested-cleanup", "deleted", "report-label"],
+)
+def test_renamed_handler_preserves_exit_and_report(original: str, replacement: str) -> None:
+    """A handler exemption must preserve the caller's exit and the exception it reports."""
+    before, after = (s.replace(original, replacement) for s in _retained_handler(False))
+    if original == "owner = 37":
+        before, after = (
+            s.replace("raise ValueError(owner)", "raise ValueError(1)") for s in (before, after)
+        )
+    if original == "print(type(":
+        after = after.replace('"before"', '"after"')
+    old, new = map(_run_handler_case, (before, after))
+    assert old.returncode == 0
+    if new.returncode:
+        assert b"UnboundLocalError" in new.stderr
+    else:
+        assert old.stdout != new.stdout
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
+def test_pattern_capture_cannot_overwrite_the_renamed_producer() -> None:
+    """The spelling of a capture is a store even though the AST represents it as a string."""
+    before, after = _retained_handler(False)
+    before = before.replace("owner", "source_owner")
+    after = after.replace("_towel_keep_owner", "_towel_keep_source_owner")
+    preamble = "class Value:\n    def __del__(self): print('released')\n"
+    before, after = (
+        preamble
+        + source.replace("= 37", "= Value()")
+        .replace("print('finished')", "pass\n    match 4:\n        case owner: print('captured')")
+        .replace("return 0", "return print('done')")
+        for source in (before, after)
+    )
+    old, new = map(_run_handler_case, (before, after))
+    assert old.returncode == new.returncode == 0
+    assert old.stdout.endswith(b"captured\ndone\nreleased\nNone\n")
+    assert new.stdout.endswith(b"released\ncaptured\ndone\nNone\n")
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_source_owner"]}
 
 
 def test_renamed_producer_cannot_read_its_own_uninitialized_value() -> None:
@@ -576,6 +686,7 @@ def test_uncompilable_standalone_nonlocal_helper_declines_correspondence() -> No
             frozenset({"v1"}),
             frozenset({"a", "b", "c", "k0", "o", "outside"}),
             caller=original,
+            module=before,
         )
         == {}
     )
