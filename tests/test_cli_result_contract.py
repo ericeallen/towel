@@ -459,3 +459,74 @@ def test_explain_locates_declined_blocks_in_sentences(tmp_path: Path) -> None:
     assert str(tmp_path) not in result.stdout
     ordinary = invoke(["preview", str(source), *FLAGS])
     assert "REJECT[" not in ordinary.stderr
+
+
+def _cancel_after_peer_draw(number: int) -> None:
+    import threading
+    from towel.unification.progress import ProgressRenderer
+
+    renderer = ProgressRenderer("tqdm", total=10, desc="apply", unit="it")
+    peer = threading.Thread(target=renderer.refresh, daemon=True)
+    peer.start()
+    peer.join(timeout=2)
+    assert not peer.is_alive(), "a full terminal blocked the drawing thread"
+    assert renderer._bar is not None, "the draw did not reach tqdm"
+    try:
+        signal.raise_signal(number)
+    finally:
+        renderer.close()
+
+
+@pytest.mark.parametrize(
+    "number, status, termination",
+    [(signal.SIGINT, 130, "interrupted"), (signal.SIGALRM, 124, "time_limit")],
+)
+def test_cancellation_reports_json_while_terminal_output_is_stopped(
+    tmp_path: Path, number: int, status: int, termination: str
+) -> None:
+    """Alarm review: the optional terminal notice must not block the exit or the JSON."""
+    import pty
+    import termios
+
+    source = _source(tmp_path)
+    master, slave = pty.openpty()
+    try:
+        termios.tcflow(slave, termios.TCOOFF)
+        fill = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+        try:
+            with pytest.raises(BlockingIOError):
+                while True:
+                    os.write(fill, b"." * 8192)
+        finally:
+            os.close(fill)
+        script = (
+            "import signal, sys; from towel import cli; n = int(sys.argv.pop(1)); "
+            "signal.signal(signal.SIGINT, signal.default_int_handler); "
+            "from tests.test_cli_result_contract import _cancel_after_peer_draw; "
+            "cli._dispatch = lambda *_: _cancel_after_peer_draw(n); cli.main()"
+        )
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(number),
+                "preview",
+                str(source),
+                "--time-limit",
+                "3600",
+                "--json",
+                *FLAGS,
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            stderr=slave,
+            stdout=subprocess.PIPE,
+            text=True,
+            timeout=5,
+        )
+        assert run.returncode == status
+        assert json.loads(run.stdout)["termination"] == termination
+        assert os.get_blocking(slave)
+    finally:
+        os.close(master)
+        os.close(slave)

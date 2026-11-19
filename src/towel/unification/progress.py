@@ -26,14 +26,27 @@ import sys
 import os
 import unicodedata
 import importlib
+import io
 import queue
 import threading
 import time
-from functools import lru_cache
+from functools import lru_cache, partial
 from weakref import WeakSet
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Callable, Iterator, List, Literal, Mapping, Optional, Protocol, Set, Tuple, cast
+from typing import (
+    Callable,
+    Iterator,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Protocol,
+    Set,
+    TextIO,
+    Tuple,
+    cast,
+)
 
 from ..execution_budget import BudgetExpired
 from ..shared_locks import restoring_lock_depth
@@ -333,6 +346,21 @@ _DRAWING = threading.RLock()
 _ACTIVE: List["ProgressRenderer"] = []
 
 
+def open_terminal_output(stream: TextIO) -> Optional[io.TextIOWrapper]:
+    """A write-through view of this terminal that can drop a frame when it is full."""
+
+    def open_nonblocking(path: str, flags: int) -> int:
+        # A new open file description keeps O_NONBLOCK off the user's stderr.
+        return os.open(path, os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+
+    try:
+        terminal = os.ttyname(stream.fileno())
+        raw = io.FileIO(terminal, "w", opener=open_nonblocking)
+    except (AttributeError, OSError, ValueError):
+        return None
+    return io.TextIOWrapper(raw, encoding=stream.encoding, errors=stream.errors, write_through=True)
+
+
 def _terminal_width() -> int:
     try:
         return max(1, os.get_terminal_size(sys.stderr.fileno()).columns - 1)
@@ -385,6 +413,12 @@ class ProgressRenderer:
             self._factory = factory or (run.factory() if run is not None else load_tqdm())
             if mode == "tqdm" and self._factory is None:
                 _note_missing_tqdm()
+        self._output = open_terminal_output(sys.stderr) if self._enabled else None
+        if self._output is not None and factory is None and self._factory is not None:
+            # Installed tqdm also accepts file; caller-supplied factories
+            # keep the narrower ProgressBarFactory signature.
+            native = cast(Callable[..., ProgressBar], self._factory)
+            self._factory = partial(native, file=self._output)
         self._total = total
         self._desc = desc
         self._unit = unit
@@ -410,7 +444,7 @@ class ProgressRenderer:
             quietly(self._bar.close)
             self._bar = None
         if self._visible:
-            print("\r\x1b[2K", end="", file=sys.stderr, flush=True)
+            print("\r\x1b[2K", end="", file=self._output or sys.stderr, flush=True)
             self._visible = False
 
     def _draw(self) -> None:
@@ -440,7 +474,7 @@ class ProgressRenderer:
             line = _fit_line(
                 f"{self._desc}: {count} {self._unit} | {elapsed:.1f}m | {detail}", _terminal_width()
             )
-            print(f"\r\x1b[2K{line}", end="", file=sys.stderr, flush=True)
+            print(f"\r\x1b[2K{line}", end="", file=self._output or sys.stderr, flush=True)
         self._visible = True
 
     def note(self, message: str) -> None:
@@ -508,6 +542,13 @@ class ProgressRenderer:
                 quietly(self._draw)
 
     def close(self) -> None:
+        try:
+            self._close_display()
+        finally:
+            if self._output is not None:
+                self._output.close()
+
+    def _close_display(self) -> None:
         self._closed = True
         self._heartbeat.stop()
         if isinstance(sys.exc_info()[1], (BudgetExpired, KeyboardInterrupt, SystemExit)):

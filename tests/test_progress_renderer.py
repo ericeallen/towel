@@ -314,12 +314,17 @@ def test_signal_leaves_drawing_locks_available_to_the_heartbeat(signal_name: str
     """Alarm review: one signal inside tqdm must unwind the draw and let a peer redraw."""
     import subprocess
     import sys
+    from pathlib import Path
 
     # A broken implementation can leave the heartbeat and the backend locked
     # even during interpreter shutdown. Isolate both and bound the whole run.
     script = "from tests.test_progress_renderer import _interrupt_tqdm; import sys; _interrupt_tqdm(sys.argv[1])"
     run = subprocess.run(
-        [sys.executable, "-c", script, signal_name], capture_output=True, text=True, timeout=10
+        [sys.executable, "-c", script, signal_name],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert run.returncode == 0, run.stderr
 
