@@ -164,6 +164,24 @@ def test_single_pass_release_seed_extracts_and_keeps_its_behavior(tmp_path: Path
     assert outcome.applied > 0
 
 
+@pytest.mark.parametrize("bindings", [False, True], ids=["grammar", "bindings"])
+@pytest.mark.parametrize("cross_module", [False, True], ids=["default", "cross-module"])
+def test_strict_loop_retention_release_seed(
+    tmp_path: Path, bindings: bool, cross_module: bool
+) -> None:
+    case = generate_case(40945450810840994977109553106, bindings=bindings)
+    outcome = run_case(case, Mode(strict=True, cross_module=cross_module), tmp_path)
+    assert outcome.status == "equivalent", outcome.report()
+    assert "_towel_keep_v2 =" in outcome.refactoring
+
+
+def test_strict_handler_retention_release_seed(tmp_path: Path) -> None:
+    case = generate_case(40945450810840994977109553280, typed=True)
+    outcome = run_case(case, Mode(strict=True, types=True), tmp_path)
+    assert outcome.status == "equivalent", outcome.report()
+    assert "_towel_keep_v1_1 =" in outcome.refactoring
+
+
 def _seeds(mode: Mode, seeds: Iterable[int]) -> List[ParameterSet]:
     """``seeds`` and the mode's regression seeds, each named ``seed<N>``, known defects expected."""
     return with_known_defects(

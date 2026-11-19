@@ -21,6 +21,7 @@ import ast
 from pathlib import Path
 import subprocess
 import sys
+from textwrap import indent
 
 import pytest
 
@@ -324,6 +325,103 @@ def test_extraction_cannot_hide_an_unproved_original_loop_suite() -> None:
     assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
 
 
+def _retained_handler(loop: bool) -> tuple[str, str]:
+    block = (
+        "owner = 37\n"
+        "try:\n    raise ValueError(owner)\n"
+        "except ValueError as caught:\n    print(type(caught).__name__, caught)\n"
+    )
+    block += "else:\n    print('ok')\n" if loop else "finally:\n    print('finished')\n"
+
+    def caller(body: str) -> str:
+        body += "return 0\n"
+        if loop:
+            body = "while True:\n" + indent(body + "break\n", "    ")
+        return "def f():\n" + indent(body, "    ") + "print(f())\n"
+
+    moved = block if loop else block.replace("caught", "error")
+    helper = "def __extracted_func_0():\n" + indent(moved + "return owner\n", "    ")
+    return caller(block), helper + caller("_towel_keep_owner = __extracted_func_0()\n")
+
+
+@pytest.mark.parametrize("loop", [True, False], ids=["moved-try", "renamed-handler"])
+def test_retained_handler_requires_an_unread_keep_local(loop: bool) -> None:
+    before, after = _retained_handler(loop)
+
+    def output(source: str) -> bytes:
+        return subprocess.run(
+            [sys.executable, "-c", source], check=True, capture_output=True, timeout=10
+        ).stdout
+
+    assert scope_changes(before, after) == {}
+    assert output(before) == output(after)
+    read = after.replace("return 0", "return _towel_keep_owner")
+    assert output(before) != output(read)
+    assert scope_changes(before, read) == {"f#0": ["gains local _towel_keep_owner"]}
+    ordinary = after.replace("_towel_keep_owner", "unused")
+    assert output(before) == output(ordinary)
+    assert scope_changes(before, ordinary) == {"f#0": ["gains local unused"]}
+    unpack = after.replace("_towel_keep_owner =", "_towel_keep_owner, =")
+    assert scope_changes(before, unpack) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
+@pytest.mark.parametrize("change", ["cleared-exception", "conditional-store", "deleted-owner"])
+def test_moved_loop_handler_cannot_return_an_unbound_local(change: str) -> None:
+    before, after = _retained_handler(True)
+    name = "owner"
+    if change == "cleared-exception":
+        name = "caught"
+    elif change == "conditional-store":
+        name = "other"
+        before, after = (source.replace("print('ok')", "other = 5") for source in (before, after))
+    else:
+        report = "print(type(caught).__name__, caught)"
+        before, after = (source.replace(report, "del owner") for source in (before, after))
+    after = after.replace("return owner", "return " + name).replace(
+        "_towel_keep_owner", "_towel_keep_" + name
+    )
+    original = subprocess.run([sys.executable, "-c", before], capture_output=True, timeout=10)
+    changed = subprocess.run([sys.executable, "-c", after], capture_output=True, timeout=10)
+    assert original.returncode == 0
+    assert changed.returncode != 0 and b"UnboundLocalError" in changed.stderr
+    assert scope_changes(before, after) == {"f#0": [f"gains local _towel_keep_{name}"]}
+
+
+@pytest.mark.parametrize("change", ["wrong-filter", "wrong-handler-read", "cleared-name-read"])
+def test_renamed_exception_must_keep_its_binding_and_handler(change: str) -> None:
+    before, after = _retained_handler(False)
+    if change == "wrong-filter":
+        after = after.replace("except ValueError", "except TypeError")
+    elif change == "wrong-handler-read":
+        after = after.replace("type(error).__name__, error", "type(error).__name__, owner")
+    else:
+        before = before.replace("print('finished')", "print(caught)")
+        after = after.replace("print('finished')", "print(error)")
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement"),
+    [
+        ("print(type(caught).__name__, caught)", "return owner"),
+        ("print(type(caught).__name__, caught)", "for item in (): pass"),
+        ("else:", "finally:"),
+        ("except ValueError", "except* ValueError"),
+    ],
+)
+def test_moved_loop_handler_excludes_other_control_flow(original: str, replacement: str) -> None:
+    before, after = _retained_handler(True)
+    before, after = (source.replace(original, replacement) for source in (before, after))
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
+def test_try_left_in_the_loop_does_not_certify_retention() -> None:
+    before = _retained_handler(True)[0].replace("raise ValueError(owner)", "raise ValueError(37)")
+    helper = "def __extracted_func_0():\n    owner = 37\n    return owner\n"
+    after = helper + before.replace("owner = 37", "_towel_keep_owner = __extracted_func_0()")
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
 def _comprehension_shadow() -> tuple[str, str]:
     return (
         (_FIXTURES / "scope_retained_comprehension_shadow_before.py.txt").read_text(),
@@ -447,6 +545,7 @@ def test_uncompilable_standalone_nonlocal_helper_declines_correspondence() -> No
             helper,
             frozenset({"v1"}),
             frozenset({"a", "b", "c", "k0", "o", "outside"}),
+            caller=original,
         )
         == {}
     )
