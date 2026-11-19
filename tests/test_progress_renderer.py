@@ -27,6 +27,7 @@ from typing import Iterator
 
 import pytest
 
+from towel.execution_budget import BudgetExpired
 from towel.unification import progress
 from towel.unification.progress import ProgressRenderer
 
@@ -255,7 +256,6 @@ def test_interrupted_heartbeat_start_does_not_break_run_cleanup(
 ) -> None:
     """Integration 8: a time limit before the thread starts still closes the renderer."""
     import threading
-    from towel.execution_budget import BudgetExpired
 
     def expire(thread: threading.Thread) -> None:
         raise BudgetExpired()
@@ -276,7 +276,7 @@ def _interrupt_tqdm(signal_name: str) -> None:
     import signal
     import threading
     from towel.cli import _install_signal_handling
-    from towel.execution_budget import BudgetExpired, run_with_budget
+    from towel.execution_budget import run_with_budget
 
     signum = getattr(signal, signal_name)
     signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -327,6 +327,17 @@ def test_signal_leaves_drawing_locks_available_to_the_heartbeat(signal_name: str
         timeout=10,
     )
     assert run.returncode == 0, run.stderr
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit, BudgetExpired])
+def test_cancellation_clears_the_visible_bar(interruption: type[BaseException]) -> None:
+    with terminal(80) as (stream, master), contextlib.redirect_stderr(stream):
+        with pytest.raises(interruption), progress.progress_run():
+            renderer = ProgressRenderer("tqdm", total=3, desc="apply", unit="it")
+            renderer.update()
+            assert "apply" in read_terminal(master)
+            raise interruption()
+        assert read_terminal(master).endswith("\r\x1b[2K")
 
 
 def test_interrupted_run_does_not_try_the_stalled_display_again(

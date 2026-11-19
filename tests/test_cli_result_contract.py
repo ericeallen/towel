@@ -14,6 +14,7 @@
 
 """Results can be consumed without parsing prose or mistaking cancellation for success."""
 
+import argparse
 import json
 import os
 import signal
@@ -459,6 +460,17 @@ def test_explain_locates_declined_blocks_in_sentences(tmp_path: Path) -> None:
     assert str(tmp_path) not in result.stdout
     ordinary = invoke(["preview", str(source), *FLAGS])
     assert "REJECT[" not in ordinary.stderr
+
+
+def test_exit_notice_reaches_stderr_when_the_terminal_cannot_be_reopened(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "open_terminal_output", lambda stream: None)
+    with pytest.raises(SystemExit) as raised:
+        cli._exit_interrupted(argparse.ArgumentParser(), 130, "Interrupted.\n")
+    assert raised.value.code == 130
+    assert capsys.readouterr().err == "Interrupted.\n"
 
 
 def _cancel_after_peer_draw(number: int) -> None:

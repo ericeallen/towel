@@ -32,7 +32,7 @@ import threading
 import time
 from functools import lru_cache, partial
 from weakref import WeakSet
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from typing import (
     Callable,
@@ -344,6 +344,7 @@ _TQDM_NOTED = False
 
 _DRAWING = threading.RLock()
 _ACTIVE: List["ProgressRenderer"] = []
+_ERASE_LINE = "\r\x1b[2K"
 
 
 def open_terminal_output(stream: TextIO) -> Optional[io.TextIOWrapper]:
@@ -444,7 +445,7 @@ class ProgressRenderer:
             quietly(self._bar.close)
             self._bar = None
         if self._visible:
-            print("\r\x1b[2K", end="", file=self._output or sys.stderr, flush=True)
+            print(_ERASE_LINE, end="", file=self._output or sys.stderr, flush=True)
             self._visible = False
 
     def _draw(self) -> None:
@@ -474,7 +475,7 @@ class ProgressRenderer:
             line = _fit_line(
                 f"{self._desc}: {count} {self._unit} | {elapsed:.1f}m | {detail}", _terminal_width()
             )
-            print(f"\r\x1b[2K{line}", end="", file=self._output or sys.stderr, flush=True)
+            print(f"{_ERASE_LINE}{line}", end="", file=self._output or sys.stderr, flush=True)
         self._visible = True
 
     def note(self, message: str) -> None:
@@ -552,8 +553,11 @@ class ProgressRenderer:
         self._closed = True
         self._heartbeat.stop()
         if isinstance(sys.exc_info()[1], (BudgetExpired, KeyboardInterrupt, SystemExit)):
-            # A heartbeat may still be stuck in terminal I/O. Cleanup must
-            # neither wait for its lock nor repaint the same stalled terminal.
+            # Even an interrupted first draw may have written part of the line.
+            # Erase it directly on the nonblocking stream, without the drawing lock.
+            if self._output is not None and _ACTIVE and _ACTIVE[-1] is self:
+                with suppress(OSError):
+                    self._output.write(_ERASE_LINE)
             if self._bar is not None and hasattr(self._bar, "disable"):
                 self._bar.disable = True  # tqdm.__del__ calls close()
             self._visible = False

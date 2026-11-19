@@ -334,7 +334,7 @@ def _exit_interrupted(parser: argparse.ArgumentParser, status: int, message: str
                     output.write(message)
                 except OSError:
                     pass
-        parser.exit(status)
+            parser.exit(status)
     parser.exit(status, message)
 
 
