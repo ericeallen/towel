@@ -26,11 +26,30 @@ import sys
 import os
 import unicodedata
 import importlib
+import io
+import queue
 import threading
 import time
-from contextlib import contextmanager
+from functools import lru_cache, partial
+from weakref import WeakSet
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
-from typing import Callable, Iterator, List, Literal, Mapping, Optional, Protocol, Set, Tuple, cast
+from typing import (
+    Callable,
+    Iterator,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Protocol,
+    Set,
+    TextIO,
+    Tuple,
+    cast,
+)
+
+from ..execution_budget import BudgetExpired
+from ..shared_locks import restoring_lock_depth
 
 ProgressMode = Literal["auto", "tqdm", "none", "detail"]
 """How a run reports progress: tqdm bars, tqdm with an inline fallback, nothing, or per-phase detail."""
@@ -93,6 +112,19 @@ class ProgressBarFactory(Protocol):  # pragma: no cover - protocol bodies are ne
         ...
 
 
+@lru_cache(maxsize=1)
+def _towel_bar(backend: type[object]) -> ProgressBarFactory:
+    # All Towel draws already hold _DRAWING. Give tqdm the same recoverable
+    # lock and its own instance registry, leaving other applications' bars
+    # alone. Our heartbeat redraws these bars; no tqdm monitor is needed.
+    bar = type(
+        "TowelProgressBar",
+        (backend,),
+        {"_lock": _DRAWING, "_instances": WeakSet(), "monitor_interval": 0},
+    )
+    return cast(ProgressBarFactory, bar)
+
+
 def load_tqdm() -> Optional[ProgressBarFactory]:
     """Return ``tqdm.auto.tqdm`` if tqdm is installed, else ``None``.
 
@@ -101,7 +133,7 @@ def load_tqdm() -> Optional[ProgressBarFactory]:
     """
     try:
         module = importlib.import_module("tqdm.auto")
-        return cast(ProgressBarFactory, getattr(module, "tqdm"))
+        return _towel_bar(getattr(module, "tqdm"))
     except Exception:
         return None
 
@@ -136,25 +168,29 @@ class Heartbeat:
     def __init__(self, redraw: Callable[[], object], period: float = 1.0) -> None:
         self._redraw = redraw
         self._period = period
-        # The thread beating now and the event that ends it. Each thread has
-        # an event of its own, so one told to end can never be revived by a
+        # The thread beating now and the stop queue it reads. Each thread has
+        # a queue of its own, so one told to end can never be revived by a
         # later start, which gets a new thread instead.
-        self._beating: Optional[Tuple[threading.Thread, threading.Event]] = None
+        self._beating: Optional[Tuple[threading.Thread, queue.SimpleQueue[None]]] = None
 
     def start(self) -> None:
         _BEATING.add(self)
         if self._beating is not None:
             return
-        ended = threading.Event()
+        ended: queue.SimpleQueue[None] = queue.SimpleQueue()
         thread = threading.Thread(
             target=self._beat, args=(ended,), name="towel-progress", daemon=True
         )
         self._beating = (thread, ended)
         thread.start()
 
-    def _beat(self, ended: threading.Event) -> None:
-        while not ended.wait(self._period):
-            quietly(self._redraw)
+    def _beat(self, ended: queue.SimpleQueue[None]) -> None:
+        while True:
+            try:
+                ended.get(timeout=self._period)
+                return
+            except queue.Empty:
+                quietly(self._redraw)
 
     def _end_thread(self) -> Optional[threading.Thread]:
         """Tell the beating thread to end and forget it; the thread, for the caller to join."""
@@ -162,7 +198,7 @@ class Heartbeat:
         if beating is None:
             return None
         thread, ended = beating
-        ended.set()
+        ended.put(None)
         # If interrupted, cleanup may repeat. Signal the thread before forgetting it.
         self._beating = None
         return thread if thread.ident is not None else None
@@ -308,6 +344,22 @@ _TQDM_NOTED = False
 
 _DRAWING = threading.RLock()
 _ACTIVE: List["ProgressRenderer"] = []
+ERASE_LINE = "\r\x1b[2K"
+
+
+def open_terminal_output(stream: TextIO) -> Optional[io.TextIOWrapper]:
+    """A write-through view of this terminal that can drop a frame when it is full."""
+
+    def open_nonblocking(path: str, flags: int) -> int:
+        # A new open file description keeps O_NONBLOCK off the user's stderr.
+        return os.open(path, os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+
+    try:
+        terminal = os.ttyname(stream.fileno())
+        raw = io.FileIO(terminal, "w", opener=open_nonblocking)
+    except (AttributeError, OSError, ValueError):
+        return None
+    return io.TextIOWrapper(raw, encoding=stream.encoding, errors=stream.errors, write_through=True)
 
 
 def _terminal_width() -> int:
@@ -362,6 +414,12 @@ class ProgressRenderer:
             self._factory = factory or (run.factory() if run is not None else load_tqdm())
             if mode == "tqdm" and self._factory is None:
                 _note_missing_tqdm()
+        self._output = open_terminal_output(sys.stderr) if self._enabled else None
+        if self._output is not None and factory is None and self._factory is not None:
+            # Installed tqdm also accepts file; caller-supplied factories
+            # keep the narrower ProgressBarFactory signature.
+            native = cast(Callable[..., ProgressBar], self._factory)
+            self._factory = partial(native, file=self._output)
         self._total = total
         self._desc = desc
         self._unit = unit
@@ -387,7 +445,7 @@ class ProgressRenderer:
             quietly(self._bar.close)
             self._bar = None
         if self._visible:
-            print("\r\x1b[2K", end="", file=sys.stderr, flush=True)
+            print(ERASE_LINE, end="", file=self._output or sys.stderr, flush=True)
             self._visible = False
 
     def _draw(self) -> None:
@@ -417,7 +475,7 @@ class ProgressRenderer:
             line = _fit_line(
                 f"{self._desc}: {count} {self._unit} | {elapsed:.1f}m | {detail}", _terminal_width()
             )
-            print(f"\r\x1b[2K{line}", end="", file=sys.stderr, flush=True)
+            print(f"{ERASE_LINE}{line}", end="", file=self._output or sys.stderr, flush=True)
         self._visible = True
 
     def note(self, message: str) -> None:
@@ -447,7 +505,7 @@ class ProgressRenderer:
         """
         if not self._enabled or self._closed:
             return
-        with _DRAWING:
+        with restoring_lock_depth(_DRAWING), _DRAWING:
             if total != self._total or (label is not None and label != self._desc):
                 quietly(self._clear)
             delta = completed - self._done
@@ -463,13 +521,13 @@ class ProgressRenderer:
         self.start_heartbeat()
 
     def refresh(self) -> None:
-        with _DRAWING:
+        with restoring_lock_depth(_DRAWING), _DRAWING:
             quietly(self._draw)
 
     def update(self, n: int = 1) -> None:
         if not self._enabled:
             return
-        with _DRAWING:
+        with restoring_lock_depth(_DRAWING), _DRAWING:
             self._done += n
             bar = self._bar
             if bar is not None:
@@ -479,20 +537,38 @@ class ProgressRenderer:
     def set_postfix(self, ordered_dict: Mapping[str, object], refresh: bool = True) -> None:
         if not self._enabled:
             return
-        with _DRAWING:
+        with restoring_lock_depth(_DRAWING), _DRAWING:
             self._details = dict(ordered_dict)
             if refresh:
                 quietly(self._draw)
 
     def close(self) -> None:
-        self._heartbeat.stop()
-        with _DRAWING:
-            self._closed = True
-            quietly(self._clear)
-            if self in _ACTIVE:
-                _ACTIVE.remove(self)
-                if _ACTIVE:
-                    quietly(_ACTIVE[-1]._draw)
+        self._closed = True
+        interruptions = (BudgetExpired, KeyboardInterrupt, SystemExit)
+        try:
+            self._heartbeat.stop()
+            if not isinstance(sys.exception(), interruptions):
+                with restoring_lock_depth(_DRAWING), _DRAWING:
+                    quietly(self._clear)
+                    if self in _ACTIVE:
+                        _ACTIVE.remove(self)
+                        if _ACTIVE:
+                            quietly(_ACTIVE[-1]._draw)
+        finally:
+            # Cancellation can begin inside stop() or the normal clear. Detach
+            # the bar before closing its stream so the run can safely close again.
+            if isinstance(sys.exception(), interruptions):
+                if self._output is not None and _ACTIVE and _ACTIVE[-1] is self:
+                    with suppress(OSError):
+                        self._output.write(ERASE_LINE)
+                if self._bar is not None and hasattr(self._bar, "disable"):
+                    self._bar.disable = True  # tqdm.__del__ calls close()
+                self._visible = False
+                self._bar = None
+                if self in _ACTIVE:
+                    _ACTIVE.remove(self)
+            if self._output is not None:
+                self._output.close()
 
 
 def _note_missing_tqdm() -> None:
@@ -514,7 +590,7 @@ def write_message(message: str, *, prefix: str = "") -> None:
     """Print a diagnostic on its own line, then restore the active progress phase."""
     if prefix and not message.startswith(prefix + ":"):
         message = f"{prefix}: {message}"
-    with _DRAWING:
+    with restoring_lock_depth(_DRAWING), _DRAWING:
         active = _ACTIVE[-1] if _ACTIVE else None
         if active is not None:
             quietly(active._clear)

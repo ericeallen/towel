@@ -187,6 +187,14 @@ uv run --frozen coverage combine
 uv run --frozen coverage report --fail-under=85
 ```
 
+When bounding pytest, keep the watchdog in its parent process. POSIX preserves
+an armed interval timer across `exec`, and the deadline tests need to own that
+timer in pytest. For example, this gives the budget tests a ten-minute bound:
+
+```bash
+uv run --frozen python -c 'import subprocess, sys; sys.exit(subprocess.run([sys.executable, "-m", "pytest", "-q", "tests/test_execution_budget.py"], timeout=600).returncode)'
+```
+
 ### CI commands and behavioral evidence
 
 Use Python 3.13 for formatting and typing gates; the lockfile also resolves

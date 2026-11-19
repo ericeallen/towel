@@ -117,8 +117,10 @@ from towel.unification.defaults import (
 )
 from towel.unification.progress import (
     DEFAULT_PROGRESS,
+    ERASE_LINE,
     ProgressMode,
     normalize_progress,
+    open_terminal_output,
     progress_run,
     write_note,
 )
@@ -310,15 +312,32 @@ def _main() -> None:
         # Restore the result channel explicitly before emitting the failure.
         sys.stdout = result_stdout
         _write_failure_result(args, "incomplete", "time_limit", "Time limit exceeded")
-        parser.exit(124, "Time limit exceeded; no output was published. Cleanup completed.\n")
+        _exit_interrupted(
+            parser, 124, "Time limit exceeded; no output was published. Cleanup completed.\n"
+        )
     except KeyboardInterrupt:
         sys.stdout = result_stdout
         _write_failure_result(args, "incomplete", "interrupted", "Interrupted")
-        parser.exit(130, "Interrupted.\n")
+        _exit_interrupted(parser, 130, "Interrupted.\n")
     except BrokenPipeError:
         # The reader went away (``towel preview ... | head``); nothing is wrong.
         _close_stdout_quietly()
         sys.exit(0)
+
+
+def _exit_interrupted(parser: argparse.ArgumentParser, status: int, message: str) -> NoReturn:
+    """A stopped terminal must not hold the exit status or JSON result hostage."""
+    if sys.stderr.isatty():
+        output = open_terminal_output(sys.stderr)
+        if output is not None:
+            with output:
+                try:
+                    output.write(message)
+                except OSError:
+                    pass
+            parser.exit(status)
+        message = ERASE_LINE + message
+    parser.exit(status, message)
 
 
 _SETTINGS: Optional[Settings] = None

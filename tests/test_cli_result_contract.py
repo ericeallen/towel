@@ -14,6 +14,7 @@
 
 """Results can be consumed without parsing prose or mistaking cancellation for success."""
 
+import argparse
 import json
 import os
 import signal
@@ -29,6 +30,7 @@ import pytest
 from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
 from tests.test_cli_integration import invoke
 from tests.test_helpers import lifetime_order_certified
+from tests.test_progress_renderer import read_terminal, terminal
 from towel import cli
 from towel.execution_budget import BudgetExpired
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -387,7 +389,10 @@ def test_timeout_while_entering_redirection_keeps_the_json_result_on_stdout(
     assert not destination.exists()
 
 
-def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(tmp_path: Path) -> None:
+def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deliver the alarm during dry. A racing timer can interrupt coverage holding its lock."""
     source, destination = _source(tmp_path), tmp_path / "out.py"
     previous = signal.getsignal(signal.SIGALRM)
     received: list[int] = []
@@ -395,6 +400,12 @@ def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(tmp_path: Pa
     def unrelated(signum: int, frame: FrameType | None) -> None:
         received.append(signum)
 
+    def expire(options: cli.DryOptions) -> None:
+        assert signal.getitimer(signal.ITIMER_REAL)[0] > 0
+        signal.raise_signal(signal.SIGALRM)
+
+    monkeypatch.setattr(cli, "_execute_dry", expire)
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
     signal.signal(signal.SIGALRM, unrelated)
     try:
         result = invoke(
@@ -405,7 +416,7 @@ def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(tmp_path: Pa
                 "--no-interactive",
                 "--json",
                 "--time-limit",
-                "0.000001",
+                "3600",
                 *FLAGS,
             ]
         )
@@ -418,6 +429,7 @@ def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(tmp_path: Pa
         assert received == [signal.SIGALRM]
         assert not destination.exists()
     finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
 
 
@@ -449,3 +461,101 @@ def test_explain_locates_declined_blocks_in_sentences(tmp_path: Path) -> None:
     assert str(tmp_path) not in result.stdout
     ordinary = invoke(["preview", str(source), *FLAGS])
     assert "REJECT[" not in ordinary.stderr
+
+
+def test_exit_notice_reaches_stderr_when_the_terminal_cannot_be_reopened(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "open_terminal_output", lambda stream: None)
+    with pytest.raises(SystemExit) as raised:
+        cli._exit_interrupted(argparse.ArgumentParser(), 130, "Interrupted.\n")
+    assert raised.value.code == 130
+    assert capsys.readouterr().err == "\r\x1b[2KInterrupted.\n"
+
+
+def _cancel_after_peer_draw(number: int, write_diagnostics: bool) -> None:
+    import threading
+    from towel.unification.progress import ProgressRenderer
+
+    inherited_stderr = sys.stderr
+    assert os.get_blocking(2)
+    renderer = ProgressRenderer("tqdm", total=10, desc="apply", unit="it")
+    peer = threading.Thread(target=renderer.refresh, daemon=True)
+    peer.start()
+    peer.join(timeout=2)
+    assert not peer.is_alive(), "a full terminal blocked the drawing thread"
+    assert renderer._bar is not None, "the draw did not reach tqdm"
+    try:
+        signal.raise_signal(number)
+    finally:
+        renderer.close()
+        if write_diagnostics:
+            os.write(2, b"raw cleanup\n")
+            print("saved stream cleanup", file=inherited_stderr, flush=True)
+            print("current stream cleanup", file=sys.stderr, flush=True)
+
+
+@pytest.mark.parametrize(
+    "number, status, termination",
+    [
+        (signal.SIGINT, 130, "interrupted"),
+        (signal.SIGALRM, 124, "time_limit"),
+        (signal.SIGTERM, 143, None),
+    ],
+)
+@pytest.mark.parametrize("stopped", [False, True], ids=["live", "stopped"])
+def test_cancellation_on_a_terminal(
+    tmp_path: Path, number: int, status: int, termination: str | None, stopped: bool
+) -> None:
+    """Progress tolerates a stopped terminal and cleanup diagnostics reach a live one."""
+    import termios
+
+    source = _source(tmp_path)
+    with terminal() as (stream, master):
+        slave = stream.fileno()
+        if stopped:
+            termios.tcflow(slave, termios.TCOOFF)
+            fill = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+            try:
+                with pytest.raises(BlockingIOError):
+                    while True:
+                        os.write(fill, b"." * 8192)
+            finally:
+                os.close(fill)
+        script = (
+            "import signal, sys; from towel import cli; n = int(sys.argv.pop(1)); "
+            "signal.signal(signal.SIGINT, signal.default_int_handler); "
+            "from tests.test_cli_result_contract import _cancel_after_peer_draw; "
+            f"cli._dispatch = lambda *_: _cancel_after_peer_draw(n, write_diagnostics={not stopped}); "
+            "import runpy; runpy.run_module('towel', run_name='__main__')"
+        )
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(number),
+                "preview",
+                str(source),
+                "--time-limit",
+                "3600",
+                "--json",
+                *FLAGS,
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            stderr=slave,
+            stdout=subprocess.PIPE,
+            text=True,
+            timeout=5,
+        )
+        assert run.returncode == status
+        if termination is None:
+            assert run.stdout == ""
+        else:
+            assert json.loads(run.stdout)["termination"] == termination
+        assert os.get_blocking(slave)
+        if not stopped:
+            output = read_terminal(master)
+            for diagnostic in ("raw cleanup", "saved stream cleanup", "current stream cleanup"):
+                assert diagnostic in output

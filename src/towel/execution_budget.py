@@ -24,7 +24,7 @@ import signal
 import time
 import threading
 from types import FrameType
-from typing import Callable, Iterator
+from typing import Callable, Iterator, NoReturn
 
 
 class TimerConflict(ValueError):
@@ -44,9 +44,17 @@ class _Budget:
     owner: int
     deadline: float
     abandoned: bool = False
+    expiry_delivered: bool = False
 
 
 _active: ContextVar[_Budget | None] = ContextVar("towel_execution_budget", default=None)
+
+
+def _raise_expiry(budget: _Budget) -> NoReturn:
+    # A poll can beat the kernel timer. Its pending alarm belongs to this
+    # same deadline and must not interrupt cleanup a second time.
+    budget.expiry_delivered = True
+    raise BudgetExpired()
 
 
 def _current_budget() -> _Budget | None:
@@ -56,8 +64,8 @@ def _current_budget() -> _Budget | None:
 
 def _expire(signum: int, frame: FrameType | None) -> None:
     budget = _current_budget()
-    if budget is not None and os.getpid() == budget.owner:
-        raise BudgetExpired()
+    if budget is not None and os.getpid() == budget.owner and not budget.expiry_delivered:
+        _raise_expiry(budget)
 
 
 def run_with_budget(seconds: float | None, action: Callable[[], None]) -> None:
@@ -102,14 +110,14 @@ def finish_before_publication() -> None:
         return
     signal.setitimer(signal.ITIMER_REAL, 0)
     if time.monotonic() >= budget.deadline:
-        raise BudgetExpired()
+        _raise_expiry(budget)
 
 
 def check_budget() -> None:
     """Poll the owner's deadline between units of work, even with its alarm deferred."""
     budget = _current_budget()
     if budget is not None and os.getpid() == budget.owner and time.monotonic() >= budget.deadline:
-        raise BudgetExpired()
+        _raise_expiry(budget)
 
 
 @contextmanager
@@ -129,8 +137,8 @@ def polling_interrupts() -> Iterator[Callable[[], None]]:
         if pending:
             if pending[0] == signal.SIGINT:
                 raise KeyboardInterrupt()
-            if pending[0] == signal.SIGALRM:
-                raise BudgetExpired()
+            if pending[0] == signal.SIGALRM and budget is not None:
+                _raise_expiry(budget)
             raise SystemExit(128 + pending[0])
         check_budget()
 

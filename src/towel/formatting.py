@@ -61,6 +61,7 @@ from typing import (
     cast,
 )
 
+from .shared_locks import restoring_lock_depth
 from ._formatting_repeatability import (
     FormattingRepeatability,
     formatting_repeatability as _formatting_repeatability,
@@ -746,12 +747,12 @@ class _RunFormatTools:
     def __init__(self) -> None:
         self._tools: dict[Literal["black", "isort"], IsolatedFormatTool] = {}
         self._owner = os.getpid()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def get(self, name: Literal["black", "isort"]) -> IsolatedFormatTool:
         if self._owner != os.getpid():
             raise ToolFailure("Create a new formatter factory after fork")
-        with self._lock:
+        with restoring_lock_depth(self._lock), self._lock:
             if name not in self._tools:
                 self._tools[name] = IsolatedFormatTool(name)
             return self._tools[name]
@@ -938,7 +939,7 @@ def formatter_factory_for_project(
     root = _root(path)
     inferred: Optional[FormatterKind] = None
     inspected = False
-    inspection_lock = threading.Lock()
+    inspection_lock = threading.RLock()
 
     def choose(file_path: str) -> Optional[SnippetFormatter]:
         nonlocal inspected, inferred
@@ -946,7 +947,7 @@ def formatter_factory_for_project(
             source = Path(file_path)
             choice = _formatter_for_project(source, tools)
             if choice.note == "no formatter configured":
-                with inspection_lock:
+                with restoring_lock_depth(inspection_lock), inspection_lock:
                     if not inspected:
                         inferred = _sources_already_formatted(path)
                         inspected = True

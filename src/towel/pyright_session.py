@@ -54,7 +54,9 @@ import queue
 import re
 import secrets
 import select
+import signal
 import subprocess
+import sys
 import threading
 import time
 import tomllib
@@ -73,6 +75,8 @@ from typing import (
     cast,
 )
 
+from .execution_budget import BudgetExpired
+from .shared_locks import restoring_lock_depth
 from .checker_project import UnusableConfiguration, _settings_chain
 from .diagnostics import LOG
 from .source_files import PROBE_PREFIX
@@ -458,24 +462,10 @@ class PyrightSession:
         self._settings = server_settings(interpreter)
         self._scope = pyright_scope(root)
         self._included = _included_directories(root)
-        try:
-            self._process = subprocess.Popen(
-                [*command, "--stdio"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                cwd=str(root),
-                env=dict(environment) if environment is not None else None,
-                # Unbuffered, so what the server has said is either still in the
-                # pipe or in the reader's hands, and a settle can ask about both.
-                bufsize=0,
-            )
-        except OSError as error:
-            raise SessionFailure(f"could not start pyright: {error}") from error
         self._next_id = 0
-        self._writing = threading.Lock()
-        self._replies: "queue.Queue[Tuple[int, object]]" = queue.Queue()
-        self._events: "queue.Queue[Tuple[str, object]]" = queue.Queue()
+        self._writing = threading.RLock()
+        self._replies: "queue.SimpleQueue[Tuple[int, object]]" = queue.SimpleQueue()
+        self._events: "queue.SimpleQueue[Tuple[str, object]]" = queue.SimpleQueue()
         # The server states a file's diagnostics once and stays silent about it
         # until they change, so the current picture has to be kept here. A
         # settle that returned only what was said during it would forget every
@@ -487,13 +477,28 @@ class PyrightSession:
         self._closed = False
         # A request that the reader end at its next message boundary, and
         # whether the reader took it (see ``_server_speaks_before_a_stop``).
-        self._stopping = threading.Lock()
+        self._stopping = threading.RLock()
         self._stop_asked = False
         self._stop_taken = False
         self._reader = self._new_reader()
-        self._reader.start()
-        _OPEN_SESSIONS.add(self)
         try:
+            self._process = subprocess.Popen(
+                [*command, "--stdio"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                cwd=str(root),
+                start_new_session=True,
+                env=dict(environment) if environment is not None else None,
+                # Unbuffered, so what the server has said is either still in the
+                # pipe or in the reader's hands, and a settle can ask about both.
+                bufsize=0,
+            )
+        except OSError as error:
+            raise SessionFailure(f"could not start pyright: {error}") from error
+        try:
+            self._reader.start()
+            _OPEN_SESSIONS.add(self)
             self._initialize()
         except BaseException:
             # No object is bound when a constructor raises, so nobody can be
@@ -516,7 +521,7 @@ class PyrightSession:
         """
         raw = json.dumps(payload).encode("utf-8")
         frame = b"Content-Length: %d\r\n\r\n%s" % (len(raw), raw)
-        with self._writing:
+        with restoring_lock_depth(self._writing), self._writing:
             stream = self._process.stdin
             if stream is None or self._process.poll() is not None:
                 raise SessionFailure("pyright exited")
@@ -613,7 +618,7 @@ class PyrightSession:
         if stream is None:
             return True  # The read that follows reports the end of the stream.
         while True:
-            with self._stopping:
+            with restoring_lock_depth(self._stopping), self._stopping:
                 if self._stop_asked:
                     self._stop_asked, self._stop_taken = False, True
                     return False
@@ -625,13 +630,13 @@ class PyrightSession:
         """Ask the reader to end at its next message boundary; the thread, for the caller to join."""
         if self._closed or not self._reader.is_alive():
             return None
-        with self._stopping:
+        with restoring_lock_depth(self._stopping), self._stopping:
             self._stop_asked, self._stop_taken = True, False
         return self._reader
 
     def _resume_reading(self) -> None:
         """After ``_ask_reader_to_end``: a new reader if the old one ended, else the old one carries on."""
-        with self._stopping:
+        with restoring_lock_depth(self._stopping), self._stopping:
             taken = self._stop_taken
             self._stop_asked = self._stop_taken = False
         if taken:
@@ -898,34 +903,47 @@ class PyrightSession:
     def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
-        _OPEN_SESSIONS.discard(self)
         try:
-            self._request("shutdown", None, 10.0)
-            self._notify("exit", None)
-        except SessionFailure:
-            pass
-        except Exception as error:  # pragma: no cover - defensive
-            LOG.debug("pyright shutdown was not clean: %s", error)
-        if self._process.stdin is not None:
+            self._closed = True
+            _OPEN_SESSIONS.discard(self)
+            if isinstance(sys.exception(), (BudgetExpired, KeyboardInterrupt, SystemExit)):
+                # The reader may own _writing while the server is stalled.
+                # A cancelled session has no further replies to collect.
+                return
             try:
-                self._process.stdin.close()
-            except OSError:
+                self._request("shutdown", None, 10.0)
+                self._notify("exit", None)
+            except SessionFailure:
                 pass
-        try:
-            self._process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self._process.kill()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:  # pragma: no cover - defensive
-                LOG.warning("pyright did not exit after being killed")
-        for stream in (self._process.stdout, self._process.stdin):
-            if stream is not None:
+            except Exception as error:  # pragma: no cover - defensive
+                LOG.debug("pyright shutdown was not clean: %s", error)
+            if self._process.stdin is not None:
                 try:
-                    stream.close()
+                    self._process.stdin.close()
                 except OSError:
                     pass
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass  # Reap the unresponsive server below.
+        finally:
+            if self._process.poll() is None:
+                # The Python launcher and its Node server share this private
+                # group. Stopping both also wakes a reader blocked in write.
+                try:
+                    os.killpg(self._process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    self._process.wait(timeout=5)
+                except subprocess.TimeoutExpired:  # pragma: no cover - defensive
+                    LOG.warning("pyright did not exit after being killed")
+            for stream in (self._process.stdout, self._process.stdin):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
 
 
 def _diagnostic_object(value: object, field: str) -> Mapping[str, object]:

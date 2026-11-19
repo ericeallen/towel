@@ -27,6 +27,7 @@ from typing import Iterator
 
 import pytest
 
+from towel.execution_budget import BudgetExpired
 from towel.unification import progress
 from towel.unification.progress import ProgressRenderer
 
@@ -255,7 +256,6 @@ def test_interrupted_heartbeat_start_does_not_break_run_cleanup(
 ) -> None:
     """Integration 8: a time limit before the thread starts still closes the renderer."""
     import threading
-    from towel.execution_budget import BudgetExpired
 
     def expire(thread: threading.Thread) -> None:
         raise BudgetExpired()
@@ -270,3 +270,119 @@ def test_interrupted_heartbeat_start_does_not_break_run_cleanup(
             assert renderer not in progress._ACTIVE
         finally:
             renderer.close()
+
+
+def _interrupt_tqdm(signal_name: str) -> None:
+    import signal
+    import threading
+    from towel.cli import _install_signal_handling
+    from towel.execution_budget import run_with_budget
+
+    signum = getattr(signal, signal_name)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    _install_signal_handling()
+    with terminal() as (stream, master), contextlib.redirect_stderr(stream):
+        renderer = ProgressRenderer("tqdm", total=3, desc="apply", unit="it")
+        renderer.refresh()
+        bar = renderer._bar
+        assert bar is not None
+        exception = {
+            signal.SIGALRM: BudgetExpired,
+            signal.SIGINT: KeyboardInterrupt,
+            signal.SIGTERM: SystemExit,
+        }[signum]
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(bar, "display", lambda: signal.raise_signal(signum))
+            with pytest.raises(exception) as raised:
+                run_with_budget(3600 if signum == signal.SIGALRM else None, renderer.refresh)
+            if isinstance(raised.value, SystemExit):
+                assert raised.value.code == 143
+
+            drawn = threading.Event()
+            patch.setattr(bar, "display", drawn.set)
+            peer = threading.Thread(target=renderer.refresh, daemon=True)
+            peer.start()
+            peer.join(timeout=2)
+            assert (
+                drawn.is_set() and not peer.is_alive()
+            ), "heartbeat blocked after interrupted draw"
+        renderer.close()
+
+
+@pytest.mark.parametrize("signal_name", ["SIGALRM", "SIGINT", "SIGTERM"])
+def test_signal_leaves_drawing_locks_available_to_the_heartbeat(signal_name: str) -> None:
+    """Alarm review: one signal inside tqdm must unwind the draw and let a peer redraw."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # A broken implementation can leave the heartbeat and the backend locked
+    # even during interpreter shutdown. Isolate both and bound the whole run.
+    script = "from tests.test_progress_renderer import _interrupt_tqdm; import sys; _interrupt_tqdm(sys.argv[1])"
+    run = subprocess.run(
+        [sys.executable, "-c", script, signal_name],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert run.returncode == 0, run.stderr
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit, BudgetExpired])
+def test_cancellation_clears_the_visible_bar(interruption: type[BaseException]) -> None:
+    with terminal(80) as (stream, master), contextlib.redirect_stderr(stream):
+        with pytest.raises(interruption), progress.progress_run():
+            renderer = ProgressRenderer("tqdm", total=3, desc="apply", unit="it")
+            renderer.update()
+            assert "apply" in read_terminal(master)
+            raise interruption()
+        assert read_terminal(master).endswith("\r\x1b[2K")
+
+
+def test_interrupted_run_does_not_try_the_stalled_display_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stalled terminal cannot finish the clear or the redraw of an interrupted bar."""
+    attempts = 0
+
+    def stalled_display(*args: object, **kwargs: object) -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise KeyboardInterrupt
+        return False
+
+    with terminal() as (stream, master), contextlib.redirect_stderr(stream):
+        with pytest.raises(KeyboardInterrupt), progress.progress_run():
+            renderer = ProgressRenderer("tqdm", total=3, desc="apply", unit="it")
+            renderer.refresh()
+            assert renderer._bar is not None
+            monkeypatch.setattr(renderer._bar, "display", stalled_display)
+            renderer.refresh()
+    assert attempts == 1
+    assert renderer not in progress._ACTIVE
+
+
+def test_deadline_during_close_preserves_the_exception_and_erases_the_bar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import signal
+    from towel.execution_budget import run_with_budget
+
+    with terminal() as (stream, master), contextlib.redirect_stderr(stream):
+        with pytest.raises(BudgetExpired), progress.progress_run():
+            renderer = ProgressRenderer("tqdm", total=3, desc="apply", unit="it")
+            renderer.update()
+            assert "apply" in read_terminal(master)
+            stop = renderer._heartbeat.stop
+
+            def expire() -> None:
+                monkeypatch.setattr(renderer._heartbeat, "stop", stop)
+                signal.raise_signal(signal.SIGALRM)
+
+            monkeypatch.setattr(renderer._heartbeat, "stop", expire)
+            run_with_budget(60, renderer.close)
+
+        assert renderer not in progress._ACTIVE
+        assert read_terminal(master).endswith("\r\x1b[2K")
