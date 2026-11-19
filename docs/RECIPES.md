@@ -2,7 +2,8 @@
 
 Short, tested ways to use Towel in a project's routine. The examples run in a
 repository with a package under `src/shop/` and a second project under
-`packages/billing/`.
+`packages/billing/`, with Black installed; without Black, the first line of each
+output says the code is inserted unformatted.
 
 ## Fail a CI job when Towel would change code
 
@@ -30,13 +31,29 @@ Input files were not changed.
 In GitHub Actions:
 
 ```yaml
+- uses: actions/checkout@v4
 - uses: astral-sh/setup-uv@v6
-- run: uvx --from code-towel towel preview . --check --summary
+- run: uvx --from "code-towel==2.0" towel preview . --check --summary
 ```
 
+Check out the repository first: on an empty directory Towel finds no Python
+files and exits 0, so the job would pass without looking at anything. Pinning
+the version keeps a new release from changing the result of an unchanged commit.
 `--summary` keeps the log short; drop it to see the diff in the job's output.
 Status 3 is the only one that means "would change code": 1, 2, 124, 130 and 143
 mean the run itself failed ([exit statuses](COMPATIBILITY.md)).
+
+To act on the result in a script, read `--json` rather than the printed text:
+
+```bash
+towel preview . --check --json > result.json   # exits 3 when Towel would change code
+python3 -c "import json; r = json.load(open('result.json')); print(r['status'], r['outcome'], r['applied'])"
+```
+
+```text
+Note: formatting generated code with Black (project configuration).
+complete applied 3
+```
 
 ## Run Towel from pre-commit
 
@@ -60,7 +77,9 @@ hook only when you ask:
 pre-commit run --hook-stage manual towel-check
 ```
 
-Leave out `stages` to run it on every commit.
+Leave out `stages` to run it on every commit, once you have run
+`pre-commit install`. The hook always checks the whole repository, not only the
+files in the commit.
 
 ## Project settings
 
@@ -100,11 +119,24 @@ Input files were not changed.
 ```
 
 Towel reads the `pyproject.toml` of the project it is given and says so on
-its first line. An option on the command line wins over the file; for a list
-such as `exclude`, the command line's list replaces the file's. `--no-config`
-ignores the table for one run. An unknown key or a wrong value stops the run
-with status 2 and lists the keys it accepts. Any option of `towel dry` or
-`towel preview` can be set this way, including `strict = true`
+its first line, even with `--quiet`. An option on the command line wins over the
+file; for a list such as `exclude`, the command line's list replaces the file's.
+`--no-config` ignores the table for one run, and is the one option the table
+cannot set. An unknown key or a wrong value stops the run with status 2 and lists
+the keys it accepts.
+
+| Kind of value | Keys |
+| --- | --- |
+| `true` or `false` | `check`, `complete-scope`, `cross-module`, `diff`, `explain`, `format`, `helper-metadata`, `include-ignored`, `interactive`, `inventory`, `json`, `parameterize-builtins`, `quick`, `quiet`, `stats`, `strict`, `summary`, `types` |
+| Whole number | `jobs`, `max-pairs`, `max-parameters`, `max-refactorings`, `min-lines` |
+| Number of seconds | `time-limit` |
+| One of `auto`, `tqdm`, `none`, `detail` | `progress` |
+| List of names | `exclude` |
+
+A key applies to the commands that have that option, so `check` affects `preview`
+and `interactive` affects `dry`. Setting `check` or `json` changes a run's exit
+status or output, so automation that must not inherit them passes `--no-config`.
+`strict = true` makes strict mode the project's default
 ([relaxed and strict](RELAXED_AND_STRICT.md)).
 
 ## A repository with several projects
@@ -136,16 +168,18 @@ Start small, and bound what a run may cost:
 
 ```bash
 towel preview src/shop/pricing.py              # one module first: seconds
-towel preview src/ --summary --no-types        # no type checking: several times faster
+towel preview src/ --summary --no-types        # no type checking: faster on a typed project
 towel preview src/ --summary --time-limit 600  # give up after ten minutes, with status 124
 towel dry src/ src/ --max-refactorings 2       # stop after two changes, then review them
 ```
 
 `--exclude NAME` leaves out every file or directory of that name, such as
 `--exclude tests` or `--exclude migrations`. Towel already skips `build/`,
-`dist/`, virtual environments and files Git ignores. On a machine short of
+`dist/`, `site-packages/`, virtual environments and files Git ignores. On a machine short of
 memory, use fewer workers: `--jobs 2`, or `TOWEL_WORKERS=2` in the
 environment. [Using Towel on a project](USING_TOWEL.md) shows how to review
 the result, and [performance](PERFORMANCE.md) gives typical times.
+
+**Next:** [automation and compatibility](COMPATIBILITY.md) lists every exit status and JSON field.
 
 [Documentation index](README.md)

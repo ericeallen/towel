@@ -5,10 +5,11 @@ uv tool install code-towel     # or: pipx install code-towel
 towel --version
 ```
 
-Towel needs Python and nothing else: its runtime uses only the standard
-library. The optional `format` and `types` extras add Ruff, Black, mypy and
-Pyright. Towel type-checks with whichever checker is installed where it runs,
-whether or not the project configures one, and formats with Ruff or Black when
+Towel runs on Python 3.11 to 3.15 on macOS or Linux, and needs nothing else: its
+runtime uses only the standard library. The optional `format` and `types` extras
+add Ruff, Black, mypy and Pyright. Towel type-checks with whichever checker is
+installed where it runs, whether or not the project configures one; with none,
+it copies annotations without verifying them. It formats with Ruff or Black when
 the project uses one ([typed projects](TYPING.md)).
 
 ## Requirements
@@ -30,8 +31,8 @@ project in one process, more with several workers
 [measurement environment](design/CORRECTNESS_MODEL.md#measurement-environment)
 records the rest.
 
-**Disk.** A run copies the project's Python sources and configuration into a
-private temporary directory, removed when it ends. Writing to a new output
+**Disk.** `preview` and `dry` each copy the project's Python sources and
+configuration into a private temporary directory, removed when the run ends. Writing to a new output
 copies the whole target there. Type checking keeps a second copy of the
 checker's inputs, and a mypy cache, for the length of the run. An interrupted
 in-place write keeps the original files in its journal until you recover them

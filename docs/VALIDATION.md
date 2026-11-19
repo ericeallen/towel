@@ -1,5 +1,8 @@
 # How Towel is validated
 
+This page describes the checks a release must pass. The results of a particular
+release, with its versions and counts, are in that release's notes.
+
 **What Towel promises.** A change Towel makes preserves the program's results,
 output, exceptions and order of side effects. This holds for programs that do
 not use reflection or self-instrumentation, including through code they call.
@@ -25,11 +28,11 @@ before it is published:
 
 | Check | What it does |
 | --- | --- |
-| The test suite | About 11,700 tests, on every supported Python (3.11 to 3.15) on Linux, and a subset on macOS. |
-| Hostile cases | 406 small programs written to trip a refactoring tool up: side-effect order, closures, `try` and `finally`, generators, class privacy, imports. Each runs before and after Towel, and its output must not change. |
+| The test suite | About 15,000 tests collected, on every supported Python (3.11 to 3.15) on Linux, and a subset on macOS. |
+| Hostile cases | 406 small programs written to trip a refactoring tool up (328 single files and 78 projects): side-effect order, closures, `try` and `finally`, generators, class privacy, imports. Each runs before and after Towel, and its output must not change, except where a case records a difference that reflection or a relaxed-mode assumption permits. |
 | Expected outputs | 28 example modules, and cross-module example projects, whose refactored output is compared with a reviewed copy, in relaxed and strict mode. |
 | Fuzzing | Two families of 2,000 generated programs each, from new random seeds every release, run before and after refactoring. |
-| Real projects | 141 published open-source projects, from Click and Rich to Sphinx: Towel refactors each, and its own test suite must give the same results afterwards. |
+| Real projects | 141 published open-source projects, from Click and Rich to Sphinx. Towel runs on each, and the project's own test suite must give the same results afterwards. Towel need not change every project: five are reviewed cases where it must refuse for a recorded reason. A test result that relaxed mode changes passes only when a review traces it to a named assumption and the project's tests still pass in strict mode. |
 | Itself | Towel refactors its own source, and its own tests then pass. |
 | The installed package | The built wheel and sdist are installed into clean environments, with and without the optional tools, and exercised there. |
 

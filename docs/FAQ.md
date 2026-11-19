@@ -2,9 +2,11 @@
 
 ## Will Towel change my files without asking?
 
-No. `towel preview` never writes. `towel dry` writes only after you answer
-`y`, or when you pass `--no-interactive`, and given a separate output
-directory it leaves the input untouched:
+Not without asking. `towel preview` never writes. `towel dry` changes code only
+after you answer `y`, or when you pass `--no-interactive`, and given a separate
+output directory it leaves the input untouched. When there is nothing to change,
+`dry` asks nothing, and a separate output directory still receives a copy of the
+input:
 
 ```bash
 towel preview shop/                 # show the change; write nothing
@@ -14,7 +16,7 @@ towel dry shop/ shop/               # change shop/ in place, on a branch
 
 ## Does Towel run my code?
 
-No. It reads your code; it never imports or runs it. It does run a type
+Towel itself never imports or runs your code; it reads it. It does run a type
 checker (mypy or Pyright) on the changed code when one is installed where
 Towel runs, and a formatter (Ruff or Black) when the project uses one or its
 files already match one, as you would. One exception: mypy plugins your project configures, such as
@@ -23,15 +25,18 @@ you run mypy. Towel itself uses no network and no AI service.
 
 ## How do I undo a run?
 
-Work on a Git branch, and `git restore` or `git checkout` undoes anything.
-Without Git, write into a new directory (`towel dry src/ cleaned/`) and copy
-back only what you want. If a run is interrupted while writing, `towel recover`
-with the journal it names puts every file back
-([recovery](CLI_GUIDE.md#recovery-and-interrupted-writes)).
+Work on a Git branch: `git restore .` undoes the changes to tracked files, and
+`.towel-helpers.json`, which Git does not track, is yours to delete. Without
+Git, write into a new directory (`towel dry src/ cleaned/`) and copy back only
+what you want. If a run is interrupted while writing, give `towel recover` the
+`.towel-transaction-<id>` journal it left. It puts every file back, unless you
+have edited one since, in which case it keeps your edit and the journal and
+names the file ([recovery](CLI_GUIDE.md#recovery-and-interrupted-writes)).
 
 ## Why did Towel leave this code alone?
 
-The run says, in a sentence per reason, and `--explain` lists every place.
+A run that extracts nothing says why, in a sentence per reason. After a run that
+extracted something, add `--explain` to see the similar code it declined.
 [Why something was left alone](WHY_LEFT_ALONE.md) explains each reason and what
 you can do. The most common is that a helper would not be smaller than the
 copies it replaces.
@@ -51,7 +56,7 @@ before. You see it only with `--strict`
 
 ## Is relaxed mode safe for my program?
 
-Almost certainly.
+For nearly every program, yes. These are the conditions:
 
 **What Towel promises.** A change Towel makes preserves the program's results,
 output, exceptions and order of side effects. This holds for programs that do
@@ -87,13 +92,14 @@ yourself or ask an AI assistant to propose them.
 
 ## Why is my run slow?
 
-Type checking each change is most of the time on a typed project. `--no-types`
-is several times faster; `--time-limit` bounds any run; a single module takes
+Type checking each change is most of the time on a typed project, where
+`--no-types` is several times faster. `--time-limit` bounds any run; a single module takes
 seconds. [Performance](PERFORMANCE.md) has typical times.
 
 ## Can I keep only some of the changes?
 
-Yes, with Git: `git restore` a file, or `git add -p` to choose hunks
+Yes, with Git: `git restore` a file, or stage the hunks you want with
+`git add -p` and discard the rest
 ([using Towel on a project](USING_TOWEL.md#keep-some-changes-and-drop-others)).
 
 ## Can Towel fail a build when there is duplicated code?
@@ -109,8 +115,9 @@ Yes, under `[tool.towel]` in `pyproject.toml`
 ## Which Python versions does Towel support?
 
 Towel runs on Python 3.11 to 3.15, on macOS and Linux. It reads code with the
-interpreter it runs on, so code it should read must parse on that version;
-a file that does not is skipped with a warning. Windows is not supported.
+interpreter it runs on, so code it should read must parse on that version. A
+file that does not is skipped with a warning; with `--strict` the run stops
+instead. Windows is not supported.
 
 ## My script used `--summ` and now fails. Why?
 

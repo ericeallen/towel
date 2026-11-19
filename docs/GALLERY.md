@@ -7,6 +7,11 @@ and `...` marks output left out. Each runs without type checking and
 formatting, so the result does not depend on the tools installed where Towel
 runs.
 
+Each section ends with what the project's own tests did with the change applied.
+They are the tests in the project's published source archive, run on November 18,
+2026, on macOS with Python 3.13 and pytest 9.2, once before the change and once
+after it. Four of the five suites support the change. The fifth could not run.
+
 ## A check repeated in two operators
 
 [isodate](https://pypi.org/project/isodate/0.7.2/) 0.7.2 (BSD-3-Clause), `src/isodate/duration.py`. `Duration.__add__` and `Duration.__rsub__` refuse fractional years and months with the same four lines.
@@ -61,6 +66,9 @@ Input files were not changed.
 ```
 
 The check becomes a method of `Duration`, private to the class, and both operators call it. The comments before each copy stay where they were.
+
+**The project's tests:** 280 passed before and 280 passed after, and they run every changed line.
+
 ## Range checks in a family of validators
 
 [configobj](https://pypi.org/project/configobj/5.0.9/) 5.0.9 (BSD-3-Clause), `src/configobj/validate.py`. `is_integer` and `is_float` end with the same bounds check, and the list validators share a length check.
@@ -141,6 +149,9 @@ Input files were not changed.
 ```
 
 Three helpers come out of one run: the bounds check, the length check, and, on a later pass, the `len()` guard the length check itself repeats. Towel keeps going until nothing more can be extracted.
+
+**The project's tests:** 75 passed before and 75 passed after. They miss six changed lines, which the 198 doctest examples in `validate.py` run; those also pass before and after.
+
 ## Three copies of a proxy swap
 
 [jsonpickle](https://pypi.org/project/jsonpickle/4.1.4/) 4.1.4 (BSD-3-Clause), `jsonpickle/unpickler.py`. Three methods of `Unpickler` finish by resetting a proxy, swapping the reference and returning the restored object, each under a different name.
@@ -211,6 +222,9 @@ Input files were not changed.
 ```
 
 The object each copy restored, `result`, `stage1` or `instance`, became the parameter `_param_0`; a block repeated twice inside `_restore_dict` became a second helper.
+
+**The project's tests:** 415 passed and 28 failed before, and the same 415 passed and the same 28 failed after. The 28 fail without Towel's change: 19 are lint checks and 9 are tests, most of them of numpy and pandas support. The tests run every changed line.
+
 ## A list and a dict comprehension
 
 [asteval](https://pypi.org/project/asteval/1.0.10/) 1.0.10 (MIT), `asteval/asteval.py`. The interpreter evaluates list and dict comprehensions with the same nine lines, differing only in whether the result starts as `[]` or `{}`.
@@ -283,6 +297,9 @@ Input files were not changed.
 ```
 
 Each caller passes its empty container, `[]` or `{}`, as an ordinary argument: a fresh empty container, evaluated once before the helper runs, needs no `lambda`.
+
+**The project's tests:** 199 passed before and 199 passed after, and they run every changed line.
+
 ## Clipboard commands on Linux
 
 [pyperclip](https://pypi.org/project/pyperclip/1.11.0/) 1.11.0 (BSD-3-Clause), `src/pyperclip/__init__.py`. The `xclip` and `xsel` back ends copy text by running a command with the same `Popen` call; the paste functions repeat another.
@@ -364,6 +381,8 @@ Input files were not changed.
 ```
 
 The copy helper takes the command's three words as arguments. The paste helper takes the command as `lambda: [...]`, because in one copy it is a list built from a variable and in the other a variable, and a parameter takes one form for every call. The helpers land before the module's `# Exceptions` comment, which stays with the class it introduces.
+
+**The project's tests:** none ran, so this change is untested. The published test file stops with an `ImportError` on `HAS_DISPLAY`, with or without Towel's change, and the changed code serves the Linux clipboard tools, which these runs on macOS never call.
 
 ## Try your own
 

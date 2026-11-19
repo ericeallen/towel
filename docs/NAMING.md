@@ -155,8 +155,9 @@ Without `--rename-file`, `rename-helpers` prints a prompt that shows each
 helper, its rename keys and a call, and asks for a JSON mapping. Give it to an
 AI assistant such as Claude or ChatGPT, paste the answer back, then press
 Enter and Ctrl-D; Towel checks and applies it as above. Towel itself sends
-nothing anywhere. Review the names before you keep them: a name is a claim
-about what the code means.
+nothing anywhere. The prompt is the same for every assistant, so leave out the
+deprecated `--llm` option. Review the names before you keep them: a name is a
+claim about what the code means.
 
 ## Rename keys
 
@@ -182,7 +183,8 @@ Give the project's root, the directory with `pyproject.toml`, `setup.cfg` or
 Use `--file` and `--function` to rename only some helpers; Towel still checks
 the rest of the project for callers. If the directory has no such marker, add
 `--complete-scope` to declare that it holds every caller. A rename that would
-need to change a file outside the target is refused.
+need to change a file outside the target is refused. `--list` renames nothing, so
+it needs no project root and works on any directory.
 
 If you copied only one package out of a larger project, its imports may not
 resolve in the copy. Put the reviewed files back in a checkout of the whole
@@ -196,15 +198,22 @@ uses anywhere in its body, even as an attribute (renaming a parameter to
 `status` in a helper that reads `task.status` is refused), or a use of the
 helper Towel cannot follow (such as `getattr(module, "__extracted_func_0")`)
 refuses the batch: nothing changes, and the exit status is 2. `--json` reports
-the result for a script.
+the result for a script. A mapping file that is not valid JSON is a different
+failure: the exit status is 1, and the error goes to stderr with nothing on
+stdout. Applying a mapping a second time is safe: each name is reported as
+`(already applied)`, nothing changes, and the exit status is 0.
 
 `.towel-helpers.json`, which `dry` writes into its output directory, gives the
-inventory each call's code before and after the change. `rename-helpers` reads
-it only from the directory you give it, so give the directory `dry` wrote:
+inventory each call's code before and after the change. After `dry` writes a
+single file, the same data is beside it as `OUTPUT.towel-helpers.json`.
+`rename-helpers` reads `.towel-helpers.json` only from the directory you give it, so give the directory `dry` wrote:
 after `towel dry src/pkg src/pkg`, that is `src/pkg`, not the project root.
 Delete the file once the helpers are named; without it, renaming still works,
-but the inventory shows no call-site changes. `--format` formats the files a rename changes with the
-project's Ruff or Black; without it, Towel says which formatter command would
-restore the project's layout.
+but the inventory shows no call-site changes. `--format` formats the files a
+rename changes with the project's Ruff or Black, and exits 2 if that formatter is
+not installed where Towel runs (the `format` extra installs both). Without
+`--format`, Towel says which formatter command would restore the project's layout.
+
+**Next:** [using Towel on a project](USING_TOWEL.md) covers testing and committing the result.
 
 [Documentation index](README.md)

@@ -1,7 +1,10 @@
 # Typed projects
 
 In a project with type annotations, Towel annotates the helpers it writes and
-type-checks every change before it makes it. Save this as `pyproject.toml`:
+type-checks every change before it makes it. The example below needs mypy and
+Black where Towel runs, which `uv tool install "code-towel[format,types]"`
+provides; [without a checker](#which-checker-runs), the result differs. Save this
+as `pyproject.toml`:
 
 ```toml
 [project]
@@ -127,9 +130,15 @@ In any other virtual environment, install it there with
 | Both | mypy to infer types, both to check |
 | Neither | whichever is installed where Towel runs, preferring mypy, with its defaults |
 
-When no checker is installed, Towel writes helpers without annotations and
-says so. A checker the project configures but Towel cannot find gets a
-warning that names it and how to install it. Configured mypy plugins, such as
+Without a working checker, what Towel writes depends on why:
+
+| Situation | Helpers | `types` in `--json` |
+| --- | --- | --- |
+| No checker installed, none configured | Annotations copied from the call sites, not verified; a note says so | `"unverified"` |
+| A configured checker is missing | No annotations, with a warning that names it and how to install it; `--strict` stops with status 1 instead | `"unverified"` |
+| `--no-types` | No annotations, and no checker runs | `"off"` |
+
+Configured mypy plugins, such as
 django-stubs' or pydantic's, load as they do when you run mypy, and they run
 code your project configures.
 
@@ -143,9 +152,10 @@ starting point for the next.
 Towel cannot check what the checker cannot see:
 
 - **An import the checker cannot type**, because the package or its stubs are
-  missing: a change to unannotated code there goes ahead, and the run says so
-  once; a change to annotated code is left alone, naming the import. Install
-  the missing package or stubs where Towel runs.
+  missing: in relaxed mode a change to unannotated code there goes ahead, and
+  the run says so once. A change to annotated code is left alone, naming the
+  import, and so is every such change with `--strict`. Install the missing
+  package or stubs where Towel runs.
 - **Code the checker considers unreachable**, such as a branch for another
   platform or Python version, is left alone.
 - **A checker that fails while checking the project as it is**, for example
@@ -174,11 +184,13 @@ Towel cannot check what the checker cannot see:
 ## Running without the checker
 
 `--no-types` runs no checker and writes helpers without annotations; it keeps
-the annotations already in your code. It is several times faster. Your own
-type check, run afterwards, then decides whether to keep the change.
+the annotations already in your code. On a typed project it is several times
+faster. Your own type check, run afterwards, then decides whether to keep the change.
 
 Every rule Towel follows, including how existing errors are matched after
 code moves and how narrowing is kept in the caller, is in
 [type checking, in full](design/TYPE_CHECKING_RULES.md).
+
+**Next:** [naming helpers](NAMING.md) replaces the generated names.
 
 [Documentation index](README.md)

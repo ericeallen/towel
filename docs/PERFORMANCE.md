@@ -29,16 +29,11 @@ timing below uses a Docker Linux VM. Other machines will differ; relaxed mode,
 2.0's default, extracts more, and in a typed project each extraction is
 checked.
 
-The Sphinx-only rerun at `29454ab` took 5,660 s (about 94 minutes) and changed
-55 files. It ran alone in a Docker Linux VM with 18 cores and 8 GB of memory,
-using Python 3.12, `TOWEL_WORKERS=1`, `--cross-module`, and default typing
-(mypy and Pyright both strict). These are measured conditions, not minimum
-resource requirements or time guarantees.
-
 ## Keeping a run short
 
-- **`--no-types`** skips type checking, several times faster. Use it where the
-  project is not type-checked anyway.
+- **`--no-types`** skips type checking, which is several times faster on a typed
+  project and saves little on an untyped one. Use it where the project is not
+  type-checked anyway.
 - **`--time-limit SECONDS`** gives up after that long, writes nothing and exits
   124. Writing, once started, always finishes.
 - **`--max-refactorings N`** stops after `N` changes; review, commit and run again.
@@ -72,6 +67,12 @@ extraction can expose another; a project with hundreds of extractions repeats
 that hundreds of times, and in a typed project checks each one.
 
 ## Earlier measurements
+
+The Sphinx-only rerun at `29454ab` took 5,660 s (about 94 minutes) and changed
+55 files. It ran alone in a Docker Linux VM with 18 cores and 8 GB of memory,
+using Python 3.12, `TOWEL_WORKERS=1`, `--cross-module`, and default typing
+(mypy and Pyright both strict). These are measured conditions, not minimum
+resource requirements or time guarantees.
 
 The dated investigations and release comparisons behind these figures, up to
 1.949, are in [performance measurements](maintainers/PERFORMANCE_HISTORY.md).

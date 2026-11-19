@@ -8,7 +8,8 @@ towel rename-helpers cleaned/ --list # list the helpers Towel wrote, to name the
 ```
 
 Towel has four commands: `preview`, `dry`, `rename-helpers` and `recover`.
-`towel COMMAND --help` lists every option with its default. Options can also
+`towel COMMAND --help` lists every option with its default, `towel -V` prints
+the version, and `python -m towel` runs the same program. Options can also
 be set for a project in `pyproject.toml` ([project settings](RECIPES.md#project-settings)).
 For a first run, see the [quick start](QUICKSTART.md).
 
@@ -41,28 +42,30 @@ path. Both take the same options:
 | `--parameterize-builtins` | off | Extract copies that may mean different builtins, passing each caller's own ([details](GENERATED_CODE.md#names-parameters-and-other-details)). |
 | `--min-lines N` | 3 | Consider only duplicates at least `N` lines long. |
 | `--max-parameters N` | 5 | Extract only duplicates whose differences need at most `N` parameters. |
-| `--max-refactorings N` | 0, no limit | Stop after `N` changes. |
-| `--time-limit SECONDS` | none | Give up after `SECONDS`, write nothing, and exit 124. |
+| `--max-refactorings N` | 0, no limit | Stop after `N` changes; 0 means no limit. |
+| `--time-limit SECONDS` | none | Give up after `SECONDS`, a positive number up to 100,000,000; write nothing and exit 124. |
 | `--max-pairs N` | 20,000,000 | Compare at most `N` pairs of similar blocks; 0 means no limit. |
-| `--jobs N` | `TOWEL_WORKERS`, else up to 8 | Use at most `N` worker processes. |
-| `--explain` | off | List every place left alone, not only the five largest. |
+| `--jobs N` | `TOWEL_WORKERS`, else the smallest of 8, the cores and what fits in memory | Use at most `N` worker processes; `N` must be positive. |
+| `--explain` | off | List every place left alone, not only the five largest, and the pairs a run that extracted something otherwise omits. |
 | `--stats` | off | Count what became of each pair of similar blocks. |
 | `--json` | off | Print one JSON result on stdout ([automation](COMPATIBILITY.md)). |
-| `--progress MODE` | `auto` | `auto`, `tqdm`, `none` or `detail`. |
-| `--quiet`, `-q` | off | Hide progress and notes; keep warnings, errors and results. |
-| `--no-config` | | Ignore `[tool.towel]` in `pyproject.toml`. |
+| `--progress MODE` | `auto` | On stderr. `auto` draws a bar on a terminal and nothing in a pipe; `tqdm` uses tqdm, and warns if it is missing; `detail` logs each pass; `none` shows nothing. |
+| `--quiet`, `-q` | off | Hide progress and notes; keep warnings, errors, results and the line naming a `[tool.towel]` table. |
+| `--no-config` | | Ignore `[tool.towel]` in `pyproject.toml`. Command line only. |
 
 `dry` only:
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `--interactive` | on | Ask before writing. `--no-interactive` writes without asking, as scripts need. |
-| `--helper-metadata` | on | Write `.towel-helpers.json`, the call sites `rename-helpers` shows. |
+| `--helper-metadata` | on | Write the call sites `rename-helpers` shows: `.towel-helpers.json` in an output directory, or `OUTPUT.towel-helpers.json` beside an output file. |
 
 `preview` only: `--summary` (counts, no diff), `--diff` (the diff alone),
 `--inventory` (also list the helpers), `--quick` (a fast, partial listing of
 candidates, without checks; not a prediction of the result) and `--check`
-(exit 3 when the run would change code; [recipes](RECIPES.md)).
+(exit 3 when the run would change code; [recipes](RECIPES.md)). `--quick` cannot
+be combined with `--json`, `--summary`, `--diff`, `--inventory`, `--stats` or
+`--check`; asking for one of them exits 2.
 
 Options that switch a behavior on or off come in pairs, `--x` and `--no-x`:
 `--interactive`, `--helper-metadata`, `--stats`, `--cross-module`, `--types`,
@@ -70,6 +73,12 @@ Options that switch a behavior on or off come in pairs, `--x` and `--no-x`:
 something have no `--no-x` form: `--explain`, `--json`, `--check`, `--summary`,
 `--diff`, `--inventory` and `--quick`. Write options in full: Towel 2.0 refuses
 an abbreviation such as `--summ`.
+
+Older scripts keep working. `--max-iterations` still means `--max-refactorings`,
+and `--non-interactive` still means `--no-interactive`. `--prefer-absolute-imports`,
+`--pep420` and their `--no-` forms are accepted, warn and do nothing, and
+`preview --interactive` is accepted and does nothing. None of these appears in
+`--help`; use the current names in new scripts.
 
 ## Choose what is examined
 
@@ -82,13 +91,22 @@ towel preview shop/ --cross-module      # also share helpers between modules
 `--exclude` takes a **name**, matched at any depth, not a path or a pattern:
 to leave out `tests/**/hooks`, use `--exclude hooks`. Towel also leaves out
 hidden directories, `__pycache__`, `node_modules`, `build/`, `dist/`,
-`*.egg-info`, virtual environments and files Git ignores; the summary counts
-what it skipped.
+`site-packages/`, `*.egg-info`, virtual environments and files Git ignores; the
+summary counts what it skipped. Naming one of these directories as the target
+analyzes it anyway. `--include-ignored` adds the files Git ignores, but not these
+directories. If Git cannot report its ignore rules, Towel warns and includes the
+files Git might ignore.
 
 Towel reads the whole project around the target, so it knows who imports and
 calls what, but changes only the target. A file that does not parse on the
 Python running Towel is skipped with a warning; with `--strict` the run stops
-instead and names the `--exclude` that would leave it out.
+instead and names the `--exclude` that would leave it out. A file that cannot be
+decoded as text is skipped with a warning in both modes. A target that does not
+end in `.py` is read as Python, with a warning.
+
+Towel reads at most 20,000 Python files around the target. Where it needs the
+whole project and the tree is larger, the run stops: give the code its own
+`pyproject.toml`, `setup.cfg` or `setup.py`, or move it out of the larger tree.
 
 ### Protect a function
 
@@ -121,11 +139,12 @@ towel dry shop/ shop/ --no-interactive --max-refactorings 10
 ```
 
 `--time-limit` bounds setup, analysis and checking; when it expires, nothing
-is written and the exit status is 124. Writing, once started, always
-finishes. It is not a memory limit. `--max-refactorings` stops after that many
+is written and the exit status is 124. Towel notices at its next check, so a run
+can stop a little late, and writing, once started, always finishes. It is not a
+memory limit. `--max-refactorings` stops after that many
 changes, so you can review and commit in steps. `--max-pairs` bounds the pairs
-compared, not time or memory. For memory, use fewer workers: `--jobs 1` or
-`TOWEL_WORKERS=1`.
+compared, not time or memory, and 0 means no limit. For memory, use fewer
+workers: `--jobs 1` or `TOWEL_WORKERS=1`.
 
 A helper must be smaller than the copies it replaces, counting the helper and
 every call, so raising `--max-parameters` or lowering `--min-lines` does not
@@ -135,14 +154,20 @@ make Towel extract everything it then could.
 
 A separate output path must not already exist or overlap the input. Giving the
 input path again as the output is the one exception: it refactors the project
-in place. (The Python API also accepts an empty output directory.)
+in place. (The Python API also accepts an empty output directory.) A file input
+needs a file output: naming a directory exits 1 and suggests the path to use.
+When there is nothing to change, `dry` asks no question, and a separate output
+still receives a copy of the input.
 
 A run does all its work on a private copy and writes only once every check has
 passed. Writing to a new output copies the whole target there. Writing in
 place replaces only the changed files, each atomically, as one batch with a
 journal. The batch as a whole is not atomic to other programs reading the
 files: they can observe a partially applied batch. A failure Towel catches
-puts every file back; interrupted batches retain a recovery journal.
+while writing puts every file back; interrupted batches retain a recovery
+journal. A failure after the files are written, such as while preparing the
+naming data, leaves them written. Each file keeps its line endings, including
+mixed ones, and `dry` warns about any input it could not copy.
 
 Keep other editors off the project while Towel writes. If a file changes after
 Towel read it, Towel refuses to write rather than overwrite the edit. In place,
@@ -151,8 +176,8 @@ Towel leaves alone a file with more than one hard link, and says so first.
 ## Recovery and interrupted writes
 
 If an in-place run is stopped while it writes, it leaves a directory named
-`.towel-transaction-<id>` at the top of what it was changing, holding the
-original files. Give that path to `towel recover`, as in
+`.towel-transaction-<id>`, holding the original files, in the closest directory
+that holds every file it was changing. That can be below the target. Give that path to `towel recover`, as in
 `towel recover shop/.towel-transaction-<id>`, and it restores every file, then
 removes the journal:
 
@@ -180,8 +205,10 @@ towel preview shop/ --stats                  # what became of each pair compared
 
 Results go to stdout; warnings, notes, questions and progress go to stderr, so
 redirecting stdout keeps only the result. `--summary`, `--diff` and `--json`
-exclude one another, and `--quick` takes none of them. Human-readable wording
-can change between releases; scripts should read `--json` and the exit
+exclude one another. By default a run names the five largest places it left
+alone; after a run that extracted something, it omits the pairs it declined, and
+`--explain` shows them. A changed file that cannot be decoded is left out of the
+diff, with a warning naming it. Human-readable wording can change between releases; scripts should read `--json` and the exit
 statuses in the [compatibility contract](COMPATIBILITY.md).
 
 `--stats` counts each pair of similar blocks of the run's last analysis once:
@@ -204,8 +231,12 @@ These are read once, when Towel starts.
 `towel rename-helpers TARGET` renames the helpers Towel wrote and their
 parameters, updating every call. `--list` shows them, `--rename-file FILE`
 applies a JSON mapping, `--preview` shows the diff without writing, and
-`--format` formats the files it changes. A rejected mapping changes nothing
-and exits 2. The [naming guide](NAMING.md) covers it in full.
+`--format` formats the files it changes, and exits 2 if the project's formatter
+is not installed where Towel runs. A mapping file that is not valid JSON exits 1.
+A rejected mapping changes nothing and exits 2. A mapping that is already applied
+changes nothing and exits 0. `--quiet` and `--progress` work as they do for `dry`.
+`--llm` is deprecated: it warns, changes nothing about the prompt, and will be
+removed, so leave it out. The [naming guide](NAMING.md) covers it in full.
 `towel recover JOURNAL` is described [above](#recovery-and-interrupted-writes).
 
 [Documentation index](README.md)

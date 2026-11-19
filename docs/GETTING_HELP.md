@@ -1,5 +1,14 @@
 # Getting help
 
+A useful report fits on one screen:
+
+```text
+towel 2.0, Python 3.13.7, macOS 15
+Command: towel preview src/ --explain
+Printed: src/a.py:3-9 and src/b.py:4-10: <the reason Towel gave>
+Expected: one helper shared by both functions
+```
+
 ## Where to ask
 
 Ask on the [issue tracker](https://github.com/ericeallen/towel/issues). It is the
@@ -25,6 +34,11 @@ A report that lets someone run what you ran gets an answer fastest. Include:
 - **What you expected,** and, if Towel changed your program's behavior, the test
   or output that shows the difference.
 
+The bug-report template on the [new-issue page](https://github.com/ericeallen/towel/issues/new/choose)
+asks for the same things.
+
+## What counts as a bug
+
 **What Towel promises.** A change Towel makes preserves the program's results,
 output, exceptions and order of side effects. This holds for programs that do
 not use reflection or self-instrumentation, including through code they call.
@@ -44,9 +58,6 @@ the project must leave each module's builtin bindings alone, and the program
 must not depend on the identity of equal literals from different modules.
 `--strict` removes these relaxed-mode assumptions. A change that breaks a
 program meeting these conditions is a bug.
-
-The bug-report template on the [new-issue page](https://github.com/ericeallen/towel/issues/new/choose)
-asks for the same things.
 
 ## Security problems
 

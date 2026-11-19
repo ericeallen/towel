@@ -44,16 +44,7 @@ Would change 1 file(s):
 -        raise ValueError("name is too short")
 -    return save(user)
 +    return __extracted_func_0(user, 2)
-
-
- def register_admin(form):
-     admin = dict(form, role="admin")
--    if not admin.get("name"):
--        raise ValueError("name is required")
--    if len(admin["name"]) < 8:
--        raise ValueError("name is too short")
--    return save(admin)
-+    return __extracted_func_0(admin, 8)
+...
 Input files were not changed.
 ```
 
@@ -72,6 +63,10 @@ towel preview src/             # show what would change; writes nothing
 towel dry src/ src/            # make the change in place: commit your work first
 towel rename-helpers src/ --list   # the helpers to name, and their parameters
 ```
+
+The output above comes from an install with Black available. The plain install
+prints a different first line, saying the code is inserted unformatted; the
+[`format` extra](#install) adds Black.
 
 Giving the input path again as the output, as here, refactors the project in
 place. To keep the original, give `dry` a new directory instead:
@@ -110,7 +105,9 @@ describe Towel 2.0; `towel --version` shows the version you have. Versions
 before 2.0 have no relaxed mode (they behave as `--strict` does), no
 `--check` and no `[tool.towel]`. The
 [GitHub releases page](https://github.com/ericeallen/towel/releases) lists every
-published version with its release notes.
+published version with its release notes, and the
+[compatibility policy](https://github.com/ericeallen/towel/blob/v2.0/docs/COMPATIBILITY.md#upgrades-and-support)
+says what beta means for upgrades.
 
 The PyPI package is **[`code-towel`](https://pypi.org/project/code-towel/)**;
 the command is **`towel`**. The PyPI name `towel` belongs to an unrelated project,
@@ -126,8 +123,8 @@ towel --version
 towel --help
 ```
 
-uv picks the newest Python it can, now 3.14 or 3.15, and downloads one when
-the machine has none. On Python 3.14 and later, `--strict` leaves alone what
+uv chooses a compatible Python by its own rules, which can mean 3.14 or 3.15,
+and downloads one when the machine has none. On Python 3.14 and later, `--strict` leaves alone what
 depends on the order Python frees objects, which CPython 3.14 changed, so it
 extracts less; the default, relaxed mode, is the same on every version. If you
 will use `--strict`, install on 3.13 with

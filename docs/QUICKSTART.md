@@ -99,7 +99,9 @@ OK
 
 ## 2. Preview the change
 
-`towel preview` shows what Towel would change, and changes nothing:
+`towel preview` shows what Towel would change, and changes nothing. This output
+comes from an install with Black available; the plain install above prints a
+different first line, explained below the diff:
 
 ```bash
 towel preview demo

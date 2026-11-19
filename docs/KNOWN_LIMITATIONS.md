@@ -2,7 +2,8 @@
 
 Towel checks every change it makes against what your code does, but it reads
 your code as text and structure; it cannot see code that looks at itself.
-Save this as `audit.py`, whose functions record which function called them:
+This page's example ran with Black installed. Save this as `audit.py`, whose
+functions record which function called them:
 
 ```python
 import inspect
@@ -113,8 +114,9 @@ to protect code that uses them:
 - **Copies in different modules**, unless you pass `--cross-module`
   ([sharing across modules](CROSS_MODULE.md)).
 - **Files it cannot read or parse.** A run skips them with a warning and says
-  how many it skipped. With `--strict` it stops instead, and names the
-  `--exclude` that would leave the file out.
+  how many it skipped. With `--strict`, a file that does not parse stops the run
+  instead, which names the `--exclude` that would leave the file out; a file
+  that cannot be decoded as text is still skipped with a warning.
 - **Code under a formatter or linter directive** such as `# fmt: off` or
   `# pylint: disable`, and copies whose comments carry different directives.
 - **Changes the type checker rejects**, in a project it can type-check

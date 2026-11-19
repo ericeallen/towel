@@ -1,5 +1,20 @@
 # Relaxed and strict
 
+The same extraction, as each mode writes the caller:
+
+```python
+# Relaxed mode, the default
+def checkout_total(amount):
+    return __extracted_func_0(amount, 0.10)
+
+
+# Strict mode, --strict
+def checkout_total(amount):
+    _towel_arguments = [(amount,)]
+    del amount
+    return __extracted_func_0(_towel_arguments[0][0], 0.10, _towel_arguments.pop())
+```
+
 Towel 2.0 has two modes. Relaxed mode, the default, makes three assumptions
 that nearly every program satisfies, and in return extracts far more code and
 writes plain calls. Strict mode, `--strict`, makes none of them, as every
@@ -9,7 +24,7 @@ release before 2.0 did.
 the order in which a function's variables are freed, and strict mode's proofs
 about that order cover CPython 3.11 to 3.13. On 3.14 and later it leaves alone
 whatever depends on that order, with the reason `lifetime_order_uncertified`;
-the strict examples on this page show 3.13. If you will use `--strict`,
+the strict examples on this page show 3.13, with Black installed. If you will use `--strict`,
 install Towel on 3.13: `uv tool install --python 3.13 code-towel`. Relaxed
 mode behaves the same on every version.
 
@@ -35,7 +50,7 @@ must not depend on the identity of equal literals from different modules.
 `--strict` removes these relaxed-mode assumptions. A change that breaks a
 program meeting these conditions is a bug.
 
-Use `--strict` when your program, or its tests, depend on one of the three:
+Use `--strict` when your program, or its tests, depend on any of these:
 
 - **When objects are freed**: a `__del__` that does work others wait for, a
   weak-reference callback, a `gc.callbacks` hook, or a test that checks that a
@@ -46,9 +61,12 @@ Use `--strict` when your program, or its tests, depend on one of the three:
 - **Rebinding while code runs**: a module's function, class or imported name
   replaced while the code that calls it is running, as a monkeypatch inside a
   callback, or another thread, can do.
+- **Resources your own code builds**: a temporary directory, file or socket
+  that a function of yours creates and returns
+  ([below](#resources-relaxed-mode-protects)).
 
 Otherwise, use the default. When Towel sees code that may depend on when
-objects are freed, a relaxed run says so before anything else
+objects are freed, a relaxed run says so in a note as it starts
 ([below](#the-notice-relaxed-mode-prints)).
 
 ## The two modes on one example
@@ -151,17 +169,36 @@ These are its three assumptions:
 Relaxed mode also lets a lambda that uses only its own parameters move into a
 helper, which changes the lambda's `__qualname__`; only reflection can see it.
 
-One kind of object is protected even in relaxed mode: one that cleans up
-something the program can still reach another way. A temporary directory, an
-open file or socket, a process pool, a memory map or a weak reference created
-in a block keeps working after extraction, or the block is left alone with
-the reason `resource_lifetime_unproven`. A `with` statement around the
-resource always works.
+## Resources relaxed mode protects
+
+Some objects clean up something the program can still reach another way: a
+temporary directory disappears when its object is freed, even if the program
+still holds the path. When a block calls a constructor Towel recognizes, the
+helper hands the object back so that it stays alive, or the block is left alone
+with the reason `resource_lifetime_unproven`. The list covers `tempfile`'s
+temporary files and directories, `open`, sockets, `multiprocessing` pools,
+`mmap.mmap` and the `weakref` module's references
+([the exact list](design/DECISIONS.md#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes)).
+A `with` statement inside the block also keeps the resource safe.
+
+The protection is a list of constructors, not a proof. Towel does not know what
+your own function returns:
+
+```python
+def make_dir():
+    return tempfile.TemporaryDirectory()
+```
+
+If a block calls `make_dir()` and only the path is used after it, the helper's
+return frees the directory, and the later use raises `FileNotFoundError`. The
+same goes for a weak container Towel does not recognize. For code like this, use
+`--strict`, or have the code after the block read the object itself, so that
+the helper returns it.
 
 ## The notice relaxed mode prints
 
 When Towel sees code in the project that may depend on when objects are
-freed, a relaxed run says so before anything else. Save this as `handles.py`:
+freed, a relaxed run says so in a note as it starts. Save this as `handles.py`:
 
 ```python
 class Handle:
@@ -189,7 +226,9 @@ Input files were not changed.
 
 The note is a hint, not a verdict: here `Handle` has nothing to do with
 `fetch.py`, and the extraction is safe. Read the places it names and decide.
-`--quiet` hides the note; `--json` reports it in `relaxed_findings`.
+`--quiet` hides the note; `--json` reports it in `relaxed_findings`. In a
+project with a `[tool.towel]` table, the line naming that table comes first, and
+`--quiet` does not hide it.
 
 ## Making strict the default
 
@@ -297,5 +336,7 @@ The caller hands its argument to the helper and deletes its own reference;
 the helper's last parameter, `_towel_owner`, holds it until the helper
 returns, which is when the caller would have released it. Relaxed mode writes
 `return __extracted_func_0(amount, 0.10)`.
+
+**Next:** [reading Towel's output](GENERATED_CODE.md) explains the code each mode writes.
 
 [Documentation index](README.md)

@@ -2,8 +2,9 @@
 
 By default Towel shares a helper only within one module. With `--cross-module`
 it also shares one between modules: the helper goes into one of them and the
-others import it. In this project, `shop/invoices.py` imports `shop.orders`
-and repeats the calculation in `order_total`:
+others import it. In this project, which configures Black with Black installed,
+`shop/invoices.py` imports `shop.orders` and repeats the calculation in
+`order_total`:
 
 ```bash
 towel preview shop/ --cross-module
@@ -98,8 +99,14 @@ that only some platforms or Python versions can import.
   helper below the imports; otherwise add `# noqa: E402` to them.
 - **Builtins and modules read directly.** In relaxed mode, the default, a
   shared helper reads a builtin such as `len`, or a module both sides import
-  the same way, directly, unless the project could rebind that name.
-  `--strict` passes them in as arguments.
+  the same way, directly, unless the project could rebind that name. Code
+  outside the project that rebinds one goes unseen, and equal literals move
+  into the helper, so comparing them with `is` can give a different answer. A
+  program that does either needs `--strict`, which passes an imported module in
+  as an argument and keeps each literal in its own module. Strict mode leaves
+  alone a block that reads a builtin across modules, unless you pass
+  `--parameterize-builtins`, which hands each caller's builtin to the helper in
+  either mode.
 - **Python API.** `cross_module_helpers=True` turns the feature on for an
   engine ([Python API](USAGE_GUIDE.md)).
 
@@ -107,37 +114,15 @@ that only some platforms or Python versions can import.
 
 A run that cannot tell which file an import names, or which copy of a module
 the program runs, refuses to share that module's code (`unproven_import`), and
-before it starts it names each such problem with its remedy:
-
-- a second copy in the tree, such as a stale `build/lib/alpha` beside
-  `src/alpha`, or an import that names a module two ways or climbs out of
-  its package: leave out the directory holding it with `--exclude`, or fix
-  the import;
-- a symbolic or hard link that gives a file a second name the program uses,
-  such as `beta -> src/alpha` beside `alpha`, a file link `tool.py`, or a
-  link inside a package that an import goes through: replace the link with a
-  copy of what it names, or import that file by one name only;
-- a copy the interpreter running Towel can import from outside the project,
-  including one installed in the project's own `.venv`: `--exclude` cannot
-  reach it, so run Towel from an environment where that name is this tree,
-  such as one with the project installed editable (`pip install -e .`), or
-  from one without it; if the project's directory of that name is a
-  namesake, leaving it out with `--exclude` also resolves it;
-- a directory named like a distribution the project requires, such as a
-  `click/` beside `dependencies = ["click>=8"]`, which is what the installed
-  project imports as `click`: rename the directory or leave it out with
-  `--exclude`, or drop the requirement if the directory is what the program
-  means;
-- a directory lacking a module the program imports under its name, from
-  outside it, such as a `third_party/click/` holding `utils.py` when the
-  program also imports `click.core`: if the program means the library,
-  rename the directory or leave it out with `--exclude`; if it means the
-  directory, fix that import or leave out the directory holding it. The
-  directory's own import of a module it lacks (a generated `_version.py`)
-  is no such sign, and nor is any when the project's metadata names the
-  project as the name's distribution, as sphinx's names `Sphinx`.
+before it starts it names each such problem with its remedy. The commonest is a
+second copy in the tree, such as a stale `build/lib/alpha` beside `src/alpha`:
+leave out the directory holding it with `--exclude`, or fix the import.
+[Import refusals and their remedies](design/CROSS_MODULE_RULES.md#import-refusals-and-their-remedies)
+lists the others.
 
 Every rule Towel follows, including the build tools and dependency files it
 reads, is in [cross-module sharing, in full](design/CROSS_MODULE_RULES.md).
+
+**Next:** [typed projects](TYPING.md) covers checking a shared helper.
 
 [Documentation index](README.md)

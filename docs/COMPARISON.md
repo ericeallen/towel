@@ -1,17 +1,23 @@
 # How Towel compares
 
+A clone detector reports `Similar lines in 2 files`. Towel writes the change:
+
+```python
+return __extracted_func_0(user, 2)
+```
+
 Several tools deal with duplicated code. Most find it and leave the change to
 you; Towel makes the change, and makes only changes it can show keep your
 program's behavior. Which you want depends on the job.
 
-| Tool | Finds duplication | Changes your code | Checks the change |
+| Tool | Finds duplication | Changes your code | Checks that behavior is kept |
 | --- | --- | --- | --- |
 | pylint's duplicate-code check | Yes, Python | No | — |
 | jscpd | Yes, over 220 languages | No, though an optional skill asks an AI assistant to | Only as the assistant's own re-run of tests and jscpd |
 | PMD's CPD | Yes, many languages including Python | No | — |
-| An IDE's extract-method | Only copies of the code you select | Yes, the code you select | No |
+| An IDE's extract-method | Only copies of the code you select | Yes, the code you select | Checks that the selection can be extracted, not how the program behaves |
 | An AI assistant | If you ask | Yes | No: you review and test it |
-| Towel | Yes, Python | Yes, into shared helpers | Yes, before writing |
+| Towel | Yes, Python | Yes, into shared helpers | Yes, before writing, under the conditions below |
 
 ## Clone detectors: pylint, jscpd and PMD CPD
 
