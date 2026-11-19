@@ -139,6 +139,14 @@ is now a site, and shows every command's output.
 - A crash on a namespace package whose modules mypy renamed.
 - After `--time-limit` exits with status 124, later commands and API calls in
   the same process use their own skipped files and exclusions.
+- `--time-limit` in a process that inherits a running interval timer exits 1
+  with `Error: --time-limit conflicts with an already active interval timer`,
+  and leaves that timer running. With `--json`, Towel emits one error result.
+- On Python 3.11 and 3.12, a symlink loop met during project discovery is a
+  normal command-line error, with valid JSON under `--json`.
+- A strict parse refusal also says when the running Python is below the
+  project's declared minimum.
+- The guide links in an installed command's help point to the built guides.
 - Group SIGINT and SIGTERM always exit 130 and 143, even when workers die first.
 - `preview` no longer fails on a file that does not decode.
 - Negative counts and huge time limits give argument errors, not tracebacks.

@@ -34,9 +34,10 @@ verdict records that review. Any other change is a defect.
 At this checkpoint the candidate had passed integration testing only (three
 full runs on `1bf3da59` without failures, and a full `--towel-strict` run on
 Python 3.13 one test-only commit before the final integration candidate
-`eabb9d47`); the release campaign, remote CI and
-publication had not started. Their results are recorded with the release, not
-in this file.
+`eabb9d47`). The release candidate adds the repairs for the failures found on
+Python 3.11 and 3.12 and the documentation audit's corrections. The release
+campaign on that candidate, remote CI and publication had not started. Their
+results are recorded with the release, not in this file.
 
 ## 1.949 published release, November 10, 2026
 
