@@ -84,19 +84,34 @@ A module can share a helper with another only if one of them already imports the
 Input files were not changed.
 ```
 
-Add the import if the modules belong together, and run Towel again. Towel
-also shares nothing between modules of different distributions (directories
+If the only obstacle is a missing import and the modules belong together, add
+it and run Towel again. For `import_cycle`, check the package's `__init__.py`
+as well as the two modules. Importing `shop.orders` runs the package
+initializer, which may itself import `shop.invoices` to re-export a function.
+Towel follows that path even if `orders.py` never mentions invoices. Another
+import cannot break the cycle. Leave the copies alone unless the re-export
+can be removed without changing the package's public API.
+
+Towel also shares nothing between modules of different distributions (directories
 with their own `pyproject.toml`, `setup.cfg` or `setup.py`). A module the
 build ships never borrows a helper from one the build leaves out, or from one
 that only some platforms or Python versions can import.
 
+## When Ruff reports E402
+
+A shared helper goes before the host module's ordinary imports so it can be
+called while the module is loading. If the project's Ruff rules select E402
+("module level import not at top of file"), Towel runs Ruff on the proposed
+change. Both `preview` and `dry` drop a change that introduces E402, even with
+`--no-format`. To keep the rule, leave the copies alone. If the project
+allows late imports in this module, add E402 to Ruff's `per-file-ignores` for
+the host and preview again.
+
 ## After a cross-module run
 
-- **Imports below the helper.** A helper goes before the host module's other
-  imports, so that it exists even while the module is still being imported.
-  Ruff and flake8 then report those imports as E402, "module level import not
-  at top of file". If no module imports the host back while it loads, move the
-  helper below the imports; otherwise add `# noqa: E402` to them.
+- **Imports below the helper.** If your own lint check flags those imports
+  after a change, move the helper below them only if no module needs the helper
+  while the host is loading.
 - **Builtins and modules read directly.** In relaxed mode, the default, a
   shared helper reads a builtin such as `len`, or a module both sides import
   the same way, directly, unless the project could rebind that name. Code
@@ -123,6 +138,6 @@ lists the others.
 Every rule Towel follows, including the build tools and dependency files it
 reads, is in [cross-module sharing, in full](design/CROSS_MODULE_RULES.md).
 
-**Next:** [typed projects](TYPING.md) covers checking a shared helper.
+**Next:** [Naming helpers](NAMING.md) shows how to rename a helper and its callers.
 
 [Documentation index](README.md)

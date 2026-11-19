@@ -235,6 +235,6 @@ the run lists by default ([automation](COMPATIBILITY.md)).
 
 <!-- END reason table -->
 
-**Next:** [using Towel on a project](USING_TOWEL.md) takes a change from branch to commit.
+**Next:** [Typed projects](TYPING.md) explains how a type checker can affect an extraction.
 
 [Documentation index](README.md)

@@ -34,7 +34,7 @@ unannotated bodies to obtain more than `Any`.
 
 Configured mypy plugins, including django-stubs, pydantic and SQLAlchemy
 plugins, run in every check. They execute project-configured code. If a plugin
-cannot load, the typed run refuses before writing and includes mypy's error.
+cannot load, mypy's error appears in the [baseline failure](#checker-failures).
 
 Run Towel in an environment with the dependencies and checker setup the
 project needs. See [checker setup in the API guide](PYTHON_API_REFERENCE.md#formatting-and-type-checker-setup)
@@ -139,9 +139,11 @@ verify.
 
 ### Checker failures
 
-A checker that crashes, times out or cannot load its plugins during a run
-refuses the typed run: Towel does not switch to untyped extraction part-way.
-Fix the checker setup, or choose `--no-types`.
+If the checker crashes, times out or cannot load a plugin during the baseline
+check, the engine raises `BaselineTypeCheckError` in both modes. The relaxed
+CLI warns and starts over with unannotated helpers. The strict CLI exits with
+status 1. Once a baseline check succeeds, a checker failure on a proposed
+change causes Towel to decline that change.
 
 ## Constructing annotations
 

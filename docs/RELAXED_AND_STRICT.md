@@ -149,26 +149,6 @@ be released when the helper returns, a moment earlier, and in a different
 order from `client` and `user_id`. No ordinary program can tell. Strict mode
 assumes yours might.
 
-## What relaxed mode assumes, in detail
-
-Relaxed mode keeps what your program computes and does: its return values,
-output and exceptions, and the order of the side effects its calls perform.
-These are its three assumptions:
-
-1. **Your program does not depend on when Python frees an object it no longer
-   uses**, or in what order. Python's own language reference leaves that to
-   the implementation, and CPython 3.14 changed the order. This matters only
-   to code with `__del__` methods, weak-reference callbacks or garbage
-   collector hooks whose timing is part of what the program does.
-2. **Reading an attribute, indexing, comparing and arithmetic have no side
-   effects**, and testing a value's truth gives the same answer twice. They may
-   still fail, and where they fail is kept.
-3. **A module's functions, classes and imports are not rebound while a helper
-   runs**, as a test's monkeypatch can do.
-
-Relaxed mode also lets a lambda that uses only its own parameters move into a
-helper, which changes the lambda's `__qualname__`; only reflection can see it.
-
 ## Resources relaxed mode protects
 
 Some objects clean up something the program can still reach another way: a
@@ -337,6 +317,6 @@ the helper's last parameter, `_towel_owner`, holds it until the helper
 returns, which is when the caller would have released it. Relaxed mode writes
 `return __extracted_func_0(amount, 0.10)`.
 
-**Next:** [reading Towel's output](GENERATED_CODE.md) explains the code each mode writes.
+**Next:** [Why something was left alone](WHY_LEFT_ALONE.md) explains the reasons in a run's summary.
 
 [Documentation index](README.md)

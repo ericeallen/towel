@@ -214,6 +214,6 @@ rename changes with the project's Ruff or Black, and exits 2 if that formatter i
 not installed where Towel runs (the `format` extra installs both). Without
 `--format`, Towel says which formatter command would restore the project's layout.
 
-**Next:** [using Towel on a project](USING_TOWEL.md) covers testing and committing the result.
+**Next:** [Recipes](RECIPES.md) shows how to run Towel in CI or from a pre-commit hook.
 
 [Documentation index](README.md)

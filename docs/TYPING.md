@@ -166,9 +166,13 @@ Towel cannot check what the checker cannot see:
 
 ## Reading a typed helper
 
-- **Quoted annotations.** `"list[Item]"` is quoted because the helper comes
-  before `Item` is defined. Towel also quotes a form the project's oldest
-  Python, from `requires-python`, could not evaluate.
+- **Quoted annotations.** Without `from __future__ import annotations`, Towel
+  quotes compound types such as `list[Item]` and `list[str]` in a helper.
+  Even a subscript can run user code when Python evaluates it. A simple name
+  such as `int` can stay bare if it is already bound where the helper is
+  defined. Towel also quotes syntax too new for the project's oldest Python.
+  With the future import, Python postpones evaluation, so both list types in
+  this example can stay bare.
 - **The `/`** makes the generated parameters positional-only, so a name such
   as `__param_0` is never passed by keyword. Towel adds it when
   `requires-python` allows. `rename-helpers` keeps it; delete it after

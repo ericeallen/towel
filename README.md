@@ -95,6 +95,11 @@ must not depend on the identity of equal literals from different modules.
 `--strict` removes these relaxed-mode assumptions. A change that breaks a
 program meeting these conditions is a bug.
 
+Pytest normally rewrites assertions in test files. Running your tests
+against `src/` does not require marking your application code. Use
+`--exclude tests` to skip that directory, or put `# towel: no-extract` on
+the `def` line of a test function whose assertions need rewriting.
+
 [Relaxed and strict](https://github.com/ericeallen/towel/blob/v2.0/docs/RELAXED_AND_STRICT.md)
 explains each assumption and when to use `--strict`.
 
