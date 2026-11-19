@@ -147,20 +147,20 @@ is now a site, and shows every command's output.
 - A strict parse refusal also says when the running Python is below the
   project's declared minimum.
 - The guide links in an installed command's help point to the built guides.
-- Group SIGINT and SIGTERM exit 130 and 143, respectively, even when workers die first.
-- When a deadline poll expires just before its alarm fires, Towel finishes progress
-  cleanup and reports `time_limit` with exit status 124.
+- Ctrl-C, SIGTERM or a `--time-limit` that arrived while Towel was drawing
+  progress or talking to a type checker could leave the command hung instead
+  of exiting (130, 143 or 124). One signal now stops it, on every supported
+  Python, including 3.14.
+- Group SIGINT and SIGTERM exit 130 and 143, respectively, even when workers
+  die first.
+- When a deadline poll expires just before its alarm fires, Towel finishes
+  progress cleanup and reports `time_limit` with exit status 124.
 - `preview` no longer fails on a file that does not decode.
 - Negative counts and huge time limits give argument errors, not tracebacks.
 - Inserted helpers keep section comments with the code they belonged to;
   helpers shared across modules get two blank lines; `rename-helpers --list`
   keeps method indentation; mixed line endings are preserved; `dry` warns
   about inputs it could not copy.
-
-### Known issues
-
-- If the terminal stops reading Towel's output (a paused or unread terminal), a time limit or interrupt can
-  wait until the terminal resumes.
 
 ### Maintenance
 
