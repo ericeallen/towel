@@ -33,6 +33,7 @@ from itertools import count
 from pathlib import Path
 import signal
 import sys
+import threading
 from types import FrameType
 from typing import TYPE_CHECKING, Callable, Iterator, Optional
 
@@ -99,6 +100,31 @@ def command_line_signal_handlers() -> Iterator[None]:
         signal.signal(number, handler)
 
 
+@pytest.fixture(autouse=True)
+def another_thread_is_traced() -> Iterator[None]:
+    """Trace a second thread, as coverage traces tqdm's monitor thread in the full suite.
+
+    The signal's exception unsets only this thread's tracer, so the other thread
+    keeps opcode events switched on. Python 3.12 then calls the unset tracer, a
+    null pointer, from any frame still asking for opcode events (3.13 checks for
+    it since gh-103615). The harness must leave no frame asking when it raises.
+    """
+    tracing = threading.Event()
+    finished = threading.Event()
+
+    def trace_until_finished() -> None:
+        sys.settrace(lambda frame, event, arg: None)
+        tracing.set()
+        finished.wait()
+
+    companion = threading.Thread(target=trace_until_finished, daemon=True)
+    companion.start()
+    tracing.wait()
+    yield
+    finished.set()
+    companion.join()
+
+
 @dataclass(frozen=True)
 class Interruption:
     """A signal a run can receive, and the exception that unwinds the run."""
@@ -138,13 +164,22 @@ def _run_until_interrupted(
     ``afterward`` runs where the caller continues, while the exception is still held.
     """
     fired_in: list[str] = []
+    asking_for_opcodes: list[FrameType] = []
+
+    def stop_asking_for_opcodes() -> None:
+        """Python 3.12 crashes running a frame that asks for opcode events after the tracer is unset."""
+        while asking_for_opcodes:
+            asking_for_opcodes.pop().f_trace_opcodes = False
 
     def trace(frame: FrameType, event: str, arg: object) -> Optional[TraceFunction]:
         if frame.f_code is body.__code__:
             return None  # The caller's own bytecode is not part of the policy's window.
+        if not frame.f_trace_opcodes:
+            asking_for_opcodes.append(frame)
         frame.f_trace_opcodes = True
         if event == "opcode" and not fired_in and fires_here(frame):
             fired_in.append(frame.f_code.co_qualname)
+            stop_asking_for_opcodes()  # The exception unsets the tracer before unwinding.
             signal.raise_signal(interruption.signal_number)
         return trace
 
@@ -154,25 +189,35 @@ def _run_until_interrupted(
 
     def caller() -> None:
         caught: Optional[BaseException] = None
-        # Python 3.12 enables opcode events only if a frame requests them
-        # when settrace is installed. Waiting for the first call event is too late.
-        frame = sys._getframe()
-        previous_opcodes = frame.f_trace_opcodes
-        frame.f_trace_opcodes = True
+        _let_settrace_switch_on_opcode_events()
         sys.settrace(trace)
         try:
             body()
         except interruption.raises as error:
             caught = error
         finally:
-            frame.f_trace_opcodes = previous_opcodes
             sys.settrace(previous_trace)  # Disarming the budget is not part of the window.
+            stop_asking_for_opcodes()  # A suspended generator may resume untraced.
         afterward()
         where = fired_in[0] if fired_in else None
         attempts.append(Attempt(where, caught, current_source_policy()))
 
     run_with_budget(3600, caller)
     return attempts[0]
+
+
+def _let_settrace_switch_on_opcode_events() -> None:
+    """Python 3.12 switches opcode events on in settrace only once some frame has asked.
+
+    Waiting for the first call event is too late. The frame that asks has
+    returned: on 3.12, a running frame that asks while its own thread has no
+    tracer crashes the interpreter when another thread is traced.
+    """
+    _returned_frame().f_trace_opcodes = True
+
+
+def _returned_frame() -> FrameType:
+    return sys._getframe()
 
 
 def _at_step(step: int) -> FiresHere:
