@@ -330,8 +330,9 @@ def test_a_directory_the_server_does_not_analyze_falls_back_to_the_command_line(
     assert result.errors == ()
 
 
+@pytest.mark.parametrize("interrupt_reader", [False, True])
 def test_a_session_that_cannot_start_leaves_no_process_behind(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupt_reader: bool
 ) -> None:
     """A constructor that raises binds no object, so it must clean up itself."""
     started: List[subprocess.Popen[bytes]] = []
@@ -344,14 +345,30 @@ def test_a_session_that_cannot_start_leaves_no_process_behind(
 
     monkeypatch.setattr("towel.pyright_session.subprocess.Popen", remember)
     monkeypatch.setattr(pyright_session, "START_TIMEOUT_SECONDS", 0.05)
-    command = type_inference._pyright_langserver_command()
-    if command is None:
-        pytest.skip("pyright is absent")
-    with pytest.raises(pyright_session.SessionFailure):
-        pyright_session.PyrightSession(command, tmp_path, sys.executable)
-    assert started, "no server was started, so this proved nothing"
-    for process in started:
-        assert process.poll() is not None, "the server outlived the failed constructor"
+    command: list[str] | None
+    if interrupt_reader:
+
+        def interrupt(thread: threading.Thread) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(threading.Thread, "start", interrupt)
+        command = [sys.executable, "-c", "import time; time.sleep(60)"]
+    else:
+        command = type_inference._pyright_langserver_command()
+        if command is None:
+            pytest.skip("pyright is absent")
+    try:
+        with pytest.raises(
+            KeyboardInterrupt if interrupt_reader else pyright_session.SessionFailure
+        ):
+            pyright_session.PyrightSession(command, tmp_path, sys.executable)
+        assert started, "no server was started, so this proved nothing"
+        for process in started:
+            assert process.poll() is not None, "the server outlived the failed constructor"
+    finally:
+        for process in started:
+            process.kill()
+            process.wait(timeout=5)
 
 
 @pytest.mark.skipif(sys.version_info[:2] != (3, 14), reason="3.14 checks signals at lock entry")
@@ -389,3 +406,47 @@ def test_interrupt_at_write_lock_entry_leaves_the_reader_able_to_answer() -> Non
     peer.start()
     peer.join(timeout=2)
     assert acquired.is_set(), "the main thread stranded the pyright reader's write lock"
+
+
+def test_interrupt_can_close_a_session_while_its_reader_is_blocked_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Alarm review C: shutdown cannot ask a stalled reader for the write lock again."""
+    monkeypatch.setattr(pyright_session.PyrightSession, "_initialize", lambda self: None)
+    session = pyright_session.PyrightSession(
+        [sys.executable, "-c", "import time; time.sleep(60)"], tmp_path, sys.executable
+    )
+    process = session._process
+    writing, needed_watchdog = threading.Event(), threading.Event()
+
+    def stalled_reader() -> None:
+        assert process.stdin is not None
+        with session._writing:
+            writing.set()
+            try:
+                process.stdin.write(b"x" * (1 << 20))
+            except BrokenPipeError:
+                pass
+
+    def unstick() -> None:
+        needed_watchdog.set()
+        process.kill()
+
+    reader = threading.Thread(target=stalled_reader, daemon=True)
+    watchdog = threading.Timer(3, unstick)
+    reader.start()
+    watchdog.start()
+    try:
+        assert writing.wait(2)
+        with pytest.raises(KeyboardInterrupt):
+            try:
+                raise KeyboardInterrupt
+            finally:
+                session.close()
+        reader.join(timeout=1)
+        assert not needed_watchdog.is_set(), "shutdown waited on the stalled reader"
+        assert process.poll() is not None and not reader.is_alive()
+    finally:
+        watchdog.cancel()
+        process.kill()
+        process.wait(timeout=5)
