@@ -108,18 +108,35 @@ def another_thread_is_traced() -> Iterator[None]:
     keeps opcode events switched on. Python 3.12 then calls the unset tracer, a
     null pointer, from any frame still asking for opcode events (3.13 checks for
     it since gh-103615). The harness must leave no frame asking when it raises.
+
+    The companion unsets its tracer before it exits: a thread that exits traced
+    stays counted as tracing, which keeps opcode events instrumented for every
+    later module and recreates this crash condition there.
     """
     tracing = threading.Event()
     finished = threading.Event()
+    startup_failure: list[BaseException] = []
 
     def trace_until_finished() -> None:
-        sys.settrace(lambda frame, event, arg: None)
-        tracing.set()
-        finished.wait()
+        try:
+            sys.settrace(lambda frame, event, arg: None)
+        except BaseException as error:
+            # The test thread reports it; otherwise it would wait forever.
+            startup_failure.append(error)
+            return
+        finally:
+            tracing.set()
+        try:
+            finished.wait()
+        finally:
+            sys.settrace(None)
 
     companion = threading.Thread(target=trace_until_finished, daemon=True)
     companion.start()
     tracing.wait()
+    if startup_failure:
+        companion.join()
+        raise startup_failure[0]
     yield
     finished.set()
     companion.join()
