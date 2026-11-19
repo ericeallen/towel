@@ -445,10 +445,10 @@ def test_r1792_engine_output_stays_formatted_after_insertion(tmp_path: Path, too
     original = formatter(fixture.read_text()) + "\n"
     path.write_text(original)
     result = _refactor(path, snippet_formatter=formatter)
-    if not lifetime_order_certified():
-        assert result is None
-        return
     assert result is not None
+    if not lifetime_order_certified():
+        # Only the concatenation moves. Each caller still owns its greeting.
+        assert result.count("return greeting.strip()") == 2
     assert formatter(result) == result.rstrip("\n")
     assert _evaluate(result) == _evaluate(original)
     assert result != original
