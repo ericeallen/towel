@@ -83,7 +83,7 @@ Issues = "https://github.com/ericeallen/towel/issues"
 Repository = "https://github.com/ericeallen/towel"
 
 [project.scripts]
-towel = "towel.__main__:main"
+towel = "towel.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

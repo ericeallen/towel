@@ -30,6 +30,7 @@ import pytest
 from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
 from tests.test_cli_integration import invoke
 from tests.test_helpers import lifetime_order_certified
+from tests.test_progress_renderer import read_terminal, terminal
 from towel import cli
 from towel.execution_budget import BudgetExpired
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -473,7 +474,7 @@ def test_exit_notice_reaches_stderr_when_the_terminal_cannot_be_reopened(
     assert capsys.readouterr().err == "\r\x1b[2KInterrupted.\n"
 
 
-def _cancel_after_peer_draw(number: int) -> None:
+def _cancel_after_peer_draw(number: int, write_diagnostics: bool) -> None:
     import threading
     from towel.unification.progress import ProgressRenderer
 
@@ -489,11 +490,10 @@ def _cancel_after_peer_draw(number: int) -> None:
         signal.raise_signal(number)
     finally:
         renderer.close()
-        # Both Python finalizers and native code bypass the progress writer.
-        os.write(2, b"cleanup\n")
-        print("cleanup", file=inherited_stderr, flush=True)
-        sys.stderr.write("finished cleanup\n")
-        sys.stderr.flush()
+        if write_diagnostics:
+            os.write(2, b"raw cleanup\n")
+            print("saved stream cleanup", file=inherited_stderr, flush=True)
+            print("current stream cleanup", file=sys.stderr, flush=True)
 
 
 @pytest.mark.parametrize(
@@ -504,29 +504,30 @@ def _cancel_after_peer_draw(number: int) -> None:
         (signal.SIGTERM, 143, None),
     ],
 )
-def test_cancellation_reports_json_while_terminal_output_is_stopped(
-    tmp_path: Path, number: int, status: int, termination: str | None
+@pytest.mark.parametrize("stopped", [False, True], ids=["live", "stopped"])
+def test_cancellation_on_a_terminal(
+    tmp_path: Path, number: int, status: int, termination: str | None, stopped: bool
 ) -> None:
-    """Alarm review: the optional terminal notice must not block the exit or the JSON."""
-    import pty
+    """Progress tolerates a stopped terminal and cleanup diagnostics reach a live one."""
     import termios
 
     source = _source(tmp_path)
-    master, slave = pty.openpty()
-    try:
-        termios.tcflow(slave, termios.TCOOFF)
-        fill = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
-        try:
-            with pytest.raises(BlockingIOError):
-                while True:
-                    os.write(fill, b"." * 8192)
-        finally:
-            os.close(fill)
+    with terminal() as (stream, master):
+        slave = stream.fileno()
+        if stopped:
+            termios.tcflow(slave, termios.TCOOFF)
+            fill = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+            try:
+                with pytest.raises(BlockingIOError):
+                    while True:
+                        os.write(fill, b"." * 8192)
+            finally:
+                os.close(fill)
         script = (
             "import signal, sys; from towel import cli; n = int(sys.argv.pop(1)); "
             "signal.signal(signal.SIGINT, signal.default_int_handler); "
             "from tests.test_cli_result_contract import _cancel_after_peer_draw; "
-            "cli._dispatch = lambda *_: _cancel_after_peer_draw(n); "
+            f"cli._dispatch = lambda *_: _cancel_after_peer_draw(n, write_diagnostics={not stopped}); "
             "import runpy; runpy.run_module('towel', run_name='__main__')"
         )
         run = subprocess.run(
@@ -554,6 +555,7 @@ def test_cancellation_reports_json_while_terminal_output_is_stopped(
         else:
             assert json.loads(run.stdout)["termination"] == termination
         assert os.get_blocking(slave)
-    finally:
-        os.close(master)
-        os.close(slave)
+        if not stopped:
+            output = read_terminal(master)
+            for diagnostic in ("raw cleanup", "saved stream cleanup", "current stream cleanup"):
+                assert diagnostic in output
