@@ -772,6 +772,46 @@ def _reported_exception(function: ast.AST, handler: ast.ExceptHandler) -> bool:
     return False
 
 
+def _stable_handler_inputs(
+    module: ast.Module, caller: ast.FunctionDef, call: ast.Call, free: frozenset[str]
+) -> bool:
+    """Prove every eager input already exists and keeps its binding throughout the block.
+
+    The generated closure takes no arguments. Its outer function binds its parameters
+    on entry, assigns literals unconditionally, defines the closure and calls it.
+    With no nonlocal writer, taking those inputs by value preserves their lookups.
+    """
+    if _spelled_names(caller.args) or caller.decorator_list:
+        return False
+    if caller in module.body:
+        return not call.args
+    for outer in module.body:
+        if not isinstance(outer, ast.FunctionDef) or caller not in outer.body:
+            continue
+        if len(outer.body) < 2 or outer.body[-2] is not caller:
+            return False
+        match outer.body[-1]:
+            case ast.Return(value=ast.Call(func=ast.Name(id=name), args=[], keywords=[])):
+                if name != caller.name:
+                    return False
+            case _:
+                return False
+        available = {
+            arg.arg for arg in outer.args.posonlyargs + outer.args.args + outer.args.kwonlyargs
+        }
+        for statement in outer.body[:-2]:
+            match statement:
+                case ast.Assign(targets=[ast.Name(id=name)], value=ast.Constant()):
+                    available.add(name)
+                case _:
+                    return False
+        return all(
+            isinstance(arg, ast.Name) and arg.id in free & available and arg.id != caller.name
+            for arg in call.args
+        ) and not any(isinstance(node, ast.Nonlocal) for node in ast.walk(caller))
+    return False
+
+
 def _retains_local_across_handler(
     caller: ast.AST,
     block: Sequence[ast.stmt],
@@ -781,7 +821,17 @@ def _retains_local_across_handler(
     *,
     loop: bool,
 ) -> bool:
-    """Only the scalar producer and the handler's temporary belong to the moved block."""
+    """Prove the lifetime slot for the two release shapes.
+
+    The direct assignment binds the returned local before entering the try.
+    The only other moved local is the exception target. Each paired handler
+    binds it on entry, reports it, then implicitly clears it on exit. The name
+    is private to that handler on each side, so clearing a renamed target
+    cannot leave a caller binding alive. Only the scalar producer can survive
+    the block. On normal exit the helper returns it into the unread caller slot.
+    In the single-pass loop the call executes at most once, so the slot holds
+    that reference through the caller's return without overwriting an earlier one.
+    """
     returned = helper.body[-1]
     if not (
         isinstance(assignment.targets[0], ast.Name)
@@ -790,28 +840,32 @@ def _retains_local_across_handler(
     ):
         return False
     name = returned.value.id
-    initialized = False
     for index, statement in enumerate(helper.body[:-1]):
         if isinstance(statement, ast.Try):
             break
-        if not initialized and name in _spelled_names(statement):
-            match statement:
-                case ast.Assign(targets=[ast.Name(id=target)], value=value) | ast.AnnAssign(
-                    target=ast.Name(id=target), value=ast.expr() as value
-                ) if target == name and name not in _spelled_names(value):
-                    initialized = True
-                case _:
-                    return False
     else:
         return False
+    if index == 0 or not all(
+        isinstance(prefix, ast.Expr) and name not in _spelled_names(prefix)
+        for prefix in helper.body[: index - 1]
+    ):
+        return False
+    match helper.body[index - 1]:
+        case ast.Assign(targets=[ast.Name(id=target)], value=value) | ast.AnnAssign(
+            target=ast.Name(id=target), value=ast.expr() as value
+        ) if target == name and name not in _spelled_names(value):
+            pass
+        case _:
+            return False
     original = block[index]
     if not (
-        initialized
-        and isinstance(original, ast.Try)
+        isinstance(original, ast.Try)
         and len(original.handlers) == len(statement.handlers) == 1
         and bool(statement.orelse) == loop
         and bool(statement.finalbody) != loop
     ):
+        return False
+    if _spelled_names(caller) & {"locals", "vars", "dir", "eval", "exec", "super"}:
         return False
     before, after = original.handlers[0], statement.handlers[0]
     if loop and not (len(block) == 2 and index == 1 and before.name == after.name):
@@ -820,16 +874,23 @@ def _retains_local_across_handler(
         return False
     if not (_reported_exception(caller, before) and _reported_exception(helper, after)):
         return False
-    return not any(
-        isinstance(node, (ast.Return, ast.TryStar))
-        or isinstance(node, ast.Try)
-        and node is not statement
-        or isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Del)
-        and node.id == name
-        for moved in helper.body[:-1]
-        for node in ast.walk(moved)
-    )
+    for moved in helper.body[:-1]:
+        for node in ast.walk(moved):
+            match node:
+                case ast.Return() | ast.TryStar():
+                    return False
+                case ast.Try() if node is not statement:
+                    return False
+                case ast.Name(id=target, ctx=ast.Del()) if target == name:
+                    return False
+                # Pattern captures are string binders outside the Name/Store pairing.
+                case (
+                    ast.MatchAs(name=str())
+                    | ast.MatchStar(name=str())
+                    | ast.MatchMapping(rest=str())
+                ):
+                    return False
+    return True
 
 
 def _retained_correspondence(
@@ -841,6 +902,7 @@ def _retained_correspondence(
     old_free: frozenset[str],
     *,
     caller: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    module: ast.Module,
 ) -> Dict[str, str]:
     """Match the actual removed block and helper body, preserving all surrounding syntax."""
     call = assignment.value
@@ -946,7 +1008,7 @@ def _retained_correspondence(
     renamed_handler = any(
         isinstance(node, ast.ExceptHandler)
         and node.name is not None
-        and names[node.name] != node.name
+        and names.get(node.name) != node.name
         for stmt in block
         for node in ast.walk(stmt)
     )
@@ -965,15 +1027,21 @@ def _retained_correspondence(
             # A supplier certifies only its substituted expression, not a
             # separate helper lookup of the caller binding it captures.
             return {}
-        if (moved_loop_handler or renamed_handler) and not _retains_local_across_handler(
-            caller,
-            block,
-            assignment,
-            helper,
-            _locals(function_table) - parameter_names,
-            loop=moved_loop_handler,
-        ):
-            return {}
+        if moved_loop_handler or renamed_handler:
+            if not (
+                isinstance(caller, ast.FunctionDef)
+                and (moved_loop_handler or old.body is caller.body)
+                and _stable_handler_inputs(module, caller, call, old_free)
+                and _retains_local_across_handler(
+                    caller,
+                    block,
+                    assignment,
+                    helper,
+                    _locals(function_table) - parameter_names,
+                    loop=moved_loop_handler,
+                )
+            ):
+                return {}
     return {key: value for key, value in names.items() if key in bindable}
 
 
@@ -1188,7 +1256,14 @@ def _retained_locals(
         if helper is None or not helper.body or not isinstance(helper.body[-1], ast.Return):
             continue
         correspondence = _retained_correspondence(
-            old_view, new_view, assignment, helper, old_locals, old_free, caller=old
+            old_view,
+            new_view,
+            assignment,
+            helper,
+            old_locals,
+            old_free,
+            caller=old,
+            module=original,
         )
         returned = helper.body[-1].value
         target_root = assignment.targets[0]
