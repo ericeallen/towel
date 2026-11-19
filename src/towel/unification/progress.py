@@ -32,6 +32,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Callable, Iterator, List, Literal, Mapping, Optional, Protocol, Set, Tuple, cast
 
+from ..execution_budget import call_with_deferred_alarm
+
 ProgressMode = Literal["auto", "tqdm", "none", "detail"]
 """How a run reports progress: tqdm bars, tqdm with an inline fallback, nothing, or per-phase detail."""
 
@@ -109,7 +111,9 @@ def load_tqdm() -> Optional[ProgressBarFactory]:
 def quietly(action: Callable[[], object]) -> None:
     """Run a display action and drop any failure: a broken bar must not stop a run."""
     try:
-        action()
+        # tqdm.refresh acquires its lock, draws, then releases it. A deadline
+        # between those calls strands the heartbeat when it next redraws.
+        call_with_deferred_alarm(action)
     except Exception:
         pass
 

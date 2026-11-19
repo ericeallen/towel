@@ -270,3 +270,34 @@ def test_interrupted_heartbeat_start_does_not_break_run_cleanup(
             assert renderer not in progress._ACTIVE
         finally:
             renderer.close()
+
+
+def test_timeout_leaves_tqdms_refresh_lock_available_to_the_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Alarm hang: tqdm must release its refresh lock before the deadline unwinds the draw."""
+    import signal
+    import threading
+    from towel.execution_budget import BudgetExpired, run_with_budget
+
+    lock = threading.Lock()
+
+    def expire_while_drawing() -> None:
+        assert lock.locked()
+        signal.raise_signal(signal.SIGALRM)
+
+    with terminal() as (stream, master), contextlib.redirect_stderr(stream):
+        renderer = ProgressRenderer("tqdm", total=3, desc="apply", unit="it")
+        try:
+            renderer.refresh()
+            bar = renderer._bar
+            assert bar is not None
+            # Give this bar a private lock so a regression cannot hang pytest at exit.
+            with monkeypatch.context() as patch:
+                patch.setattr(bar, "_lock", lock)
+                patch.setattr(bar, "display", expire_while_drawing)
+                with pytest.raises(BudgetExpired):
+                    run_with_budget(3600, renderer.refresh)
+            assert not lock.locked(), "the heartbeat would block on tqdm's abandoned lock"
+        finally:
+            renderer.close()
