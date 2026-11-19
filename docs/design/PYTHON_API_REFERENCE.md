@@ -307,8 +307,11 @@ check of the original, since a checker started from nothing can disagree with a
 warm one about files no change touched, and only one the original lacks too
 refuses the run.
 
-A proposal that would change a file where the original check leaves a name the
-checker cannot type is declined with `UnverifiableChangeError` and counted as
+If the original check leaves a name the checker cannot type, relaxed mode
+can still extract unannotated code in that file when the callers and helper
+all lack annotations. The engine logs this once per run. Otherwise, and
+always in strict mode, it declines the change with `UnverifiableChangeError`
+and counts it as
 `not verifiable: its file holds a name the type checker cannot type` in
 `engine.run_report`. Such a name comes from an import the checker cannot
 resolve or finds no types for (mypy's `import-not-found` and `import-untyped`,
@@ -332,21 +335,21 @@ statement on the lines the change writes. A proposal refused this way raises
 `UncheckedCodeError` and is counted as `not verifiable: the type checker does
 not look at the code it changes`.
 
-Only a checker that cannot run at all refuses the run: a crash, a timeout, a
-plugin or configuration it cannot load. Fix what stops it, or rerun the CLI
-with `--no-types`, which preserves existing source annotations but generates
-unannotated helpers; library callers obtain the same behavior with
-`type_oracle=None` and `annotate_helpers=False`. Prospective-project
-verification stays enabled throughout every other run.
+If the checker cannot complete the baseline check, for example because it
+crashes or times out, the engine raises `BaselineTypeCheckError` before
+writing output in both relaxed and strict mode. To continue without type
+verification, a library caller can start a new engine with `type_oracle=None`
+and `annotate_helpers=False`. This preserves existing source annotations and
+leaves new helpers bare.
 
-mypy runs with the project's configured plugins, loaded exactly as the
-project's own mypy loads them: a plugin module from the environment Towel runs
-in, a `.py` plugin path relative to the configuration file. Plugins decide what
-expressions' types are, so a check without them would not be the project's;
-they execute as they do in the project's own mypy run. A plugin that cannot be
-loaded there (not installed where Towel runs, or unable to import the project
-itself) fails the baseline check, so the run is refused before anything is
-written, with mypy's own message.
+The relaxed CLI handles that exception for you. It prints the reason, retries
+without type verification and reports `"types": "unverified"` in JSON.
+With `--strict` the CLI stops with exit status 1.
+
+mypy loads plugins from the environment where Towel runs and resolves a
+plugin's `.py` path relative to the mypy configuration file. If a plugin
+cannot load, mypy's message identifies the baseline failure. Install the
+plugin and its dependencies in that environment to run with type verification.
 
 For new module-level helpers and helper methods, Towel also anti-unifies the
 corresponding argument and result types. For example, `list[int] -> int` and `list[str] -> str` can become

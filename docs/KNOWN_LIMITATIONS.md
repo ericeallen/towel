@@ -103,8 +103,11 @@ to protect code that uses them:
 - **Reflection**: `inspect.stack()`, `sys._getframe()`, `locals()`, reading a
   function's source, bytecode or `__qualname__`, or listing a module's names
   (a new helper is a new name).
-- **Self-instrumentation**: tools that read or rewrite a function's body, such
-  as pytest's assertion rewriting, typeguard, numba and inline-snapshot.
+- **Self-instrumentation** includes typeguard, numba, inline-snapshot and
+  pytest's assertion rewriting. Pytest normally rewrites test files. An
+  ordinary module under `src/` can be refactored even if pytest tests it.
+  Use `--exclude tests` to skip the test directory, or put
+  `# towel: no-extract` on the `def` line of a function in a rewritten module.
 
 ## What Towel leaves alone
 

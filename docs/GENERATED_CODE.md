@@ -257,12 +257,15 @@ Would change 1 file(s):
 Input files were not changed.
 ```
 
-When one copy is already the whole body of a function, the other copies call
-that function, and there is no new helper to name. Towel does this only where
-it can show that nothing rebinds the function while the copies run; strict mode
-also needs the whole program in view (`--complete-scope`) and no object handed
-over to the function. A repeated expression is extracted into a new helper even when an existing
-function returns it.
+“Reuse NAME” means one copy is already the whole body of a function, so the
+other copies call it. There is no new helper to name. By default Towel looks
+within one module. With `--cross-module` it can reuse a function in another
+module, including one the caller already imports by name. The call must
+resolve to that function and meet the [cross-module import rules](CROSS_MODULE.md).
+Towel checks that nothing rebinds the function while the copies run. Strict
+mode also needs the whole program in view (`--complete-scope`) and no object
+handed over to the function. A repeated expression is extracted into a new
+helper even when an existing function returns it.
 
 ## Names, parameters and other details
 
