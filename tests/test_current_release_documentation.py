@@ -375,3 +375,25 @@ def test_directory_guide_example_reanalyzes_and_preserves_input(
     exec(code + observe, before)
     exec(output + observe, after)
     assert before["observations"] == after["observations"]
+
+
+@pytest.mark.relaxed_mode
+def test_api_guide_opening_example_prints_what_the_guide_shows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The guide's first example runs on the README's project and prints the block after it.
+
+    The page tests run only ```bash blocks, so this Python example was once checked by hand.
+    It shows the default engine, so the default (relaxed) mode is pinned here.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir()
+    accounts = (ROOT / "tests/documentation_projects/readme/src/accounts.py.txt").read_text()
+    (tmp_path / "src/accounts.py").write_text(accounts)
+    guide = (ROOT / "docs/USAGE_GUIDE.md").read_text()
+    opening = re.match(r"# [^\n]*\n\n```python\n(.*?)```\n\n```text\n(.*?)```\n", guide, re.S)
+    assert opening, "the guide no longer opens with an example and its output"
+    example, shown = opening.groups()
+    exec(compile(example, "docs/USAGE_GUIDE.md", "exec"), {})
+    assert capsys.readouterr().out == shown
+    assert (tmp_path / "src/accounts.py").read_text() == accounts
