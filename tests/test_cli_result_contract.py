@@ -387,7 +387,10 @@ def test_timeout_while_entering_redirection_keeps_the_json_result_on_stdout(
     assert not destination.exists()
 
 
-def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(tmp_path: Path) -> None:
+def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deliver the alarm during dry. A racing timer can interrupt coverage holding its lock."""
     source, destination = _source(tmp_path), tmp_path / "out.py"
     previous = signal.getsignal(signal.SIGALRM)
     received: list[int] = []
@@ -395,6 +398,12 @@ def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(tmp_path: Pa
     def unrelated(signum: int, frame: FrameType | None) -> None:
         received.append(signum)
 
+    def expire(options: cli.DryOptions) -> None:
+        assert signal.getitimer(signal.ITIMER_REAL)[0] > 0
+        signal.raise_signal(signal.SIGALRM)
+
+    monkeypatch.setattr(cli, "_execute_dry", expire)
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
     signal.signal(signal.SIGALRM, unrelated)
     try:
         result = invoke(
@@ -405,7 +414,7 @@ def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(tmp_path: Pa
                 "--no-interactive",
                 "--json",
                 "--time-limit",
-                "0.000001",
+                "3600",
                 *FLAGS,
             ]
         )
@@ -418,6 +427,7 @@ def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(tmp_path: Pa
         assert received == [signal.SIGALRM]
         assert not destination.exists()
     finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
 
 
