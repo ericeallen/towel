@@ -287,10 +287,15 @@ def _reads_through(table: symtable.SymbolTable, name: str, *, nested: bool = Fal
     return any(_reads_through(child, name, nested=True) for child in table.get_children())
 
 
-def _spelled_names(tree: ast.AST) -> set[str]:
+def _spelled_names(tree: ast.AST, *, excluding: Optional[ast.AST] = None) -> set[str]:
     """Lexical hygiene oracle independent of Towel's identifier collector."""
     found: set[str] = set()
-    for node in ast.walk(tree):
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        if node is excluding:
+            continue
+        pending.extend(ast.iter_child_nodes(node))
         if isinstance(node, ast.Name):
             found.add(node.id)
         elif isinstance(node, ast.arg):
@@ -621,6 +626,17 @@ def _paired_syntax(
         )
     if type(old) is not type(new):
         return False
+    if isinstance(old, ast.ExceptHandler) and isinstance(new, ast.ExceptHandler):
+        if old.name != new.name:
+            # The binding pass paired the targets. The caller also checks that
+            # the renamed target is confined to this handler in both frames.
+            return (
+                old.name is not None
+                and new.name is not None
+                and names.get(old.name) == new.name
+                and _paired_syntax(old.type, new.type, names, old_locals, substitutions)
+                and _paired_syntax(old.body, new.body, names, old_locals, substitutions)
+            )
     if isinstance(old, ast.Name) and isinstance(new, ast.Name):
         if isinstance(new.ctx, (ast.Store, ast.Del)) and new.id in substitutions:
             return False
@@ -739,6 +755,83 @@ def _paired_syntax(
     return old == new
 
 
+def _reported_exception(function: ast.AST, handler: ast.ExceptHandler) -> bool:
+    """The handler alone uses the target, to print its type and value before cleanup."""
+    name = handler.name
+    if name is None or handler.type is None:
+        return False
+    if name in _spelled_names(handler.type) or name in _spelled_names(function, excluding=handler):
+        return False
+    match handler.body:
+        case [ast.Expr(value=ast.Call() as report)]:
+            if any(not isinstance(label, ast.Constant) for label in report.args[:-2]):
+                return False
+            call = ast.Call(func=report.func, args=report.args[-2:], keywords=report.keywords)
+            expected = ast.parse(f"print(type({name}).__name__, {name})", mode="eval").body
+            return ast.dump(call) == ast.dump(expected)
+    return False
+
+
+def _retains_local_across_handler(
+    caller: ast.AST,
+    block: Sequence[ast.stmt],
+    assignment: ast.Assign,
+    helper: ast.FunctionDef,
+    helper_locals: frozenset[str],
+    *,
+    loop: bool,
+) -> bool:
+    """Only the scalar producer and the handler's temporary belong to the moved block."""
+    returned = helper.body[-1]
+    if not (
+        isinstance(assignment.targets[0], ast.Name)
+        and isinstance(returned, ast.Return)
+        and isinstance(returned.value, ast.Name)
+    ):
+        return False
+    name = returned.value.id
+    initialized = False
+    for index, statement in enumerate(helper.body[:-1]):
+        if isinstance(statement, ast.Try):
+            break
+        if not initialized and name in _spelled_names(statement):
+            match statement:
+                case ast.Assign(targets=[ast.Name(id=target)], value=value) | ast.AnnAssign(
+                    target=ast.Name(id=target), value=ast.expr() as value
+                ) if target == name and name not in _spelled_names(value):
+                    initialized = True
+                case _:
+                    return False
+    else:
+        return False
+    original = block[index]
+    if not (
+        initialized
+        and isinstance(original, ast.Try)
+        and len(original.handlers) == len(statement.handlers) == 1
+        and bool(statement.orelse) == loop
+        and bool(statement.finalbody) != loop
+    ):
+        return False
+    before, after = original.handlers[0], statement.handlers[0]
+    if loop and not (len(block) == 2 and index == 1 and before.name == after.name):
+        return False
+    if after.name is None or helper_locals != {name, after.name}:
+        return False
+    if not (_reported_exception(caller, before) and _reported_exception(helper, after)):
+        return False
+    return not any(
+        isinstance(node, (ast.Return, ast.TryStar))
+        or isinstance(node, ast.Try)
+        and node is not statement
+        or isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Del)
+        and node.id == name
+        for moved in helper.body[:-1]
+        for node in ast.walk(moved)
+    )
+
+
 def _retained_correspondence(
     old: Union[ast.FunctionDef, ast.AsyncFunctionDef],
     new: Union[ast.FunctionDef, ast.AsyncFunctionDef],
@@ -746,6 +839,8 @@ def _retained_correspondence(
     helper: ast.FunctionDef,
     old_locals: frozenset[str],
     old_free: frozenset[str],
+    *,
+    caller: Union[ast.FunctionDef, ast.AsyncFunctionDef],
 ) -> Dict[str, str]:
     """Match the actual removed block and helper body, preserving all surrounding syntax."""
     call = assignment.value
@@ -841,7 +936,21 @@ def _retained_correspondence(
     )  # reading caller locals/parameters is safe; rebinding them is not
     block = old.body[index : index + len(moved)]
     caller_only = (old_free | (captured & old_locals)) - frozenset(names)
-    if caller_only:
+    if not _paired_bindings(block, moved, names, bindable, substitutions) or not _paired_syntax(
+        block, moved, names, bindable, substitutions
+    ):
+        return {}
+    moved_loop_handler = isinstance(old.body[-1], ast.Break) and any(
+        isinstance(stmt, ast.Try) for stmt in block
+    )
+    renamed_handler = any(
+        isinstance(node, ast.ExceptHandler)
+        and node.name is not None
+        and names[node.name] != node.name
+        for stmt in block
+        for node in ast.walk(stmt)
+    )
+    if caller_only or moved_loop_handler or renamed_handler:
         try:
             helper_table = symtable.symtable(ast.unparse(helper), "<retained-helper>", "exec")
         except (SyntaxError, ValueError):
@@ -856,10 +965,15 @@ def _retained_correspondence(
             # A supplier certifies only its substituted expression, not a
             # separate helper lookup of the caller binding it captures.
             return {}
-    if not _paired_bindings(block, moved, names, bindable, substitutions) or not _paired_syntax(
-        block, moved, names, bindable, substitutions
-    ):
-        return {}
+        if (moved_loop_handler or renamed_handler) and not _retains_local_across_handler(
+            caller,
+            block,
+            assignment,
+            helper,
+            _locals(function_table) - parameter_names,
+            loop=moved_loop_handler,
+        ):
+            return {}
     return {key: value for key, value in names.items() if key in bindable}
 
 
@@ -896,42 +1010,56 @@ def _unique_helper_binding(helper: ast.FunctionDef, module: ast.Module) -> bool:
 _SuitePath = Tuple[Tuple[str, int], ...]
 
 
-def _single_pass_loop(node: ast.AST) -> bool:
+def _single_pass_loop(node: ast.AST, *, original: bool = False) -> bool:
     """Certify only a literal-true loop with one unconditional terminal break.
 
-    Earlier breaks or continues, nested loops, handlers and managers remain
-    unproved. Inspect both original and rewritten suites before admitting a
-    retention assignment: extraction must not hide unsupported control flow.
+    A try/except/else immediately before the caller's final return may move
+    with the block. The rewritten loop must be handler-free, and every arm
+    of the original try is still inspected for control transfers.
     """
-    return (
+    if not (
         isinstance(node, ast.While)
         and isinstance(node.test, ast.Constant)
         and node.test.value is True
         and not node.orelse
         and bool(node.body)
         and isinstance(node.body[-1], ast.Break)
-        and not any(
-            isinstance(
-                child,
-                (
-                    ast.Break,
-                    ast.Continue,
-                    ast.While,
-                    ast.For,
-                    ast.AsyncFor,
-                    ast.Try,
-                    ast.TryStar,
-                    ast.With,
-                    ast.AsyncWith,
-                ),
-            )
-            for statement in node.body[:-1]
-            for child in ast.walk(statement)
+    ):
+        return False
+    moved = node.body[-3] if original and len(node.body) >= 3 else None
+    if not (
+        isinstance(moved, ast.Try)
+        and len(moved.handlers) == 1
+        and moved.handlers[0].name is not None
+        and moved.orelse
+        and not moved.finalbody
+        and isinstance(node.body[-2], ast.Return)
+    ):
+        moved = None
+    return not any(
+        isinstance(
+            child,
+            (
+                ast.Break,
+                ast.Continue,
+                ast.While,
+                ast.For,
+                ast.AsyncFor,
+                ast.Try,
+                ast.TryStar,
+                ast.With,
+                ast.AsyncWith,
+            ),
         )
+        and child is not moved
+        for statement in node.body[:-1]
+        for child in ast.walk(statement)
     )
 
 
-def _retained_suite_paths(node: ast.AST, path: _SuitePath = ()) -> Iterator[_SuitePath]:
+def _retained_suite_paths(
+    node: ast.AST, path: _SuitePath = (), *, original: bool = False
+) -> Iterator[_SuitePath]:
     """Suites in one function's if/match branches and certified single-pass loops."""
     fields = ("body", "orelse") if isinstance(node, ast.If) else ("body",)
     for field in fields:
@@ -941,11 +1069,13 @@ def _retained_suite_paths(node: ast.AST, path: _SuitePath = ()) -> Iterator[_Sui
         yield path + ((field, -1),)
         for index, statement in enumerate(suite):
             child_path = path + ((field, index),)
-            if isinstance(statement, ast.If) or _single_pass_loop(statement):
-                yield from _retained_suite_paths(statement, child_path)
+            if isinstance(statement, ast.If) or _single_pass_loop(statement, original=original):
+                yield from _retained_suite_paths(statement, child_path, original=original)
             elif isinstance(statement, ast.Match):
                 for case_index, case in enumerate(statement.cases):
-                    yield from _retained_suite_paths(case, child_path + (("cases", case_index),))
+                    yield from _retained_suite_paths(
+                        case, child_path + (("cases", case_index),), original=original
+                    )
 
 
 def _retained_suite(node: ast.AST, path: _SuitePath) -> Optional[List[ast.stmt]]:
@@ -983,7 +1113,7 @@ def _retained_branch_contexts(
     The existing block/input/producer proof still checks the selected suite.
     No unproved loop, handler, manager, nested definition or unrelated change is hidden.
     """
-    original_paths = frozenset(_retained_suite_paths(old))
+    original_paths = frozenset(_retained_suite_paths(old, original=True))
     for path in _retained_suite_paths(new):
         if path not in original_paths:
             continue
@@ -1058,7 +1188,7 @@ def _retained_locals(
         if helper is None or not helper.body or not isinstance(helper.body[-1], ast.Return):
             continue
         correspondence = _retained_correspondence(
-            old_view, new_view, assignment, helper, old_locals, old_free
+            old_view, new_view, assignment, helper, old_locals, old_free, caller=old
         )
         returned = helper.body[-1].value
         target_root = assignment.targets[0]
