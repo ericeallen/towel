@@ -26,13 +26,17 @@ import sys
 import os
 import unicodedata
 import importlib
+import queue
 import threading
 import time
+from functools import lru_cache
+from weakref import WeakSet
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Callable, Iterator, List, Literal, Mapping, Optional, Protocol, Set, Tuple, cast
 
-from ..execution_budget import call_with_deferred_alarm
+from ..execution_budget import BudgetExpired
+from ..shared_locks import restoring_lock_depth
 
 ProgressMode = Literal["auto", "tqdm", "none", "detail"]
 """How a run reports progress: tqdm bars, tqdm with an inline fallback, nothing, or per-phase detail."""
@@ -95,6 +99,19 @@ class ProgressBarFactory(Protocol):  # pragma: no cover - protocol bodies are ne
         ...
 
 
+@lru_cache(maxsize=1)
+def _towel_bar(backend: type[object]) -> ProgressBarFactory:
+    # All Towel draws already hold _DRAWING. Give tqdm the same recoverable
+    # lock and its own instance registry, leaving other applications' bars
+    # alone. Our heartbeat redraws these bars; no tqdm monitor is needed.
+    bar = type(
+        "TowelProgressBar",
+        (backend,),
+        {"_lock": _DRAWING, "_instances": WeakSet(), "monitor_interval": 0},
+    )
+    return cast(ProgressBarFactory, bar)
+
+
 def load_tqdm() -> Optional[ProgressBarFactory]:
     """Return ``tqdm.auto.tqdm`` if tqdm is installed, else ``None``.
 
@@ -103,7 +120,7 @@ def load_tqdm() -> Optional[ProgressBarFactory]:
     """
     try:
         module = importlib.import_module("tqdm.auto")
-        return cast(ProgressBarFactory, getattr(module, "tqdm"))
+        return _towel_bar(getattr(module, "tqdm"))
     except Exception:
         return None
 
@@ -111,9 +128,7 @@ def load_tqdm() -> Optional[ProgressBarFactory]:
 def quietly(action: Callable[[], object]) -> None:
     """Run a display action and drop any failure: a broken bar must not stop a run."""
     try:
-        # tqdm.refresh acquires its lock, draws, then releases it. A deadline
-        # between those calls strands the heartbeat when it next redraws.
-        call_with_deferred_alarm(action)
+        action()
     except Exception:
         pass
 
@@ -140,25 +155,29 @@ class Heartbeat:
     def __init__(self, redraw: Callable[[], object], period: float = 1.0) -> None:
         self._redraw = redraw
         self._period = period
-        # The thread beating now and the event that ends it. Each thread has
-        # an event of its own, so one told to end can never be revived by a
+        # The thread beating now and the stop queue it reads. Each thread has
+        # a queue of its own, so one told to end can never be revived by a
         # later start, which gets a new thread instead.
-        self._beating: Optional[Tuple[threading.Thread, threading.Event]] = None
+        self._beating: Optional[Tuple[threading.Thread, queue.SimpleQueue[None]]] = None
 
     def start(self) -> None:
         _BEATING.add(self)
         if self._beating is not None:
             return
-        ended = threading.Event()
+        ended: queue.SimpleQueue[None] = queue.SimpleQueue()
         thread = threading.Thread(
             target=self._beat, args=(ended,), name="towel-progress", daemon=True
         )
         self._beating = (thread, ended)
         thread.start()
 
-    def _beat(self, ended: threading.Event) -> None:
-        while not ended.wait(self._period):
-            quietly(self._redraw)
+    def _beat(self, ended: queue.SimpleQueue[None]) -> None:
+        while True:
+            try:
+                ended.get(timeout=self._period)
+                return
+            except queue.Empty:
+                quietly(self._redraw)
 
     def _end_thread(self) -> Optional[threading.Thread]:
         """Tell the beating thread to end and forget it; the thread, for the caller to join."""
@@ -166,7 +185,7 @@ class Heartbeat:
         if beating is None:
             return None
         thread, ended = beating
-        ended.set()
+        ended.put(None)
         # If interrupted, cleanup may repeat. Signal the thread before forgetting it.
         self._beating = None
         return thread if thread.ident is not None else None
@@ -451,7 +470,7 @@ class ProgressRenderer:
         """
         if not self._enabled or self._closed:
             return
-        with _DRAWING:
+        with restoring_lock_depth(_DRAWING), _DRAWING:
             if total != self._total or (label is not None and label != self._desc):
                 quietly(self._clear)
             delta = completed - self._done
@@ -467,13 +486,13 @@ class ProgressRenderer:
         self.start_heartbeat()
 
     def refresh(self) -> None:
-        with _DRAWING:
+        with restoring_lock_depth(_DRAWING), _DRAWING:
             quietly(self._draw)
 
     def update(self, n: int = 1) -> None:
         if not self._enabled:
             return
-        with _DRAWING:
+        with restoring_lock_depth(_DRAWING), _DRAWING:
             self._done += n
             bar = self._bar
             if bar is not None:
@@ -483,15 +502,25 @@ class ProgressRenderer:
     def set_postfix(self, ordered_dict: Mapping[str, object], refresh: bool = True) -> None:
         if not self._enabled:
             return
-        with _DRAWING:
+        with restoring_lock_depth(_DRAWING), _DRAWING:
             self._details = dict(ordered_dict)
             if refresh:
                 quietly(self._draw)
 
     def close(self) -> None:
+        self._closed = True
         self._heartbeat.stop()
-        with _DRAWING:
-            self._closed = True
+        if isinstance(sys.exc_info()[1], (BudgetExpired, KeyboardInterrupt, SystemExit)):
+            # A heartbeat may still be stuck in terminal I/O. Cleanup must
+            # neither wait for its lock nor repaint the same stalled terminal.
+            if self._bar is not None and hasattr(self._bar, "disable"):
+                self._bar.disable = True  # tqdm.__del__ calls close()
+            self._visible = False
+            self._bar = None
+            if self in _ACTIVE:
+                _ACTIVE.remove(self)
+            return
+        with restoring_lock_depth(_DRAWING), _DRAWING:
             quietly(self._clear)
             if self in _ACTIVE:
                 _ACTIVE.remove(self)
@@ -518,7 +547,7 @@ def write_message(message: str, *, prefix: str = "") -> None:
     """Print a diagnostic on its own line, then restore the active progress phase."""
     if prefix and not message.startswith(prefix + ":"):
         message = f"{prefix}: {message}"
-    with _DRAWING:
+    with restoring_lock_depth(_DRAWING), _DRAWING:
         active = _ACTIVE[-1] if _ACTIVE else None
         if active is not None:
             quietly(active._clear)

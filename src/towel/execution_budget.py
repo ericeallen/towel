@@ -40,16 +40,10 @@ class BudgetExpired(BaseException):
 
 
 @dataclass
-class _DeferredAlarm:
-    fired: bool = False
-
-
-@dataclass
 class _Budget:
     owner: int
     deadline: float
     abandoned: bool = False
-    deferred: _DeferredAlarm | None = None
 
 
 _active: ContextVar[_Budget | None] = ContextVar("towel_execution_budget", default=None)
@@ -63,33 +57,7 @@ def _current_budget() -> _Budget | None:
 def _expire(signum: int, frame: FrameType | None) -> None:
     budget = _current_budget()
     if budget is not None and os.getpid() == budget.owner:
-        if budget.deferred is None:
-            raise BudgetExpired()
-        budget.deferred.fired = True
-
-
-def call_with_deferred_alarm(action: Callable[[], object]) -> None:
-    """Let a library release its locks before delivering the owner's budget alarm."""
-    budget = _current_budget()
-    if (
-        budget is None
-        or budget.deferred is not None
-        or os.getpid() != budget.owner
-        or threading.current_thread() is not threading.main_thread()
-    ):
-        action()
-        return
-
-    alarm = _DeferredAlarm()
-    try:
-        budget.deferred = alarm
-        action()
-    finally:
-        # Restore immediate delivery before reading the flag so an alarm at
-        # this boundary either sets the flag or raises in the usual way.
-        budget.deferred = None
-        if alarm.fired:
-            raise BudgetExpired()
+        raise BudgetExpired()
 
 
 def run_with_budget(seconds: float | None, action: Callable[[], None]) -> None:

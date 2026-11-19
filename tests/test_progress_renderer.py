@@ -272,32 +272,77 @@ def test_interrupted_heartbeat_start_does_not_break_run_cleanup(
             renderer.close()
 
 
-def test_timeout_leaves_tqdms_refresh_lock_available_to_the_heartbeat(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Alarm hang: tqdm must release its refresh lock before the deadline unwinds the draw."""
+def _interrupt_tqdm(signal_name: str) -> None:
     import signal
     import threading
+    from towel.cli import _install_signal_handling
     from towel.execution_budget import BudgetExpired, run_with_budget
 
-    lock = threading.Lock()
-
-    def expire_while_drawing() -> None:
-        assert lock.locked()
-        signal.raise_signal(signal.SIGALRM)
-
+    signum = getattr(signal, signal_name)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    _install_signal_handling()
     with terminal() as (stream, master), contextlib.redirect_stderr(stream):
         renderer = ProgressRenderer("tqdm", total=3, desc="apply", unit="it")
-        try:
+        renderer.refresh()
+        bar = renderer._bar
+        assert bar is not None
+        exception = {
+            signal.SIGALRM: BudgetExpired,
+            signal.SIGINT: KeyboardInterrupt,
+            signal.SIGTERM: SystemExit,
+        }[signum]
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(bar, "display", lambda: signal.raise_signal(signum))
+            with pytest.raises(exception) as raised:
+                run_with_budget(3600 if signum == signal.SIGALRM else None, renderer.refresh)
+            if isinstance(raised.value, SystemExit):
+                assert raised.value.code == 143
+
+            drawn = threading.Event()
+            patch.setattr(bar, "display", drawn.set)
+            peer = threading.Thread(target=renderer.refresh, daemon=True)
+            peer.start()
+            peer.join(timeout=2)
+            assert (
+                drawn.is_set() and not peer.is_alive()
+            ), "heartbeat blocked after interrupted draw"
+        renderer.close()
+
+
+@pytest.mark.parametrize("signal_name", ["SIGALRM", "SIGINT", "SIGTERM"])
+def test_signal_leaves_drawing_locks_available_to_the_heartbeat(signal_name: str) -> None:
+    """Alarm review: one signal inside tqdm must unwind the draw and let a peer redraw."""
+    import subprocess
+    import sys
+
+    # A broken implementation can leave the heartbeat and the backend locked
+    # even during interpreter shutdown. Isolate both and bound the whole run.
+    script = "from tests.test_progress_renderer import _interrupt_tqdm; import sys; _interrupt_tqdm(sys.argv[1])"
+    run = subprocess.run(
+        [sys.executable, "-c", script, signal_name], capture_output=True, text=True, timeout=10
+    )
+    assert run.returncode == 0, run.stderr
+
+
+def test_interrupted_run_does_not_try_the_stalled_display_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stalled terminal cannot finish the clear or the redraw of an interrupted bar."""
+    attempts = 0
+
+    def stalled_display(*args: object, **kwargs: object) -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise KeyboardInterrupt
+        return False
+
+    with terminal() as (stream, master), contextlib.redirect_stderr(stream):
+        with pytest.raises(KeyboardInterrupt), progress.progress_run():
+            renderer = ProgressRenderer("tqdm", total=3, desc="apply", unit="it")
             renderer.refresh()
-            bar = renderer._bar
-            assert bar is not None
-            # Give this bar a private lock so a regression cannot hang pytest at exit.
-            with monkeypatch.context() as patch:
-                patch.setattr(bar, "_lock", lock)
-                patch.setattr(bar, "display", expire_while_drawing)
-                with pytest.raises(BudgetExpired):
-                    run_with_budget(3600, renderer.refresh)
-            assert not lock.locked(), "the heartbeat would block on tqdm's abandoned lock"
-        finally:
-            renderer.close()
+            assert renderer._bar is not None
+            monkeypatch.setattr(renderer._bar, "display", stalled_display)
+            renderer.refresh()
+    assert attempts == 1
+    assert renderer not in progress._ACTIVE
