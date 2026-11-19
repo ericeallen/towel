@@ -259,6 +259,7 @@ def test_a_block_sibling_classes_share_is_a_module_function_the_checker_accepts(
     try:
         rendered = engine.apply_refactoring(str(path), proposals[0])
     except RefactoringError as error:
+        assert lifetime_order_certified(), "The append/return helper must pass the checker"
         assert "Every helper annotation variant" in str(error)
         assert engine.change_log == ()
     else:
@@ -266,9 +267,11 @@ def test_a_block_sibling_classes_share_is_a_module_function_the_checker_accepts(
         if lifetime_order_certified():
             assert helper.args.args[0].arg == "self"
         else:
-            assert helper.args.args[0].arg == "result"
+            # Each caller copies its own items. The shared tail takes the
+            # enclosing parameter first, then the local holding that copy.
+            assert [argument.arg for argument in helper.args.args] == ["value", "result"]
+            assert rendered.count("result = self.items.copy()") == 2
             assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
-            assert all(argument.arg != "_towel_owner" for argument in helper.args.args)
         assert checker.check(str(path), rendered) == CheckSuccess()
         arguments = ("[1]", '["x"]') if program == "inherited-member" else ("2", '"b"')
         driver = (

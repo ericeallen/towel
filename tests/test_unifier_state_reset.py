@@ -24,6 +24,7 @@ import ast
 import unittest
 
 from tests.test_helpers import lifetime_order_certified
+from towel.unification.models import RefactoringProposal
 from towel.unification.unifier import Unifier
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import get_test_example_path
@@ -88,9 +89,24 @@ class TestEngineEndToEndStability(unittest.TestCase):
         )
         self.example_path = get_test_example_path("fstrings_constants.py")
 
-    def _assert_expected_proposals(self, proposals):
+    def _assert_expected_proposals(self, proposals: list[RefactoringProposal]) -> None:
         descs = [p.description.lower() for p in proposals]
         if not lifetime_order_certified():
+            # These three expressions remain available when the larger blocks
+            # would move a caller-owned binding across the frame boundary.
+            expressions = [
+                p.description.lower()
+                for p in proposals
+                if all(site.expression is not None for site in p.replacements)
+            ]
+            self.assertCountEqual(
+                expressions,
+                [
+                    "extract common code from format_number_a and format_number_b",
+                    "extract common code from log_user and log_admin",
+                    "extract common code from mixed_fstring_a and mixed_fstring_b",
+                ],
+            )
             self.assertEqual(
                 sorted(descs),
                 sorted(
@@ -100,6 +116,7 @@ class TestEngineEndToEndStability(unittest.TestCase):
                         "extract common code from log_user and log_admin",
                         "extract common code from log_user and log_admin",
                     ]
+                    + expressions
                 ),
             )
             self.assertGreater(self.engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
@@ -112,10 +129,16 @@ class TestEngineEndToEndStability(unittest.TestCase):
         )
 
     def test_analyze_file_multiple_runs_stable(self):
-        # Run analyze_file multiple times with the same engine instance
-        for _ in range(3):
-            proposals = self.engine.analyze_file(str(self.example_path))
+        path = str(self.example_path)
+
+        def rendered_proposals() -> list[str]:
+            proposals = self.engine.analyze_file(path)
             self._assert_expected_proposals(proposals)
+            return [self.engine.apply_refactoring(path, proposal) for proposal in proposals]
+
+        first = rendered_proposals()
+        for _ in range(2):
+            self.assertEqual(rendered_proposals(), first)
 
 
 if __name__ == "__main__":

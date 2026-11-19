@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -54,6 +55,11 @@ def test_comment_stays_with_class_after_real_extraction(tmp_path: Path) -> None:
     # Isolate placement from the strict helper's larger profitability cost.
     engine = UnificationRefactorEngine(annotate_helpers=False, skip_trivial_helpers=False)
     proposals = engine.analyze_file(str(path))
+    if not lifetime_order_certified():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+        return
     assert proposals
     rendered = engine.apply_refactoring(str(path), proposals[0])
     assert "# Exceptions\nclass Error(Exception):" in rendered
