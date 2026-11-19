@@ -422,6 +422,36 @@ def test_try_left_in_the_loop_does_not_certify_retention() -> None:
     assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
 
 
+@pytest.mark.parametrize("live", ["caught", "other"])
+def test_moved_handler_must_not_change_a_caller_local(live: str) -> None:
+    def observe_local(source: str) -> str:
+        source = source.replace("def f():\n", f"def f():\n    {live} = 11\n")
+        if live == "other":
+            source = source.replace("raise ValueError(owner)", "other = owner")
+        return source.replace("return 0", f"return {live}")
+
+    before, after = (observe_local(source) for source in _retained_handler(True))
+    original, changed = (
+        subprocess.run([sys.executable, "-c", source], capture_output=True, timeout=10)
+        for source in (before, after)
+    )
+    assert changed.returncode == 0 and changed.stdout.endswith(b"11\n")
+    if live == "caught":
+        assert original.returncode != 0 and b"UnboundLocalError" in original.stderr
+    else:
+        assert original.returncode == 0 and original.stdout.endswith(b"37\n")
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
+
+
+def test_renamed_producer_cannot_read_its_own_uninitialized_value() -> None:
+    before, after = _retained_handler(False)
+    before = before.replace("owner", "original").replace("original = 37", "original = original")
+    after = after.replace("owner = 37", "owner = owner").replace(
+        "_towel_keep_owner", "_towel_keep_original"
+    )
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_original"]}
+
+
 def _comprehension_shadow() -> tuple[str, str]:
     return (
         (_FIXTURES / "scope_retained_comprehension_shadow_before.py.txt").read_text(),

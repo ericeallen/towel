@@ -755,35 +755,33 @@ def _paired_syntax(
     return old == new
 
 
-def _reported_exception(function: ast.AST, name: str) -> bool:
-    """A single except target used only to print its type and value before cleanup."""
-    for node in ast.walk(function):
-        if not (
-            isinstance(node, ast.Try)
-            and len(node.handlers) == 1
-            and node.finalbody
-            and not node.orelse
-        ):
-            continue
-        handler = node.handlers[0]
-        if handler.name != name or handler.type is None:
-            continue
-        if name in _spelled_names(handler.type) or name in _spelled_names(
-            function, excluding=handler
-        ):
-            return False
-        match handler.body:
-            case [ast.Expr(value=ast.Call() as report)]:
-                if any(not isinstance(label, ast.Constant) for label in report.args[:-2]):
-                    return False
-                call = ast.Call(func=report.func, args=report.args[-2:], keywords=report.keywords)
-                expected = ast.parse(f"print(type({name}).__name__, {name})", mode="eval").body
-                return ast.dump(call) == ast.dump(expected)
+def _reported_exception(function: ast.AST, handler: ast.ExceptHandler) -> bool:
+    """The handler alone uses the target, to print its type and value before cleanup."""
+    name = handler.name
+    if name is None or handler.type is None:
+        return False
+    if name in _spelled_names(handler.type) or name in _spelled_names(function, excluding=handler):
+        return False
+    match handler.body:
+        case [ast.Expr(value=ast.Call() as report)]:
+            if any(not isinstance(label, ast.Constant) for label in report.args[:-2]):
+                return False
+            call = ast.Call(func=report.func, args=report.args[-2:], keywords=report.keywords)
+            expected = ast.parse(f"print(type({name}).__name__, {name})", mode="eval").body
+            return ast.dump(call) == ast.dump(expected)
     return False
 
 
-def _retains_local_across_handler(assignment: ast.Assign, helper: ast.FunctionDef) -> bool:
-    """One scalar assignment receives a local already bound when the first try begins."""
+def _retains_local_across_handler(
+    caller: ast.AST,
+    block: Sequence[ast.stmt],
+    assignment: ast.Assign,
+    helper: ast.FunctionDef,
+    helper_locals: frozenset[str],
+    *,
+    loop: bool,
+) -> bool:
+    """Only the scalar producer and the handler's temporary belong to the moved block."""
     returned = helper.body[-1]
     if not (
         isinstance(assignment.targets[0], ast.Name)
@@ -793,25 +791,44 @@ def _retains_local_across_handler(assignment: ast.Assign, helper: ast.FunctionDe
         return False
     name = returned.value.id
     initialized = False
-    for statement in helper.body[:-1]:
+    for index, statement in enumerate(helper.body[:-1]):
         if isinstance(statement, ast.Try):
             break
-        match statement:
-            case ast.Assign(targets=[ast.Name(id=target)]) | ast.AnnAssign(
-                target=ast.Name(id=target), value=ast.expr()
-            ) if (target == name):
-                initialized = True
+        if not initialized and name in _spelled_names(statement):
+            match statement:
+                case ast.Assign(targets=[ast.Name(id=target)], value=value) | ast.AnnAssign(
+                    target=ast.Name(id=target), value=ast.expr() as value
+                ) if target == name and name not in _spelled_names(value):
+                    initialized = True
+                case _:
+                    return False
     else:
         return False
-    return initialized and not any(
-        isinstance(node, ast.Return)
+    original = block[index]
+    if not (
+        initialized
+        and isinstance(original, ast.Try)
+        and len(original.handlers) == len(statement.handlers) == 1
+        and bool(statement.orelse) == loop
+        and bool(statement.finalbody) != loop
+    ):
+        return False
+    before, after = original.handlers[0], statement.handlers[0]
+    if loop and not (len(block) == 2 and index == 1 and before.name == after.name):
+        return False
+    if after.name is None or helper_locals != {name, after.name}:
+        return False
+    if not (_reported_exception(caller, before) and _reported_exception(helper, after)):
+        return False
+    return not any(
+        isinstance(node, (ast.Return, ast.TryStar))
+        or isinstance(node, ast.Try)
+        and node is not statement
         or isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Del)
         and node.id == name
-        or isinstance(node, ast.ExceptHandler)
-        and node.name == name
-        for statement in helper.body[:-1]
-        for node in ast.walk(statement)
+        for moved in helper.body[:-1]
+        for node in ast.walk(moved)
     )
 
 
@@ -919,7 +936,21 @@ def _retained_correspondence(
     )  # reading caller locals/parameters is safe; rebinding them is not
     block = old.body[index : index + len(moved)]
     caller_only = (old_free | (captured & old_locals)) - frozenset(names)
-    if caller_only:
+    if not _paired_bindings(block, moved, names, bindable, substitutions) or not _paired_syntax(
+        block, moved, names, bindable, substitutions
+    ):
+        return {}
+    moved_loop_handler = isinstance(old.body[-1], ast.Break) and any(
+        isinstance(stmt, ast.Try) for stmt in block
+    )
+    renamed_handler = any(
+        isinstance(node, ast.ExceptHandler)
+        and node.name is not None
+        and names[node.name] != node.name
+        for stmt in block
+        for node in ast.walk(stmt)
+    )
+    if caller_only or moved_loop_handler or renamed_handler:
         try:
             helper_table = symtable.symtable(ast.unparse(helper), "<retained-helper>", "exec")
         except (SyntaxError, ValueError):
@@ -934,30 +965,15 @@ def _retained_correspondence(
             # A supplier certifies only its substituted expression, not a
             # separate helper lookup of the caller binding it captures.
             return {}
-    if not _paired_bindings(block, moved, names, bindable, substitutions) or not _paired_syntax(
-        block, moved, names, bindable, substitutions
-    ):
-        return {}
-    # Python clears an except target on exit. A renamed target must be used
-    # only by its own handler, including in the caller outside the moved block.
-    handler_names = (
-        node.name
-        for statement in block
-        for node in ast.walk(statement)
-        if isinstance(node, ast.ExceptHandler) and node.name is not None
-    )
-    renamed = [(name, names[name]) for name in handler_names if names[name] != name]
-    if any(
-        not (_reported_exception(caller, source) and _reported_exception(helper, target))
-        for source, target in renamed
-    ):
-        return {}
-    # A moved try in a single-pass loop leaves the terminal break in the caller.
-    moved_loop_handler = isinstance(old.body[-1], ast.Break) and any(
-        isinstance(stmt, ast.Try) for stmt in block
-    )
-    if (moved_loop_handler or renamed) and not _retains_local_across_handler(assignment, helper):
-        return {}
+        if (moved_loop_handler or renamed_handler) and not _retains_local_across_handler(
+            caller,
+            block,
+            assignment,
+            helper,
+            _locals(function_table) - parameter_names,
+            loop=moved_loop_handler,
+        ):
+            return {}
     return {key: value for key, value in names.items() if key in bindable}
 
 
