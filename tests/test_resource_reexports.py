@@ -162,3 +162,58 @@ def test_directory_reexport_preserves_resource_lifetime(tmp_path: Path, strict: 
     )
     if strict:
         assert (output / "work.py").read_bytes() == (package / "work.py").read_bytes()
+
+
+@pytest.mark.parametrize("package_cycle", [False, True])
+def test_branching_reexports_finish_within_timeout(tmp_path: Path, package_cycle: bool) -> None:
+    """Two re-exports per layer give millions of paths to the same constructor."""
+    if package_cycle:
+        # As in toolz, a relative import can resolve through the package's own
+        # star imports again, prepending ever more attributes to the same name.
+        (tmp_path / "__init__.py").write_text("from .left0 import *\nfrom .right0 import *\n")
+    layers = 2 if package_cycle else 23
+    for layer in range(layers):
+        for side in ("left", "right"):
+            (tmp_path / f"{side}{layer}.py").write_text(
+                f"from .left{layer + 1} import *\nfrom .right{layer + 1} import *\n"
+                if layer + 1 < layers
+                else "from tempfile import TemporaryDirectory as TD\n"
+            )
+    source = "from .left0 import TD\nheld = TD()\n"
+    (tmp_path / "work.py").write_text(source)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import ast\n"
+            "from pathlib import Path\n"
+            "from towel.unification.import_graph import ImportGraphCache\n"
+            "from towel.unification.resource_guard import ResourceImports, resource_guard\n"
+            "file = Path('work.py').resolve()\n"
+            "module = ast.parse(file.read_text())\n"
+            "guard = resource_guard(module.body, module, ResourceImports(str(file), ImportGraphCache()))\n"
+            "assert guard.names == {'held'} and guard.refusal is None, guard\n",
+        ],
+        cwd=tmp_path,
+        timeout=10,
+        check=True,
+    )
+
+
+def test_reexport_depth_counts_the_shortest_path(tmp_path: Path) -> None:
+    """A constructor at hop 32 is visible, even if another path needs 33 hops."""
+    for index in range(33):
+        (tmp_path / f"link{index}.py").write_text(
+            f"from .link{index + 1} import TD\n"
+            if index < 32
+            else "from tempfile import TemporaryDirectory as TD\n"
+        )
+    imports = ResourceImports(str(tmp_path / "work.py"), ImportGraphCache())
+    constructor = "tempfile.TemporaryDirectory"
+    for origins, expected in [
+        ([".link0.TD"], False),
+        ([".link0.TD", ".link1.TD"], True),
+        ([".link1.TD"], True),
+        ([".link0.TD"], False),
+    ]:
+        assert (constructor in imports.follow(frozenset(origins))) is expected

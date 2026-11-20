@@ -720,32 +720,51 @@ def _imported_sites(
     # cyclic reexports (the Pyparsing Protocol-base performance regression).
     minimum = len(target) if module_target else max(1, len(target) - 1)
     splits = range(minimum, len(full))
-    if set(full[0]) == {"."}:
+    root = import_location(current, full[0], cache)
+    if root is None:
+        return None
+    return frozenset(
+        (file, ".".join(full[split:]))
+        for split in splits
+        if (file := root.definition(full[1:split])) is not None
+    )
+
+
+@dataclass(frozen=True)
+class ImportLocation:
+    """The origin of a module spelling, with definitions mapped into the current stage."""
+
+    path: Optional[Path]
+    program: Optional[ProgramImports] = None
+
+    def definition(self, parts: Tuple[str, ...]) -> Optional[Path]:
+        if self.path is None:
+            return None
+        if self.program is None:
+            return _module_definition_file(self.path, parts)
+        file = _definition_file(self.path, parts)
+        return self.program.in_run(file) if file is not None else None
+
+
+def import_location(current: Path, head: str, cache: ImportGraphCache) -> Optional[ImportLocation]:
+    """Resolve the first component of an import, or its leading relative dots."""
+    if set(head) == {"."}:
         base = current.parent
-        for _ in range(len(full[0]) - 1):
+        for _ in range(len(head) - 1):
             base = base.parent
-        return frozenset(
-            (file, ".".join(full[split:]))
-            for split in splits
-            if (file := _module_definition_file(base, full[1:split])) is not None
-        )
+        return ImportLocation(base)
     try:
         program = cache.program_for(current)
     except ProjectScanLimitError:
         return None
-    info = program.model.names.get(full[0])
+    info = program.model.names.get(head)
     if info is None:
         return None
     if info.status is NameStatus.EXTERNAL:
-        return frozenset()  # An import of no module of the project names none of its files.
-    location = info.location
-    if not info.trusted or location is None:
+        return ImportLocation(None)
+    if not info.trusted or info.location is None:
         return None
-    return frozenset(
-        (program.in_run(file), ".".join(full[split:]))
-        for split in splits
-        if (file := _definition_file(location, full[1:split])) is not None
-    )
+    return ImportLocation(info.location, program)
 
 
 def _reachable_modules(

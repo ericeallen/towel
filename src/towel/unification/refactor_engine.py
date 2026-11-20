@@ -100,6 +100,7 @@ from .typing_forms import ModuleText
 from ..coverage_config import CoverageExclusion
 from ..consumers import MAXIMUM_FILES
 from .if_binding_transfer import sharing_if_transfer_sources
+from .resource_guard import sharing_resource_answers
 from .compiler_literals import sharing_compiler_literal_facts
 from .return_source_uses import sharing_return_source_uses
 from .models import (
@@ -864,6 +865,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         with (
             sharing_analysis_sources(check_ast_immutable=self._settings.check_ast_immutable),
             sharing_if_transfer_sources(),
+            sharing_resource_answers(
+                self.import_graph,
+                self._output_origin[1] if self._output_origin is not None else None,
+            ),
             sharing_compiler_literal_facts(),
             sharing_return_source_uses(self),
             deferring_pair_if_proofs(self),

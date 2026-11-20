@@ -24,15 +24,25 @@ constructors outside the list still require strict mode or explicit management.
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
 from typing import FrozenSet, Iterator, Mapping, Optional, Sequence
 from weakref import WeakKeyDictionary
 
-from ..analysis_sources import parse_analysis_source
+from ..analysis_sources import (
+    ParserConfiguration,
+    parse_analysis_source,
+    parser_configuration,
+    parsing_is_pure,
+)
 from ..source_text import try_read_source
 from .assignment_analyzer import own_scope_bindings
-from .import_graph import ImportGraphCache, imported_alias_sites
+from .bounded_cache import BoundedCache
+from .import_graph import ImportGraphCache
+from .resource_reexports import reachable_constructors
 from .module_bindings import dotted_name, import_origin
 from .models import is_generated_helper_name
 from .parameters import parameter_nodes
@@ -313,6 +323,30 @@ def _resolution(module: ast.AST) -> _Resolution:
     return _Resolution(scopes, locations)
 
 
+_AnswerKey = tuple[str, FrozenSet[str], ParserConfiguration]
+
+
+@dataclass(frozen=True)
+class _StageAnswers:
+    graph: ImportGraphCache
+    root: Path
+    answers: BoundedCache[_AnswerKey, FrozenSet[str]]
+
+
+_STAGE_ANSWERS: ContextVar[Optional[_StageAnswers]] = ContextVar("resource_answers", default=None)
+
+
+@contextmanager
+def sharing_resource_answers(graph: ImportGraphCache, stage: Optional[Path]) -> Iterator[None]:
+    """The engine reads its private stage throughout one analysis. It can write between analyses."""
+    answers = _StageAnswers(graph, stage, BoundedCache(2048)) if stage is not None else None
+    token = _STAGE_ANSWERS.set(answers)
+    try:
+        yield
+    finally:
+        _STAGE_ANSWERS.reset(token)
+
+
 @dataclass(frozen=True)
 class ResourceImports:
     """The importing file and the engine's current project import graph."""
@@ -320,35 +354,41 @@ class ResourceImports:
     file_path: str
     cache: ImportGraphCache
 
-    def follow(
-        self, origins: FrozenSet[str], seen: FrozenSet[tuple[Path, str]] = frozenset()
-    ) -> FrozenSet[str]:
-        found = set(origins)
-        for origin in origins:
-            if origin in RESOURCE_CONSTRUCTORS or origin in WEAK_REFERENCE_CONSTRUCTORS:
-                continue
-            level = len(origin) - len(origin.lstrip("."))
-            head, _, tail = origin.lstrip(".").partition(".")
-            alias = ast.alias(name="*")
-            statement = ast.ImportFrom(module=None if level else head, names=[alias], level=level)
-            sites = imported_alias_sites(
-                self.file_path, statement, alias, origin.lstrip(".") if level else tail, self.cache
-            )
-            for file, name in sites or ():
-                key = (file, name)
-                if key in seen or len(seen) >= 32:
-                    continue
-                source = try_read_source(file)
-                if source is None:
-                    continue
-                try:
-                    module = parse_analysis_source(source, str(file))
-                except SyntaxError:
-                    continue
-                resolution = memoized_per_node(_RESOLUTIONS, module, _resolution)
-                targets = resolution.origins(name, 0, (10**9, 0), deferred=True)
-                found.update(ResourceImports(str(file), self.cache).follow(targets, seen | {key}))
-        return frozenset(found)
+    def follow(self, origins: FrozenSet[str]) -> FrozenSet[str]:
+        """The recognized constructors reachable from these call origins."""
+        if not origins or origins <= _RECOGNIZED:
+            return origins
+        stage = _STAGE_ANSWERS.get()
+        key = (self.file_path, origins, parser_configuration())
+        if stage is not None and stage.graph is not self.cache:
+            stage = None
+        if stage is not None:
+            previous = stage.answers.get(key)
+            if previous is not None:
+                return previous
+
+        def exported(file: Path, name: str) -> FrozenSet[str]:
+            nonlocal stage
+            source = try_read_source(file)
+            if source is None:
+                stage = None
+                return frozenset()
+            if stage is not None and (
+                not file.is_relative_to(stage.root) or not parsing_is_pure(source)
+            ):
+                stage = None
+            try:
+                module = parse_analysis_source(source, str(file))
+            except SyntaxError:
+                return frozenset()
+            resolution = memoized_per_node(_RESOLUTIONS, module, _resolution)
+            return resolution.origins(name, 0, (10**9, 0), deferred=True)
+
+        found = reachable_constructors(self.file_path, origins, self.cache, _RECOGNIZED, exported)
+        return stage.answers.put(key, found) if stage is not None else found
+
+
+_RECOGNIZED = RESOURCE_CONSTRUCTORS | WEAK_REFERENCE_CONSTRUCTORS
 
 
 def _call_origins(
@@ -366,7 +406,7 @@ def _call_origins(
 
 
 _RESOLUTIONS: WeakKeyDictionary[ast.AST, _Resolution] = WeakKeyDictionary()
-_OWNING_HELPERS: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
+_NONOWNING_HELPERS: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
 
 
 @dataclass(frozen=True)
@@ -401,7 +441,9 @@ def _helper_callees(call: ast.Call, resolution: Optional[_Resolution]) -> Frozen
     )
 
 
-def _owning_helpers(module: ast.AST, imports: Optional[ResourceImports] = None) -> FrozenSet[str]:
+def _nonowning_helpers(
+    module: ast.AST, imports: Optional[ResourceImports] = None
+) -> FrozenSet[str]:
     """Retain the guard's guarantee across subsequent extraction passes.
 
     A helper's result can contain an owner the first pass deliberately kept.
@@ -437,8 +479,35 @@ def _owning_helpers(module: ast.AST, imports: Optional[ResourceImports] = None) 
             name for name, calls in dependencies.items() if calls & owning or calls - known
         }
         if expanded == owning:
-            return frozenset(owning)
+            return frozenset(known - owning)
         owning = expanded
+
+
+def _guarded_calls(
+    nodes: Sequence[ast.AST],
+    module: Optional[ast.AST],
+    resolution: Optional[_Resolution],
+    imports: Optional[ResourceImports],
+) -> Iterator[tuple[ast.Call, Optional[FrozenSet[str]]]]:
+    """Calls whose lifetimes matter, in order. None means refuse the generated helper."""
+    nonowning: Optional[FrozenSet[str]] = None
+    for node in nodes:
+        if not isinstance(node, ast.Call):
+            continue
+        callees = _helper_callees(node, resolution)
+        if callees:
+            if nonowning is None and module is not None:
+                nonowning = (
+                    memoized_per_node(_NONOWNING_HELPERS, module, _nonowning_helpers)
+                    if imports is None
+                    else _nonowning_helpers(module, imports)
+                )
+            if nonowning is None or not callees <= nonowning:
+                yield node, None
+                return
+        origins = _call_origins(node, resolution, imports)
+        if origins & _RECOGNIZED:
+            yield node, origins
 
 
 def resource_guard(
@@ -455,26 +524,11 @@ def resource_guard(
     resolution = (
         memoized_per_node(_RESOLUTIONS, module, _resolution) if module is not None else None
     )
-    owning_helpers = (
-        (
-            memoized_per_node(_OWNING_HELPERS, module, _owning_helpers)
-            if imports is None
-            else _owning_helpers(module, imports)
-        )
-        if module is not None
-        else frozenset()
-    )
-    known_helpers = (
-        {
-            node.name
-            for node in ast.walk(module)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and is_generated_helper_name(node.name)
-        }
-        if module is not None
-        else set()
-    )
     nodes = [node for statement in block for node in _own_scope(statement)]
+    calls = _guarded_calls(nodes, module, resolution, imports)
+    first = next(calls, None)
+    if first is None:
+        return ResourceGuard()
     parents = {id(child): node for node in nodes for child in ast.iter_child_nodes(node)}
     positions = {id(node): _position(node) for node in nodes}
     # A smaller prefix must not evade a refusal by leaving the rebinding in
@@ -534,22 +588,16 @@ def resource_guard(
             )
         )
 
-    for node in nodes:
-        if not isinstance(node, ast.Call):
-            continue
-        callees = _helper_callees(node, resolution)
-        if callees & owning_helpers or callees - known_helpers:
+    for node, origins in chain((first,), calls):
+        if origins is None:
             return ResourceGuard(
                 refusal=(
                     f"This block calls a generated helper (line {node.lineno}) whose resource ownership "
                     "Towel cannot preserve through another helper. Keep this call in place, or use `--strict`."
                 )
             )
-        origins = _call_origins(node, resolution, imports)
         resource = bool(origins & RESOURCE_CONSTRUCTORS)
         weak = bool(origins & WEAK_REFERENCE_CONSTRUCTORS)
-        if not resource and not weak:
-            continue
         refusal = (
             f"This block creates or weakly references a resource (line {node.lineno}) "
             "that later code may depend on, and Towel cannot keep it alive in a helper. "
