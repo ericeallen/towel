@@ -34,12 +34,13 @@ import contextlib
 import io
 import re
 from pathlib import Path
+from time import process_time
 from typing import List
 
 import pytest
 
 from towel.api import UnificationRefactorEngine
-from towel.unification.semantic_safety import stable_module_names
+from towel.unification.semantic_safety import _stable_names_bound_for, stable_module_names
 from towel.unification.thunk_inlining import _evaluated_at_most_once
 from tests.test_builtins_across_modules import (
     _passes_join,
@@ -1524,3 +1525,14 @@ def test_at_most_once_excludes_loops_comprehensions_and_deferred_bodies(
     helper = ast.parse(f"def h(p, c, xs):\n    {body}\n").body[0]
     assert isinstance(helper, ast.FunctionDef)
     assert _evaluated_at_most_once(helper, "p") is once
+
+
+def test_by_value_checks_share_module_rebindings() -> None:
+    """Checking each function can reuse the module's set of rebound builtin names."""
+    source = "def padding():\n" + "    a = 1\n" * 3500
+    module = ast.parse(source + "".join(f"def f{i}(): pass\n" for i in range(200)))
+    start = process_time()
+    for function in module.body[1:]:
+        assert isinstance(function, ast.FunctionDef)
+        assert "padding" in _stable_names_bound_for(module, function)
+    assert process_time() - start < 2

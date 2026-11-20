@@ -391,18 +391,15 @@ class ResourceImports:
 _RECOGNIZED = RESOURCE_CONSTRUCTORS | WEAK_REFERENCE_CONSTRUCTORS
 
 
-def _call_origins(
-    call: ast.Call, resolution: Optional[_Resolution], imports: Optional[ResourceImports]
-) -> FrozenSet[str]:
+def _lexical_origins(call: ast.Call, resolution: Optional[_Resolution]) -> FrozenSet[str]:
     spelling = dotted_name(call.func)
     if spelling is None:
         return frozenset()
-    origins = (
+    return (
         resolution.origins(spelling, resolution.locations.get(id(call), 0), _position(call))
         if resolution is not None
         else frozenset({"builtins.open" if spelling == "open" else spelling})
     )
-    return origins if imports is None else imports.follow(origins)
 
 
 _RESOLUTIONS: WeakKeyDictionary[ast.AST, _Resolution] = WeakKeyDictionary()
@@ -441,6 +438,39 @@ def _helper_callees(call: ast.Call, resolution: Optional[_Resolution]) -> Frozen
     )
 
 
+@dataclass(frozen=True)
+class _HelperBody:
+    name: str
+    callees: FrozenSet[str]
+    # Each call's lexical origins and whether a with statement manages its result.
+    calls: tuple[tuple[FrozenSet[str], bool], ...]
+
+
+_HELPER_BODIES: WeakKeyDictionary[ast.AST, tuple[_HelperBody, ...]] = WeakKeyDictionary()
+
+
+def _helper_bodies(module: ast.AST) -> tuple[_HelperBody, ...]:
+    resolution = memoized_per_node(_RESOLUTIONS, module, _resolution)
+    bodies = []
+    for helper in ast.walk(module):
+        if not (
+            isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and is_generated_helper_name(helper.name)
+        ):
+            continue
+        nodes = [node for statement in helper.body for node in _own_scope(statement)]
+        managed = {node.context_expr for node in nodes if isinstance(node, ast.withitem)}
+        calls = [node for node in nodes if isinstance(node, ast.Call)]
+        bodies.append(
+            _HelperBody(
+                helper.name,
+                frozenset(name for call in calls for name in _helper_callees(call, resolution)),
+                tuple((_lexical_origins(call, resolution), call in managed) for call in calls),
+            )
+        )
+    return tuple(bodies)
+
+
 def _nonowning_helpers(
     module: ast.AST, imports: Optional[ResourceImports] = None
 ) -> FrozenSet[str]:
@@ -452,26 +482,16 @@ def _nonowning_helpers(
     also left in place when their bodies are unavailable in this module.
     Ordinary factories are outside this deliberately syntactic guard.
     """
-    resolution = memoized_per_node(_RESOLUTIONS, module, _resolution)
-    helpers = [
-        node
-        for node in ast.walk(module)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and is_generated_helper_name(node.name)
-    ]
+    helpers = memoized_per_node(_HELPER_BODIES, module, _helper_bodies)
     known = {helper.name for helper in helpers}
     owning: set[str] = set()
     dependencies: dict[str, set[str]] = {}
     for helper in helpers:
-        nodes = [node for statement in helper.body for node in _own_scope(statement)]
-        managed = {id(node.context_expr) for node in nodes if isinstance(node, ast.withitem)}
-        for node in nodes:
-            if not isinstance(node, ast.Call):
-                continue
-            dependencies.setdefault(helper.name, set()).update(_helper_callees(node, resolution))
-            origins = _call_origins(node, resolution, imports)
+        dependencies.setdefault(helper.name, set()).update(helper.callees)
+        for lexical, managed in helper.calls:
+            origins = lexical if imports is None else imports.follow(lexical)
             if origins & WEAK_REFERENCE_CONSTRUCTORS or (
-                origins & RESOURCE_CONSTRUCTORS and id(node) not in managed
+                origins & RESOURCE_CONSTRUCTORS and not managed
             ):
                 owning.add(helper.name)
     while True:
@@ -505,7 +525,8 @@ def _guarded_calls(
             if nonowning is None or not callees <= nonowning:
                 yield node, None
                 return
-        origins = _call_origins(node, resolution, imports)
+        lexical = _lexical_origins(node, resolution)
+        origins = lexical if imports is None else imports.follow(lexical)
         if origins & _RECOGNIZED:
             yield node, origins
 

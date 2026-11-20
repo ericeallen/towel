@@ -18,6 +18,7 @@ import ast
 from pathlib import Path
 import subprocess
 import sys
+from time import process_time
 
 import pytest
 
@@ -217,3 +218,15 @@ def test_reexport_depth_counts_the_shortest_path(tmp_path: Path) -> None:
         ([".link0.TD"], False),
     ]:
         assert (constructor in imports.follow(frozenset(origins))) is expected
+
+
+def test_generated_helper_checks_share_the_module_scan(tmp_path: Path) -> None:
+    """A generated helper can occur in many overlapping candidate blocks."""
+    source = "def __extracted_func():\n    return 42\n" + "padding = 1\n" * 3500
+    module = ast.parse(source + "result = __extracted_func()\n")
+    block = module.body[-1:]
+    imports = ResourceImports(str(tmp_path / "work.py"), ImportGraphCache())
+    start = process_time()
+    for _ in range(450):
+        assert resource_guard(block, module, imports).refusal is None
+    assert process_time() - start < 2

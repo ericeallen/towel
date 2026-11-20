@@ -1536,6 +1536,23 @@ def _expression_runs_nothing(expression: ast.expr) -> bool:
     return True
 
 
+_REBOUND_NAMES: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
+
+
+def _rebound_names(module: ast.AST) -> FrozenSet[str]:
+    rebound: set[str] = set()
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            rebound.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            rebound.add(node.name)
+        elif isinstance(node, ast.alias):
+            rebound.add(node.asname or node.name.split(".")[0])
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            rebound.update(node.names)
+    return frozenset(rebound)
+
+
 def _quiet_bases(module: ast.Module) -> FrozenSet[str]:
     """The classes a class of ``module`` may derive from without running code as it is made.
 
@@ -1543,18 +1560,7 @@ def _quiet_bases(module: ast.Module) -> FrozenSet[str]:
     stable classes made without decorators or keywords, from such bases,
     that never mention ``__init_subclass__``.
     """
-    rebound = {
-        node.id
-        for node in ast.walk(module)
-        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load)
-    }
-    for node in ast.walk(module):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            rebound.add(node.name)
-        elif isinstance(node, ast.alias):
-            rebound.add(node.asname or node.name.split(".")[0])
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            rebound.update(node.names)
+    rebound = memoized_per_node(_REBOUND_NAMES, module, _rebound_names)
     if "*" in rebound:
         return frozenset()
     quiet = {
