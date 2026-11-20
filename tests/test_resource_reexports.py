@@ -19,10 +19,12 @@ from pathlib import Path
 import subprocess
 import sys
 from time import process_time
+from unittest.mock import call, patch
 
 import pytest
 
 from tests.test_resource_guard import _refactored, _run
+from towel.analysis_sources import sharing_analysis_sources
 from towel.unification.import_graph import ImportGraphCache
 from towel.unification.resource_guard import ResourceImports, resource_guard
 
@@ -107,6 +109,48 @@ def test_reexport_cycles_terminate_and_reread_changed_sources(tmp_path: Path) ->
     assert resource_guard(function.body, module, imports).names == set()
     base.write_text("from tempfile import TemporaryDirectory as TD\n")
     assert resource_guard(function.body, module, imports).names == {"held"}
+
+
+def test_generated_helper_ownership_follows_provider_changes(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname="probe"\nversion="0"\n')
+    client = tmp_path / "client.py"
+    client.write_text(
+        "from .provider import factory\n"
+        "def __extracted_func():\n    return factory()\n"
+        "value = __extracted_func()\n"
+    )
+    module = ast.parse(client.read_text())
+    block = module.body[-1:]
+    imports = ResourceImports(str(client), ImportGraphCache())
+    provider = tmp_path / "provider.py"
+    provider.write_text("def factory(): return 42\n")
+    assert resource_guard(block, module, imports).refusal is None
+
+    provider.write_text("from tempfile import TemporaryDirectory as factory\n")
+    assert resource_guard(block, module, imports).refusal is not None
+
+
+def test_stage_resolves_relative_reexports_per_importer(tmp_path: Path) -> None:
+    from towel.unification.resource_guard import sharing_resource_answers
+
+    (tmp_path / "pyproject.toml").write_text('[project]\nname="probe"\nversion="0"\n')
+    for name, provider in (
+        ("a", "from tempfile import TemporaryDirectory as factory\n"),
+        ("b", "def factory(): return 42\n"),
+    ):
+        package = tmp_path / name
+        package.mkdir()
+        (package / "__init__.py").write_text("")
+        (package / "p.py").write_text(provider)
+        (package / "work.py").write_text("from .p import factory\nprint(factory())\n")
+
+    graph = ImportGraphCache()
+    with sharing_analysis_sources(), sharing_resource_answers(graph, tmp_path):
+        for name, should_refuse in (("a", True), ("b", False)):
+            client = tmp_path / name / "work.py"
+            module = ast.parse(client.read_text())
+            guard = resource_guard(module.body[-1:], module, ResourceImports(str(client), graph))
+            assert (guard.refusal is not None) is should_refuse, name
 
 
 @pytest.mark.parametrize("strict", [False, True])
@@ -222,14 +266,14 @@ def test_reexport_depth_counts_the_shortest_path(tmp_path: Path) -> None:
 
 def test_generated_helper_checks_share_the_module_scan(tmp_path: Path) -> None:
     """A generated helper can occur in many overlapping candidate blocks."""
-    source = "def __extracted_func():\n    return 42\n" + "padding = 1\n" * 3500
+    source = "def __extracted_func():\n    return 42\n"
     module = ast.parse(source + "result = __extracted_func()\n")
     block = module.body[-1:]
     imports = ResourceImports(str(tmp_path / "work.py"), ImportGraphCache())
-    start = process_time()
-    for _ in range(450):
-        assert resource_guard(block, module, imports).refusal is None
-    assert process_time() - start < 2
+    with patch.object(ast, "walk", wraps=ast.walk) as walks:
+        for _ in range(100):
+            assert resource_guard(block, module, imports).refusal is None
+    assert walks.call_args_list.count(call(module)) <= 16
 
 
 def test_overlapping_blocks_share_call_lookups(tmp_path: Path) -> None:
@@ -242,4 +286,5 @@ def test_overlapping_blocks_share_call_lookups(tmp_path: Path) -> None:
     start = process_time()
     for _ in range(450):
         assert resource_guard(function.body, module, imports).refusal is None
-    assert process_time() - start < 2
+    # 450 checks took 0.04 CPU seconds under 3.13 coverage and over 4 s before sharing.
+    assert process_time() - start < 0.22

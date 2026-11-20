@@ -34,8 +34,8 @@ import contextlib
 import io
 import re
 from pathlib import Path
-from time import process_time
 from typing import List
+from unittest.mock import call, patch
 
 import pytest
 
@@ -1529,10 +1529,10 @@ def test_at_most_once_excludes_loops_comprehensions_and_deferred_bodies(
 
 def test_by_value_checks_share_module_rebindings() -> None:
     """Checking each function can reuse the module's set of rebound builtin names."""
-    source = "def padding():\n" + "    a = 1\n" * 3500
-    module = ast.parse(source + "".join(f"def f{i}(): pass\n" for i in range(200)))
-    start = process_time()
-    for function in module.body[1:]:
-        assert isinstance(function, ast.FunctionDef)
-        assert "padding" in _stable_names_bound_for(module, function)
-    assert process_time() - start < 2
+    source = "def padding(): pass\n"
+    module = ast.parse(source + "".join(f"def f{i}(): pass\n" for i in range(100)))
+    with patch.object(ast, "walk", wraps=ast.walk) as walks:
+        for function in module.body[1:]:
+            assert isinstance(function, ast.FunctionDef)
+            assert "padding" in _stable_names_bound_for(module, function)
+    assert walks.call_args_list.count(call(module)) <= 16
