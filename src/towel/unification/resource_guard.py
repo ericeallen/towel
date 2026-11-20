@@ -26,7 +26,7 @@ from __future__ import annotations
 import ast
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import Path
 from typing import FrozenSet, Iterator, Mapping, Optional, Sequence
@@ -116,9 +116,23 @@ class _Scope:
 
 
 @dataclass(frozen=True)
+class _Call:
+    node: ast.Call
+    origins: FrozenSet[str]
+    helpers: FrozenSet[str]
+
+
+@dataclass(frozen=True)
 class _Resolution:
     scopes: Mapping[int, _Scope]
     locations: Mapping[int, int]
+
+    # A statement's lexical lookups depend on the module in which it occurs.
+    # Keep only descendant calls as values, so synthetic statements can expire.
+    calls: WeakKeyDictionary[ast.AST, tuple[_Call, ...]] = field(default_factory=WeakKeyDictionary)
+
+    def calls_in(self, statement: ast.stmt) -> tuple[_Call, ...]:
+        return memoized_per_node(self.calls, statement, lambda node: _calls_in(node, self))
 
     def origins(
         self,
@@ -391,17 +405,6 @@ class ResourceImports:
 _RECOGNIZED = RESOURCE_CONSTRUCTORS | WEAK_REFERENCE_CONSTRUCTORS
 
 
-def _lexical_origins(call: ast.Call, resolution: Optional[_Resolution]) -> FrozenSet[str]:
-    spelling = dotted_name(call.func)
-    if spelling is None:
-        return frozenset()
-    return (
-        resolution.origins(spelling, resolution.locations.get(id(call), 0), _position(call))
-        if resolution is not None
-        else frozenset({"builtins.open" if spelling == "open" else spelling})
-    )
-
-
 _RESOLUTIONS: WeakKeyDictionary[ast.AST, _Resolution] = WeakKeyDictionary()
 _NONOWNING_HELPERS: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
 
@@ -422,20 +425,27 @@ def _own_scope(node: ast.AST) -> Iterator[ast.AST]:
         yield from _own_scope(child)
 
 
-def _helper_callees(call: ast.Call, resolution: Optional[_Resolution]) -> FrozenSet[str]:
-    spelling = dotted_name(call.func)
-    if spelling is None:
-        return frozenset()
-    origins = (
-        resolution.origins(spelling, resolution.locations.get(id(call), 0), _position(call))
-        if resolution is not None
-        else frozenset()
-    )
-    return frozenset(
-        origin
-        for origin in {*origins, spelling}
-        if is_generated_helper_name(origin.rsplit(".", 1)[-1])
-    )
+def _calls_in(statement: ast.AST, resolution: Optional[_Resolution]) -> tuple[_Call, ...]:
+    calls = []
+    for node in _own_scope(statement):
+        if not isinstance(node, ast.Call):
+            continue
+        spelling = dotted_name(node.func)
+        if spelling is None:
+            continue
+        origins = (
+            resolution.origins(spelling, resolution.locations.get(id(node), 0), _position(node))
+            if resolution is not None
+            else frozenset({"builtins.open" if spelling == "open" else spelling})
+        )
+        helpers = frozenset(
+            origin
+            for origin in {*origins, spelling}
+            if is_generated_helper_name(origin.rsplit(".", 1)[-1])
+        )
+        if origins or helpers:
+            calls.append(_Call(node, origins, helpers))
+    return tuple(calls)
 
 
 @dataclass(frozen=True)
@@ -460,12 +470,12 @@ def _helper_bodies(module: ast.AST) -> tuple[_HelperBody, ...]:
             continue
         nodes = [node for statement in helper.body for node in _own_scope(statement)]
         managed = {node.context_expr for node in nodes if isinstance(node, ast.withitem)}
-        calls = [node for node in nodes if isinstance(node, ast.Call)]
+        calls = [call for statement in helper.body for call in resolution.calls_in(statement)]
         bodies.append(
             _HelperBody(
                 helper.name,
-                frozenset(name for call in calls for name in _helper_callees(call, resolution)),
-                tuple((_lexical_origins(call, resolution), call in managed) for call in calls),
+                frozenset(name for call in calls for name in call.helpers),
+                tuple((call.origins, call.node in managed) for call in calls),
             )
         )
     return tuple(bodies)
@@ -504,31 +514,26 @@ def _nonowning_helpers(
 
 
 def _guarded_calls(
-    nodes: Sequence[ast.AST],
+    calls: Iterator[_Call],
     module: Optional[ast.AST],
-    resolution: Optional[_Resolution],
     imports: Optional[ResourceImports],
 ) -> Iterator[tuple[ast.Call, Optional[FrozenSet[str]]]]:
     """Calls whose lifetimes matter, in order. None means refuse the generated helper."""
     nonowning: Optional[FrozenSet[str]] = None
-    for node in nodes:
-        if not isinstance(node, ast.Call):
-            continue
-        callees = _helper_callees(node, resolution)
-        if callees:
+    for call in calls:
+        if call.helpers:
             if nonowning is None and module is not None:
                 nonowning = (
                     memoized_per_node(_NONOWNING_HELPERS, module, _nonowning_helpers)
                     if imports is None
                     else _nonowning_helpers(module, imports)
                 )
-            if nonowning is None or not callees <= nonowning:
-                yield node, None
+            if nonowning is None or not call.helpers <= nonowning:
+                yield call.node, None
                 return
-        lexical = _lexical_origins(node, resolution)
-        origins = lexical if imports is None else imports.follow(lexical)
+        origins = call.origins if imports is None else imports.follow(call.origins)
         if origins & _RECOGNIZED:
-            yield node, origins
+            yield call.node, origins
 
 
 def resource_guard(
@@ -545,11 +550,16 @@ def resource_guard(
     resolution = (
         memoized_per_node(_RESOLUTIONS, module, _resolution) if module is not None else None
     )
-    nodes = [node for statement in block for node in _own_scope(statement)]
-    calls = _guarded_calls(nodes, module, resolution, imports)
+    lexical_calls = (
+        call
+        for statement in block
+        for call in (resolution.calls_in(statement) if resolution else _calls_in(statement, None))
+    )
+    calls = _guarded_calls(lexical_calls, module, imports)
     first = next(calls, None)
     if first is None:
         return ResourceGuard()
+    nodes = [node for statement in block for node in _own_scope(statement)]
     parents = {id(child): node for node in nodes for child in ast.iter_child_nodes(node)}
     positions = {id(node): _position(node) for node in nodes}
     # A smaller prefix must not evade a refusal by leaving the rebinding in

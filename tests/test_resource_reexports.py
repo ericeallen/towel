@@ -230,3 +230,16 @@ def test_generated_helper_checks_share_the_module_scan(tmp_path: Path) -> None:
     for _ in range(450):
         assert resource_guard(block, module, imports).refusal is None
     assert process_time() - start < 2
+
+
+def test_overlapping_blocks_share_call_lookups(tmp_path: Path) -> None:
+    """Each block includes a large statement whose calls all resolve to a parameter."""
+    source = "def work(f):\n    value = [\n" + "        f(1),\n" * 1000 + "    ]\n"
+    module = ast.parse(source)
+    function = module.body[0]
+    assert isinstance(function, ast.FunctionDef)
+    imports = ResourceImports(str(tmp_path / "work.py"), ImportGraphCache())
+    start = process_time()
+    for _ in range(450):
+        assert resource_guard(function.body, module, imports).refusal is None
+    assert process_time() - start < 2
