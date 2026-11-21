@@ -374,3 +374,25 @@ def test_explain_counts_repetitions_separated_by_a_different_rank(
         + ["  sample.py:1-2 and sample.py:10-11"] * expected
     )
     assert max(retained) == 2
+
+
+def test_quick_preview_does_not_keep_conditions_for_every_pair_of_modules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the fixed-point report can list the missing import for every module pair."""
+    from towel import cli
+
+    project = _many_left_alone(tmp_path / "project", 6)
+    original = cli._quick_report
+    counts = []
+
+    def observe(engine: UnificationRefactorEngine) -> RunReport:
+        assert len(engine.last_left_alone) <= 5
+        counts.append(len(engine._pair_left_alone.conditions))
+        return original(engine)
+
+    monkeypatch.setattr(cli, "_quick_report", observe)
+    result = invoke(["preview", str(project), "--quick", "--cross-module", "--progress", "none"])
+    assert result.status == 0, result
+    assert "Analysed 6 Python files" in result.stdout
+    assert counts == [0]

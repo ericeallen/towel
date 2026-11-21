@@ -660,7 +660,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._pair_rejection_subject: Optional[str] = None
         self._pair_rejections: Dict[str, int] = {}
         self._location_detail = location_detail
-        self._pair_left_alone = PairLocations(location_detail, cross_module_helpers)
+        self._pair_left_alone = PairLocations(location_detail)
         self._census = AnalysisCensus()
         self._skips_reported: Set[str] = set()
         self._duplicate_pairs = 0
@@ -1131,7 +1131,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._pair_rejections = {}
         self._pair_left_alone = PairLocations(
             self._location_detail if self._collect_locations else "counts",
-            self.cross_module_helpers,
+            # Only a fixed-point run reports why each pair of modules shared nothing.
+            self.cross_module_helpers and self._output_origin is not None,
             self._stage_report_path,
         )
 
