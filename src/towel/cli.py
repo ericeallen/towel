@@ -2544,6 +2544,7 @@ def _quick_report(engine: "UnificationRefactorEngine") -> "RunReport":
 
     census = engine.last_census
     return RunReport(
+        resource_limit_reached=engine.import_graph.resource_budget.exhausted,
         declined_pairs=engine.declined_pairs,
         candidate_pairs=engine.last_pair_tally.candidate_pairs,
         files_analysed=census.files,

@@ -52,6 +52,7 @@ from typing import (
     Union,
 )
 
+from .resource_budget import ResourceBudget
 from .bounded_cache import BoundedCache, memoizing
 from ..analysis_sources import (
     ParserConfiguration,
@@ -128,6 +129,7 @@ class ImportGraphCache:
 
     def __init__(self, limit: int = 8192, *, excluded_names: Iterable[str] = ()) -> None:
         self.excluded_names = frozenset(excluded_names)
+        self._resource_budget: Optional[ResourceBudget] = None
         self._stage: Optional[Tuple[Path, Path]] = None
         self._programs: Dict[Path, ProgramImports] = {}
         self._unreadable: Dict[Path, ProjectScanLimitError] = {}
@@ -153,6 +155,12 @@ class ImportGraphCache:
         # The distribution each directory's modules belong to, found once per run.
         self._distributions: Dict[Path, Optional[Path]] = {}
 
+    @property
+    def resource_budget(self) -> ResourceBudget:
+        if self._resource_budget is None:
+            self._resource_budget = ResourceBudget()
+        return self._resource_budget
+
     def resolve(self, path: str) -> Path:
         """``Path(path).resolve()``, once per spelling for the life of the cache."""
         absolute = os.path.abspath(path)
@@ -175,6 +183,7 @@ class ImportGraphCache:
             if origin_root is None or stage_root is None
             else (origin_root.resolve(), stage_root.resolve())
         )
+        self._resource_budget = None
         self._programs = {}
         self._unreadable = {}
         self._declared = {}
@@ -241,6 +250,13 @@ class ImportGraphCache:
             self._distributions[directory] = distribution_root(module)
         return self._distributions[directory]
 
+    def program_root_for(self, resolved: Path) -> Path:
+        """The import model used for this resolved path, including the stage mapping."""
+        stage = self._stage
+        if stage is not None and any(resolved.is_relative_to(root) for root in stage):
+            return stage[0]
+        return self.project_root(resolved)
+
     def program_for(self, path: Path) -> ProgramImports:
         """The program imports of the project ``path`` belongs to, read on first use.
 
@@ -249,12 +265,8 @@ class ImportGraphCache:
         """
         resolved = path.resolve()
         stage = self._stage
-        if stage is not None and any(
-            resolved == root or resolved.is_relative_to(root) for root in stage
-        ):
-            root, stage_root = stage
-        else:
-            root, stage_root = self.project_root(resolved), None
+        root = self.program_root_for(resolved)
+        stage_root = stage[1] if stage is not None and root == stage[0] else None
         known = self._programs.get(root)
         if known is not None:
             return known

@@ -40,9 +40,10 @@ from ..analysis_sources import (
 )
 from ..source_text import try_read_source
 from .assignment_analyzer import own_scope_bindings
-from .bounded_cache import BoundedCache
+from .bounded_cache import BoundedCache, memoizing
 from .import_graph import ImportGraphCache
-from .resource_reexports import reachable_constructors
+from .resource_budget import WorkLimitReached
+from .resource_reexports import ReexportSearch, reachable_constructors
 from .module_bindings import dotted_name, import_origin
 from .models import is_generated_helper_name
 from .parameters import parameter_nodes
@@ -337,7 +338,7 @@ def _resolution(module: ast.AST) -> _Resolution:
     return _Resolution(scopes, locations)
 
 
-_AnswerKey = tuple[str, FrozenSet[str], ParserConfiguration]
+_AnswerKey = tuple[Path, FrozenSet[str], ParserConfiguration]
 
 
 @dataclass(frozen=True)
@@ -345,6 +346,8 @@ class _StageAnswers:
     graph: ImportGraphCache
     root: Path
     answers: BoundedCache[_AnswerKey, FrozenSet[str]]
+    searches: dict[ParserConfiguration, ReexportSearch] = field(default_factory=dict)
+    programs: BoundedCache[Path, Path] = field(default_factory=lambda: BoundedCache(2048))
 
 
 _STAGE_ANSWERS: ContextVar[Optional[_StageAnswers]] = ContextVar("resource_answers", default=None)
@@ -373,24 +376,43 @@ class ResourceImports:
         if not origins or origins <= _RECOGNIZED:
             return origins
         stage = _STAGE_ANSWERS.get()
-        key = (self.file_path, origins, parser_configuration())
-        if stage is not None and stage.graph is not self.cache:
+        configuration = parser_configuration()
+        if stage is not None and (stage.graph is not self.cache or not memoizing()):
             stage = None
+        file = (
+            self.cache.resolve(self.file_path)
+            if stage is not None
+            else Path(self.file_path).resolve()
+        )
         if stage is not None:
+            scope: Optional[Path]
+            if any(origin.startswith(".") for origin in origins):
+                scope = file.parent
+            else:
+                scope = stage.programs.get(file)
+                if scope is None:
+                    scope = stage.programs[file] = self.cache.program_root_for(file)
+            key = (scope, origins, configuration)
             previous = stage.answers.get(key)
             if previous is not None:
                 return previous
+        if self.cache.resource_budget.exhausted:
+            return _MAY_BE_RESOURCE
+        # Take ownership until completion. No interrupted or impure lookup
+        # may leave a partially expanded search for the next caller.
+        search = stage.searches.pop(configuration, None) if stage is not None else None
+        if search is None:
+            search = ReexportSearch(self.cache, _RECOGNIZED, stage.root if stage else None)
 
         def exported(file: Path, name: str) -> FrozenSet[str]:
             nonlocal stage
             source = try_read_source(file)
-            if source is None:
-                stage = None
-                return frozenset()
             if stage is not None and (
-                not file.is_relative_to(stage.root) or not parsing_is_pure(source)
+                source is None or not file.is_relative_to(stage.root) or not parsing_is_pure(source)
             ):
                 stage = None
+            if source is None:
+                return frozenset()
             try:
                 module = parse_analysis_source(source, str(file))
             except SyntaxError:
@@ -398,11 +420,22 @@ class ResourceImports:
             resolution = memoized_per_node(_RESOLUTIONS, module, _resolution)
             return resolution.origins(name, 0, (10**9, 0), deferred=True)
 
-        found = reachable_constructors(self.file_path, origins, self.cache, _RECOGNIZED, exported)
-        return stage.answers.put(key, found) if stage is not None else found
+        try:
+            found = reachable_constructors(
+                file, origins, self.cache, _RECOGNIZED, exported, search=search
+            )
+        except WorkLimitReached:
+            return _MAY_BE_RESOURCE
+        if stage is not None:
+            stage.searches[configuration] = search
+            return stage.answers.put(key, found)
+        return found
 
 
 _RECOGNIZED = RESOURCE_CONSTRUCTORS | WEAK_REFERENCE_CONSTRUCTORS
+# The unknown call must be refused even in a with statement: it might watch
+# its argument weakly. A union of known constructors alone loses that fact.
+_MAY_BE_RESOURCE = _RECOGNIZED | {"<re-export work limit>"}
 
 
 _RESOLUTIONS: WeakKeyDictionary[ast.AST, _Resolution] = WeakKeyDictionary()
@@ -625,6 +658,13 @@ def resource_guard(
                 refusal=(
                     f"This block calls a generated helper (line {node.lineno}) whose resource ownership "
                     "Towel cannot preserve through another helper. Keep this call in place, or use `--strict`."
+                )
+            )
+        if origins is _MAY_BE_RESOURCE:
+            return ResourceGuard(
+                refusal=(
+                    f"This call (line {node.lineno}) may be a resource. Towel reached its re-export "
+                    "work limit and cannot prove that the resource stays alive in a helper."
                 )
             )
         resource = bool(origins & RESOURCE_CONSTRUCTORS)

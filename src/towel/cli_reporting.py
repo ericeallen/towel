@@ -159,6 +159,7 @@ class AnalysedRecord(TypedDict):
     functions: int
     skipped: List[SkippedRecord]
     not_examined: List[NotExaminedRecord]
+    resource_guard: NotRequired[str]
 
 
 class CommandResult(TypedDict):
@@ -277,6 +278,12 @@ def _skipped_counts(report: "RunReport") -> tuple[int, int, int]:
     return len(report.skipped_files) - ignored - excluded, ignored, excluded
 
 
+_RESOURCE_LIMIT_NOTE = (
+    "The re-export work limit was reached. Unresolved calls may be resources, "
+    "so Towel leaves their blocks in place."
+)
+
+
 def census_line(report: "RunReport") -> str:
     """What the run read: ``Analysed 3 Python files (12 functions).``"""
     line = (
@@ -292,6 +299,8 @@ def census_line(report: "RunReport") -> str:
         )
     if excluded:
         line += f" Skipped {_plural(excluded, 'file')} in excluded directories."
+    if report.resource_limit_reached:
+        line += " " + _RESOURCE_LIMIT_NOTE
     return line
 
 
@@ -534,7 +543,7 @@ def cross_module_lines(report: "RunReport", relative: Callable[[str], str]) -> L
 
 def analysed_record(report: "RunReport", relative: Callable[[str], str]) -> AnalysedRecord:
     """The census as the JSON result reports it."""
-    return {
+    record: AnalysedRecord = {
         "files": report.files_analysed,
         "functions": report.functions_analysed,
         "skipped": [
@@ -550,3 +559,6 @@ def analysed_record(report: "RunReport", relative: Callable[[str], str]) -> Anal
             for entry in report.not_examined
         ],
     }
+    if report.resource_limit_reached:
+        record["resource_guard"] = _RESOURCE_LIMIT_NOTE
+    return record
