@@ -22,11 +22,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, FrozenSet, Iterator, Optional
 
+from .bounded_cache import BoundedCache
 from .import_graph import ImportGraphCache, ImportLocation, import_location
 from .program_imports import ProgramImports
+from .resource_layout import OriginalLayout
 from .resource_terminals import Namespace, TerminalIndex
 
 _MAX_HOPS = 32
+
+
+def _private_path(path: Path, stage: Path) -> bool:
+    try:
+        return path.is_relative_to(stage) and path.resolve() == path
+    except (OSError, RuntimeError):
+        return False
 
 
 @dataclass(frozen=True, eq=False, slots=True)
@@ -64,6 +73,8 @@ class ReexportSearch:
     ) -> None:
         self.graph = graph
         self.budget = graph.resource_budget
+        self.layout = OriginalLayout(self.budget)
+        self.known: BoundedCache[tuple[Path, FrozenSet[str]], FrozenSet[str]] = BoundedCache(2048)
         self.constructors = constructors
         self.stage = stage
         self.shareable = True
@@ -110,21 +121,31 @@ class ReexportSearch:
         if location.path is None:
             return None
         path = location.path.joinpath(*parts)
+        directory = path if path.is_dir() else None
+        module = location.definition(parts)
         if self.stage is not None and self.shareable:
-            # Even a missing module is a filesystem dependency. The stage's
-            # program resolves absolute imports in the original layout and
-            # maps their definitions into the stage. Relative imports can also
-            # climb out of the stage entirely, where sources can change.
+            # Absolute imports select a definition in the original layout
+            # before reading its staged copy. A new module, initializer or
+            # symlink in the original can change another importer's answer.
             program = location.program
-            staged_layout = (
+            if (
                 program is not None
                 and program.stage_root == self.stage
                 and path.is_relative_to(program.model.root)
-            )
-            if not staged_layout and not path.resolve().is_relative_to(self.stage):
+            ):
+                self.shareable = self.layout.observe(path.parent) and (
+                    directory is None or self.layout.observe(directory)
+                )
+            else:
+                # A dangling symlink can acquire a target without any write
+                # in the private stage. Include both candidate definition files.
+                self.shareable = (
+                    _private_path(path, self.stage)
+                    and not (path / "__init__.py").is_symlink()
+                    and not (parts and path.with_suffix(".py").is_symlink())
+                )
+            if module is not None and not _private_path(module, self.stage):
                 self.shareable = False
-        directory = path if path.is_dir() else None
-        module = location.definition(parts)
         if module is None and directory is None:
             return None
         program_id = 0

@@ -21,9 +21,11 @@ from multiprocessing.sharedctypes import SynchronizedArray
 from threading import Lock
 from typing import Optional
 
-# One million metered operations, including queued returns and namespace scans.
-# The native NetworkX workload spends tens of thousands on its distinct roots.
+# Keep the graph allocation bound independent of rereading directory entries.
+# NetworkX needs hundreds of thousands of checks of the original layout
+# across whole-project and localized passes, even when its chart is small.
 _WORK_LIMIT = 1_000_000
+_LAYOUT_LIMIT = 1_000_000
 
 
 class WorkLimitReached(Exception):
@@ -33,38 +35,47 @@ class WorkLimitReached(Exception):
 class ResourceBudget:
     def __init__(self) -> None:
         self._lock = Lock()
-        self._remaining = _WORK_LIMIT
+        self._remaining = [_WORK_LIMIT, _LAYOUT_LIMIT]
         self._exhausted = False
         self._shared: Optional[SynchronizedArray[int]] = None
 
     def share_before_fork(self) -> None:
         if self._shared is None:
             self._shared = multiprocessing.get_context("fork").Array(
-                "q", [self.remaining, int(self._exhausted)]
+                "q", [*self._remaining, int(self._exhausted)]
             )
 
     @property
     def remaining(self) -> int:
-        return self._shared[0] if self._shared is not None else self._remaining
+        return self._shared[0] if self._shared is not None else self._remaining[0]
+
+    @property
+    def layout_remaining(self) -> int:
+        return self._shared[1] if self._shared is not None else self._remaining[1]
 
     @property
     def exhausted(self) -> bool:
-        return bool(self._shared[1]) if self._shared is not None else self._exhausted
+        return bool(self._shared[2]) if self._shared is not None else self._exhausted
 
-    def take(self, amount: int = 1) -> None:
+    def take(self, amount: int = 1, *, layout: bool = False) -> None:
+        index = int(layout)
         shared = self._shared
         if shared is None:
             with self._lock:
-                if self._remaining >= amount:
-                    self._remaining -= amount
+                if self._exhausted:
+                    raise WorkLimitReached
+                if self._remaining[index] >= amount:
+                    self._remaining[index] -= amount
                     return
-                self._remaining = 0
+                self._remaining[index] = 0
                 self._exhausted = True
         else:
             with shared.get_lock():
-                if shared[0] >= amount:
-                    shared[0] -= amount
+                if shared[2]:
+                    raise WorkLimitReached
+                if shared[index] >= amount:
+                    shared[index] -= amount
                     return
-                shared[0] = 0
-                shared[1] = 1
+                shared[index] = 0
+                shared[2] = 1
         raise WorkLimitReached

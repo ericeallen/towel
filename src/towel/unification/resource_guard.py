@@ -34,11 +34,12 @@ from weakref import WeakKeyDictionary
 
 from ..analysis_sources import (
     ParserConfiguration,
+    decoding_is_pure,
     parse_analysis_source,
     parser_configuration,
     parsing_is_pure,
 )
-from ..source_text import try_read_source
+from ..source_text import decode_source
 from .assignment_analyzer import own_scope_bindings
 from .bounded_cache import BoundedCache, memoizing
 from .import_graph import ImportGraphCache
@@ -349,7 +350,7 @@ def _resolution(module: ast.AST) -> _Resolution:
     return _Resolution(scopes, locations)
 
 
-_AnswerKey = tuple[Path, FrozenSet[str], ParserConfiguration]
+_AnswerKey = tuple[str, FrozenSet[str], ParserConfiguration]
 
 
 @dataclass(frozen=True)
@@ -360,6 +361,18 @@ class _StageAnswers:
     searches: dict[ParserConfiguration, ReexportSearch] = field(default_factory=dict)
     # A candidate asks about the same importer for each of its calls.
     scopes: BoundedCache[str, tuple[Path, Path]] = field(default_factory=lambda: BoundedCache(2048))
+
+    def remember(
+        self, key: _AnswerKey, scope: Path, search: ReexportSearch, answer: FrozenSet[str]
+    ) -> FrozenSet[str]:
+        self.searches[key[2]] = search
+        search.known.put((scope, key[1]), answer)
+        # The release bypassed the per-importer cache if an export's parse
+        # could warn. A terminal proof can skip such an export. In that case
+        # revalidate the original layout even for this same importer.
+        if not search.layout or search.terminals.pure_providers:
+            self.answers.put(key, answer)
+        return answer
 
 
 _STAGE_ANSWERS: ContextVar[Optional[_StageAnswers]] = ContextVar("resource_answers", default=None)
@@ -394,21 +407,42 @@ class ResourceImports:
         if stage is None:
             file = Path(self.file_path).resolve()
         else:
-            scopes = stage.scopes.get(self.file_path)
-            if scopes is None:
-                file = Path(self.file_path).resolve()
-                scopes = stage.scopes.put(self.file_path, (file, self.cache.program_root_for(file)))
-            file, program = scopes
-            scope = file.parent if any(origin.startswith(".") for origin in origins) else program
-            key = (scope, origins, configuration)
+            # This is the release's per-importer, per-analysis cache. A new
+            # importer can share the chart only after verifying its layout.
+            key = (self.file_path, origins, configuration)
             previous = stage.answers.get(key)
             if previous is not None:
                 return previous
+            scopes = stage.scopes.get(self.file_path)
+            if scopes is None:
+                lexical = Path(self.file_path).absolute()
+                file = lexical.resolve()
+                scopes = (file, self.cache.program_root_for(file))
+                if file == lexical and file.is_relative_to(stage.root):
+                    stage.scopes.put(self.file_path, scopes)
+                else:
+                    # An external link can redirect the importer itself.
+                    stage = None
+            file, program = scopes
+            scope = file.parent if any(origin.startswith(".") for origin in origins) else program
         if self.cache.resource_budget.exhausted:
             return _MAY_BE_RESOURCE
         # Take ownership until completion. No interrupted or impure lookup
         # may leave a partially expanded search for the next caller.
         search = stage.searches.pop(configuration, None) if stage is not None else None
+        if stage is not None and search is not None:
+            try:
+                current = search.layout.unchanged()
+            except WorkLimitReached:
+                return _MAY_BE_RESOURCE
+            if current:
+                previous = search.known.get((scope, origins))
+                if previous is not None:
+                    return stage.remember(key, scope, search, previous)
+            else:
+                stage.answers.clear()
+                stage.searches.clear()
+                search = None
         if search is None:
             search = ReexportSearch(self.cache, _RECOGNIZED, stage.root if stage else None)
 
@@ -416,16 +450,17 @@ class ResourceImports:
             nonlocal stage
             try:
                 self.cache.resource_budget.take(1 + file.stat().st_size // 1024)
-            except OSError:
+                data = file.read_bytes()
+                source = decode_source(data)
+            except (OSError, UnicodeError, SyntaxError):
                 stage = None
                 return frozenset()
-            source = try_read_source(file)
             if stage is not None and (
-                source is None or not file.is_relative_to(stage.root) or not parsing_is_pure(source)
+                not file.is_relative_to(stage.root)
+                or not decoding_is_pure(data)
+                or not parsing_is_pure(source)
             ):
                 stage = None
-            if source is None:
-                return frozenset()
             try:
                 module = parse_analysis_source(source, str(file))
             except SyntaxError:
@@ -442,8 +477,7 @@ class ResourceImports:
         except WorkLimitReached:
             return _MAY_BE_RESOURCE
         if stage is not None and search.shareable:
-            stage.searches[configuration] = search
-            return stage.answers.put(key, found)
+            return stage.remember(key, scope, search, found)
         return found
 
 

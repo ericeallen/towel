@@ -19,6 +19,7 @@ from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 import multiprocessing
 import os
+import shutil
 from pathlib import Path
 import sys
 from types import FrameType
@@ -451,3 +452,156 @@ def test_reexport_terminal_bindings_follow_current_contents_across_analyses(pack
             with sharing_analysis_sources(), sharing_resource_answers(graph, package.parent):
                 assert ResourceImports(str(client), graph).follow(origins) == expected
         assert sum(args[0] == source for args, _ in parses.call_args_list) == 1
+
+
+@pytest.fixture
+def fruit(tmp_path: Path) -> Path:
+    package = tmp_path / "original" / "fruit"
+    package.mkdir(parents=True)
+    (package.parent / "pyproject.toml").write_text('[project]\nname="fruit"\nversion="0"\n')
+    (package / "__init__.py").write_text("")
+    return package
+
+
+@pytest.mark.parametrize("change", ["new_module", "new_initializer", "linked_module", "linked_dir"])
+def test_absolute_reexport_observes_original_layout_for_a_new_importer(
+    tmp_path: Path, fruit: Path, change: str
+) -> None:
+    stage = tmp_path / "stage"
+    original, package = fruit.parent, fruit
+    outside = tmp_path / "external"
+    outside.mkdir()
+    (package / "anchor.py").write_text("value = 1\n")
+    for client in ("first.py", "second.py"):
+        (package / client).write_text("from fruit.anchor import value\n")
+    origin = "fruit.late.factory"
+    provider = package / "late.py"
+    if change == "new_initializer":
+        (package / "late").mkdir()
+        provider = package / "late" / "__init__.py"
+    elif change == "linked_module":
+        provider.write_text("def factory(): pass\n")
+    elif change == "linked_dir":
+        (package / "link").symlink_to(outside, target_is_directory=True)
+        origin = "fruit.link.late.factory"
+        provider = outside / "late.py"
+    stage.mkdir()
+    shutil.copytree(package, stage / package.name, symlinks=True)
+    graph = ImportGraphCache()
+    graph.begin_run(original, stage)
+    clients = stage / package.name
+    location = import_location(clients / "first.py", package.name, graph)
+    assert location is not None and location.path == package
+    with sharing_analysis_sources(), sharing_resource_answers(graph, stage):
+        assert (
+            ResourceImports(str(clients / "first.py"), graph).follow(frozenset({origin})) == set()
+        )
+        if change == "linked_module":
+            link = package / "replacement"
+            link.symlink_to(outside / "late.py")
+            link.replace(provider)
+            provider = outside / "late.py"
+        provider.write_text("from weakref import ref as factory\n")
+        assert ResourceImports(str(clients / "second.py"), graph).follow(frozenset({origin})) == {
+            "weakref.ref"
+        }
+
+
+def test_reexport_observes_a_dangling_stage_link_becoming_a_provider(package: Path) -> None:
+    provider = package.parent / "external.py"
+    (package / "late.py").symlink_to(provider)
+    graph = ImportGraphCache()
+    origins = frozenset({".late.factory"})
+    with sharing_analysis_sources(), sharing_resource_answers(graph, package):
+        assert ResourceImports(str(package / "first.py"), graph).follow(origins) == set()
+        provider.write_text("from weakref import ref as factory\n")
+        assert ResourceImports(str(package / "second.py"), graph).follow(origins) == {"weakref.ref"}
+
+
+def test_reexport_redirected_importer_can_change_its_relative_base(tmp_path: Path) -> None:
+    stage = tmp_path / "stage"
+    first, second = stage / "first", stage / "second"
+    for directory in (first, second):
+        directory.mkdir(parents=True)
+        (directory / "client.py").write_text("")
+    (second / "provider.py").write_text("from weakref import ref as factory\n")
+    redirect = tmp_path / "redirect"
+    redirect.symlink_to(first / "client.py")
+    importer = stage / "client.py"
+    importer.symlink_to(redirect)
+    graph = ImportGraphCache()
+    with sharing_analysis_sources(), sharing_resource_answers(graph, stage):
+        calls = ResourceImports(str(importer), graph)
+        assert calls.follow(frozenset({".missing.factory"})) == set()
+        replacement = tmp_path / "replacement"
+        replacement.symlink_to(second / "client.py")
+        replacement.replace(redirect)
+        assert calls.follow(frozenset({".provider.factory"})) == {"weakref.ref"}
+
+
+def test_reexport_original_provider_can_have_a_redirected_staged_copy(
+    tmp_path: Path, fruit: Path
+) -> None:
+    original, stage = fruit.parent, tmp_path / "stage"
+    for name in ("first", "second"):
+        (fruit / f"{name}.py").write_text("from fruit.provider import factory\n")
+    plain = "def factory(): pass\n"
+    shutil.copytree(original, stage)
+    (fruit / "provider.py").write_text(plain)
+    safe, weak = stage / "safe.py", stage / "weak.py"
+    safe.write_text(plain)
+    weak.write_text("from weakref import ref as factory\n")
+    redirect = tmp_path / "redirect"
+    redirect.symlink_to(safe)
+    (stage / "fruit" / "provider.py").symlink_to(redirect)
+    graph = ImportGraphCache()
+    graph.begin_run(original, stage)
+    origins = frozenset({"fruit.provider.factory"})
+    with sharing_analysis_sources(), sharing_resource_answers(graph, stage):
+        assert ResourceImports(str(stage / "fruit" / "first.py"), graph).follow(origins) == set()
+        replacement = tmp_path / "replacement"
+        replacement.symlink_to(weak)
+        replacement.replace(redirect)
+        assert ResourceImports(str(stage / "fruit" / "second.py"), graph).follow(origins) == {
+            "weakref.ref"
+        }
+
+
+def test_reexport_same_importer_rechecks_original_layout_after_an_uncertain_parse(
+    tmp_path: Path,
+    fruit: Path,
+) -> None:
+    original, stage, package = fruit.parent, tmp_path / "stage", fruit
+    (package / "__init__.py").write_text(r"banner = '\q'" + "\n")
+    (package / "anchor.py").write_text("value = 1\n")
+    (package / "client.py").write_text("from fruit.anchor import value\n")
+    shutil.copytree(original, stage)
+    graph = ImportGraphCache()
+    graph.begin_run(original, stage)
+    imports = ResourceImports(str(stage / "fruit" / "client.py"), graph)
+    origins = frozenset({"fruit.late.factory"})
+    with sharing_analysis_sources(), sharing_resource_answers(graph, stage):
+        assert imports.follow(origins) == set()
+        (package / "late.py").write_text("from weakref import ref as factory\n")
+        assert imports.follow(origins) == {"weakref.ref"}
+
+
+def test_reexport_layout_limit_declines_even_with_graph_allowance_left(
+    tmp_path: Path, fruit: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("towel.unification.resource_budget._LAYOUT_LIMIT", 1, raising=False)
+    original, stage, package = fruit.parent, tmp_path / "stage", fruit
+    (package / "__init__.py").write_text("")
+    (package / "provider.py").write_text("def factory(): pass\n")
+    source = "from fruit.provider import factory\nwith factory(): pass\n"
+    (package / "client.py").write_text(source)
+    shutil.copytree(original, stage)
+    graph = ImportGraphCache()
+    graph.begin_run(original, stage)
+    module = ast.parse(source)
+    with sharing_analysis_sources(), sharing_resource_answers(graph, stage):
+        guard = resource_guard(
+            module.body[1:], module, ResourceImports(str(stage / "fruit" / "client.py"), graph)
+        )
+    assert guard.refusal and "may be a resource" in guard.refusal
+    assert graph.resource_budget.remaining > 0

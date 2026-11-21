@@ -26,11 +26,12 @@ from typing import Callable, FrozenSet, Iterable, Optional
 
 from ..analysis_sources import (
     ParserConfiguration,
+    decoding_is_pure,
     parse_analysis_source,
     parser_configuration,
     parsing_is_pure,
 )
-from ..source_text import try_read_source
+from ..source_text import decode_source
 from .bounded_cache import BoundedCache
 from .module_bindings import import_origin
 from .resource_budget import ResourceBudget
@@ -57,6 +58,7 @@ class TerminalFacts:
 
     heads: FrozenSet[str]
     renames: FrozenSet[tuple[str, str]]
+    pure: bool
 
 
 @dataclass
@@ -81,14 +83,17 @@ class TerminalIndex:
     renames: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     possible: FrozenSet[str] = frozenset()
     complete: bool = True
+    pure_providers: bool = True
 
     def _source_facts(self, source: str, file: Path) -> TerminalFacts:
-        if parsing_is_pure(source):
+        pure = parsing_is_pure(source)
+        if pure:
             try:
                 module = parse_analysis_source(source, str(file))
             except SyntaxError:
-                return TerminalFacts(frozenset(), frozenset())
+                return TerminalFacts(frozenset(), frozenset(), pure)
         else:
+            self.pure_providers = False
             projected = terminal_syntax(source, self.budget)
             if projected is None:
                 raise IncompleteNamespace
@@ -123,7 +128,7 @@ class TerminalIndex:
                         if isinstance(target, ast.Name) and last != target.id:
                             renames.add((last, target.id))
             pending.extend(ast.iter_child_nodes(node))
-        return TerminalFacts(frozenset(heads), frozenset(renames))
+        return TerminalFacts(frozenset(heads), frozenset(renames), pure)
 
     def _bindings(self, file: Path) -> FrozenSet[str]:
         if self.stage is not None and not file.is_relative_to(self.stage):
@@ -132,13 +137,22 @@ class TerminalIndex:
         # without changing its size or mtime. Only its syntax is shareable:
         # the importing directory and the module layout are checked afresh.
         self.budget.take(1 + file.stat().st_size // 4096)
-        source = try_read_source(file)
-        if source is None:
+        data = file.read_bytes()
+        if not decoding_is_pure(data):
+            # The index visits files that the actual re-export may never consult.
+            # Only that lookup may execute an arbitrary source decoder.
+            self.pure_providers = False
             raise IncompleteNamespace
+        try:
+            source = decode_source(data)
+        except (SyntaxError, UnicodeError) as error:
+            raise IncompleteNamespace from error
         key = (parser_configuration(), hashlib.sha256(source.encode("utf-8")).digest())
         facts = self.facts.get(key)
         if facts is None:
             facts = self.facts.put(key, self._source_facts(source, file))
+        if not facts.pure:
+            self.pure_providers = False
         self.budget.take(len(facts.renames))
         for last, name in facts.renames:
             self.renames[last].add(name)
