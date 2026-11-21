@@ -31,12 +31,15 @@ from towel.execution_budget import (
     BudgetExpired,
     abandon_budget,
     check_budget,
+    has_time_limit,
     recording_application,
 )
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import dataclasses
 import os
+import pickle  # nosec B403: only an anonymous file written through our own descriptor
+import tempfile
 from dataclasses import dataclass, field
 import textwrap
 import time
@@ -83,6 +86,7 @@ from .models import (
     SkippedFile,
     TerminationReason,
 )
+from .pair_locations import ModuleCondition, PairLocations
 from .overlap import filter_overlapping_proposals
 from .progress import (
     write_note,
@@ -183,6 +187,9 @@ class RunReport:
     left_alone: Tuple[LeftAlone, ...] = ()
     not_examined: Tuple[NotExamined, ...] = ()
     """Per file the first analysis read, the code no candidate is drawn from (``NotExamined``)."""
+    unlisted_pairs: int = 0
+    """Declined pairs counted but outside the requested location detail."""
+    module_conditions: Optional[Tuple[ModuleCondition, ...]] = None
 
 
 @dataclass(frozen=True)
@@ -242,7 +249,10 @@ class FixedPointDrivers(Materialization):
     # What the run's first analysis read; where the last whole analysis's
     # declined pairs, and the proposals not applied, stand.
     _run_census: Optional[AnalysisCensus] = None
-    _last_left_alone: Tuple[LeftAlone, ...] = ()
+    _last_left_alone: Optional[PairLocations] = None
+    _collect_locations = True
+    _stage_report_path: Optional[Callable[[str], str]] = None
+    _timed_preview = False
     _declined_where: Dict[str, Tuple[BlockLocation, ...]] = {}
     # The stage copies of the files an in-place run must not write, since
     # the project holds them under more than one link.
@@ -260,6 +270,8 @@ class FixedPointDrivers(Materialization):
             LeftAlone(self._declined_where.get(identity, ()), str(reason))
             for identity, reason in self._declined.items()
         )
+        locations = self._last_left_alone
+        pairs = tuple(locations.locations()) if locations else ()
         return RunReport(
             dict(self._last_declined_pairs),
             proposals,
@@ -282,16 +294,49 @@ class FixedPointDrivers(Materialization):
             functions_analysed=census.functions,
             skipped_files=census.skipped,
             not_examined=census.not_examined,
-            left_alone=self._last_left_alone + not_applied,
+            left_alone=pairs + not_applied,
+            unlisted_pairs=sum(self._last_declined_pairs.values()) - len(pairs),
+            module_conditions=(
+                tuple(locations.conditions) if locations and locations.cross_module else None
+            ),
         )
+
+    @contextmanager
+    def _report_analysis(self, whole: bool = True) -> Iterator[None]:
+        """Only a whole pass supersedes the report. A timed preview may need it on interruption."""
+        if not whole:
+            yield
+            return
+        with ExitStack() as stack:
+            previous = None
+            if self._timed_preview and self._last_left_alone is not None:
+                # The previous report must survive a deadline during this pass.
+                # Keep it off the heap until we know the new pass finished.
+                previous = stack.enter_context(tempfile.TemporaryFile())
+                pickle.dump(self._last_left_alone, previous, protocol=pickle.HIGHEST_PROTOCOL)
+            try:
+                self._last_left_alone = None
+                self._pair_left_alone = PairLocations("counts")
+                self._collect_locations = True
+                yield
+            except BudgetExpired:
+                self._pair_left_alone = PairLocations("counts")
+                if previous is not None and self._last_left_alone is None:
+                    previous.seek(0)
+                    # The anonymous file has never had another reader or writer.
+                    self._last_left_alone = pickle.load(previous)  # nosec B301
+                raise
+            finally:
+                self._collect_locations = False
 
     def _note_analysis(
         self, analyzed: Path, emitted: int, reporter: Optional["_ApplyProgress"] = None
     ) -> None:
         """Keep what a whole analysis of ``analyzed`` declined and emitted, for the run's report."""
-        self._last_declined_pairs = dict(self._pair_rejections)
+        self._last_declined_pairs = self._pair_rejections
         self._last_pair_tally, self._last_emitted = self._pair_tally, emitted
-        self._last_left_alone = tuple(self._pair_left_alone)
+        self._pair_left_alone.finish()
+        self._last_left_alone = self._pair_left_alone
         if self._run_census is None:
             self._run_census = self._census
         if reporter is not None and self._last_declined_pairs:
@@ -317,9 +362,6 @@ class FixedPointDrivers(Materialization):
         def located(blocks: Tuple[BlockLocation, ...]) -> Tuple[BlockLocation, ...]:
             return tuple(dataclasses.replace(block, path=public(block.path)) for block in blocks)
 
-        self._last_left_alone = tuple(
-            dataclasses.replace(site, blocks=located(site.blocks)) for site in self._last_left_alone
-        )
         self._declined_where = {
             identity: located(blocks) for identity, blocks in self._declined_where.items()
         }
@@ -359,7 +401,7 @@ class FixedPointDrivers(Materialization):
         self._unchecked, self._unchecked_reason = frozenset(), ""
         self._declined, self._last_declined_pairs = {}, {}
         self._unverifiable_details = {}
-        self._run_census, self._last_left_alone, self._declined_where = None, (), {}
+        self._run_census, self._last_left_alone, self._declined_where = None, None, {}
         self._skips_reported = set()
         self._pair_tally = self._last_pair_tally = PairTally()
         self._last_emitted = self._signatures_verified = self._signatures_refused = 0
@@ -573,10 +615,11 @@ class FixedPointDrivers(Materialization):
             check_budget()
             # Analyze for refactoring opportunities
             # Important: invalidate cached analysis for this path so we see latest edits
-            proposals = self.analyze_files(
-                [file_path], invalidate_paths=[file_path], progress=analysis_progress
-            )
-            self._note_analysis(Path(file_path), len(proposals), reporter)
+            with self._report_analysis():
+                proposals = self.analyze_files(
+                    [file_path], invalidate_paths=[file_path], progress=analysis_progress
+                )
+                self._note_analysis(Path(file_path), len(proposals), reporter)
 
             if not proposals:
                 # Fixed point reached - no more refactorings found
@@ -938,10 +981,14 @@ class FixedPointDrivers(Materialization):
             # Incremental passes omit pairs in untouched files. Keep their
             # speed while applying, then account for the whole final project
             # once, including any helper merges that moved source locations.
-            proposals = self.analyze_directory(
-                str(directory), recursive=True, progress=reporter.analysis_mode, changed_files=None
-            )
-            self._note_analysis(directory, len(proposals))
+            with self._report_analysis():
+                proposals = self.analyze_directory(
+                    str(directory),
+                    recursive=True,
+                    progress=reporter.analysis_mode,
+                    changed_files=None,
+                )
+                self._note_analysis(directory, len(proposals))
         if run.applied:
             self.confirm_run_with_a_cold_checker(paths)
         self._refuse_a_run_the_checker_emptied(run.applied)
@@ -1024,6 +1071,9 @@ class FixedPointDrivers(Materialization):
                         original,
                         links,
                     )
+                self._collect_locations = False
+                self._stage_report_path = stage.public
+                self._timed_preview = preview and has_time_limit()
                 yield stage
                 self._change_log = [
                     dataclasses.replace(change, path=stage.public(change.path))
@@ -1035,6 +1085,9 @@ class FixedPointDrivers(Materialization):
                 raise
             finally:
                 # The stage is about to go; nothing may keep checking against it.
+                self._collect_locations = True
+                self._stage_report_path = None
+                self._timed_preview = False
                 self._type_run_oracle = inner_oracle
                 self._output_origin = None
                 self._unwritable_in_place = frozenset()
@@ -1185,15 +1238,16 @@ class FixedPointDrivers(Materialization):
             if self.incremental_global_passes and passes_so_far > 0 and not rehearing
             else None
         )
-        proposals = self.analyze_directory(
-            str(output_path),
-            recursive=True,
-            progress=reporter.analysis_mode,
-            changed_files=restrict,
-        )
-        if restrict is None:
-            self._note_analysis(output_path, len(proposals), reporter)
-            run.report_revision = run.revision
+        with self._report_analysis(restrict is None):
+            proposals = self.analyze_directory(
+                str(output_path),
+                recursive=True,
+                progress=reporter.analysis_mode,
+                changed_files=restrict,
+            )
+            if restrict is None:
+                self._note_analysis(output_path, len(proposals), reporter)
+                run.report_revision = run.revision
         run.global_revision = run.revision
         run.changed_since_global.clear()
         if not proposals:

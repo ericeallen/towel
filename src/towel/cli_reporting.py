@@ -37,9 +37,16 @@ from typing import (
 
 from towel.diagnostics import LOG
 from towel.relaxed_suitability import FindingJSON
-from towel.reason_sentences import Explanation, explain, reason_code, without_subject
+from towel.reason_sentences import (
+    Explanation,
+    cross_module_condition,
+    explain,
+    reason_code,
+    without_subject,
+)
 from towel.source_files import python_sources
 from towel.source_text import decode_source
+from towel.unification.pair_locations import LARGEST_SHOWN as LARGEST_SHOWN, location_rank
 
 if TYPE_CHECKING:
     from towel.unification.fixed_point import RunReport
@@ -50,9 +57,6 @@ Outcome = Literal[
     "no_python_files", "no_repeated_code", "not_fully_examined", "all_left_alone", "applied"
 ]
 """How a run ended, including whether unexamined code limits a negative result."""
-
-LARGEST_SHOWN = 5
-"""How many of the largest places left alone a run lists without ``--explain``."""
 
 
 class ChangeRecord(TypedDict):
@@ -315,9 +319,9 @@ def outcome_line(report: "RunReport", applied: int, target: str) -> Optional[str
     if outcome == "no_repeated_code":
         return f"No repeated code found in {_plural(report.files_analysed, 'file')}."
     if outcome == "all_left_alone":
-        places = len(report.left_alone) or sum(report.declined_pairs.values()) + sum(
-            report.declined_proposals.values()
-        )
+        places = report.unlisted_pairs + len(report.left_alone) or sum(
+            report.declined_pairs.values()
+        ) + sum(report.declined_proposals.values())
         return f"Found {_plural(places, 'place')} with similar code and extracted none."
     return None
 
@@ -382,7 +386,7 @@ def shows_pairs(applied: int, every: bool) -> bool:
 def left_alone_count(report: "RunReport", applied: int) -> int:
     """How many places the report lists as left alone by default (``shows_pairs``)."""
     if shows_pairs(applied, False):
-        return len(report.left_alone)
+        return report.unlisted_pairs + len(report.left_alone)
     pair_reasons = set(report.declined_pairs)
     return sum(1 for site in report.left_alone if site.reason not in pair_reasons)
 
@@ -463,18 +467,16 @@ def left_alone_lines(
             for site in report.left_alone
             if site.blocks and (pairs or site.reason not in pair_reasons)
         ),
-        key=lambda site: (
-            -site.lines,
-            tuple((block.path, block.first_line) for block in site.blocks),
-        ),
+        key=location_rank,
     )
     if not located:
         return []
     shown = located if every else located[:LARGEST_SHOWN]
+    total = len(located) + (report.unlisted_pairs if pairs else 0)
     heading = (
         "Places left alone, largest first:"
-        if every or len(located) <= LARGEST_SHOWN
-        else f"The {LARGEST_SHOWN} largest of {len(located)} places left alone"
+        if every or total <= LARGEST_SHOWN
+        else f"The {LARGEST_SHOWN} largest of {total} places left alone"
         " (--explain lists them all):"
     )
     lines = ["", heading]
@@ -484,9 +486,6 @@ def left_alone_lines(
         lines.append(f"  {where}: {explain(site.reason).sentence}")
     return lines
 
-
-CROSS_MODULE_PREFIX = "Only with --cross-module: "
-"""How the sentence of every reason that only a cross-module pair can meet begins."""
 
 CROSS_MODULE_REMEDY = (
     "A module can share a helper with another only if one of them already imports the other,"
@@ -511,16 +510,21 @@ def cross_module_lines(report: "RunReport", relative: Callable[[str], str]) -> L
     reason only such a pair can meet.
     """
     found: Dict[Tuple[str, str, str], None] = {}
-    for site in report.left_alone:
+    sites = report.left_alone
+    if report.module_conditions is not None:
+        for a, b, why in report.module_conditions:
+            first, second = sorted((relative(a), relative(b)))
+            if first != second:
+                found[first, second, why] = None
+        # Pair conditions were collected in settlement order, independently
+        # of which pairs the list of largest places can show.
+        proposals = sum(report.declined_proposals.values())
+        sites = sites[-proposals:] if proposals else ()
+    for site in sites:
         paths = sorted({relative(block.path) for block in site.blocks})
-        code = reason_code(site.reason)
-        sentence = explain(code).sentence
-        if len(paths) < 2 or not sentence.startswith(CROSS_MODULE_PREFIX):
+        condition = cross_module_condition(site.reason)
+        if len(paths) < 2 or condition is None:
             continue
-        # The reason's subject names the modules and what failed; without
-        # one, the reason's own sentence says what failed.
-        subject = site.reason[len(code) + 1 : -1] if site.reason != code else ""
-        condition = subject or sentence[len(CROSS_MODULE_PREFIX) :].rstrip(".")
         found[(paths[0], " and ".join(paths[1:]), condition)] = None
     if not found:
         return []

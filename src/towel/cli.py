@@ -1677,6 +1677,11 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
             strict=options.strict,
             complete_scope=options.complete_scope,
             max_candidate_pairs=options.max_pairs,
+            location_detail=(
+                "counts"
+                if options.json or options.diff
+                else "explain" if options.explain else "largest"
+            ),
             settings=_execution_settings(options.jobs),
             include_ignored=options.include_ignored,
             parameterize_constants=True,
@@ -1740,7 +1745,9 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
         report = engine.run_report
         relative = _relative_to_run(options)
         if preview:
-            _print_complete_preview(engine, options, applied, results, termination, content=content)
+            _print_complete_preview(
+                engine, report, options, applied, results, termination, content=content
+            )
         else:
             _print_dry_summary(report, options, applied, results, termination, relative)
         if engine.checker_failures:
@@ -1770,6 +1777,7 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
                 )
         return _command_result(
             engine,
+            report,
             options,
             applied,
             termination,
@@ -2379,6 +2387,7 @@ def _preview_content(
 
 def _print_complete_preview(
     engine: "UnificationRefactorEngine",
+    report: "RunReport",
     options: DryOptions,
     applied: int,
     results: Mapping[str, Tuple[int, List[str]]],
@@ -2394,7 +2403,6 @@ def _print_complete_preview(
     """
     if options.json or options.diff:
         return
-    report = engine.run_report
     relative = _relative_to_run(options)
     headline = [census_line(report)]
     if engine.preview_incomplete:
@@ -2446,6 +2454,7 @@ def _preview_inventory(engine: "UnificationRefactorEngine", options: DryOptions)
 
 def _command_result(
     engine: "UnificationRefactorEngine",
+    report: "RunReport",
     options: DryOptions,
     applied: int,
     termination: str,
@@ -2488,9 +2497,9 @@ def _command_result(
         ),
         "helpers": inventory,
         "error": None,
-        "outcome": None if engine.preview_incomplete else run_outcome(engine.run_report, applied),
-        "analysed": analysed_record(engine.run_report, _relative_to_run(options)),
-        "left_alone": left_alone_count(engine.run_report, applied),
+        "outcome": None if engine.preview_incomplete else run_outcome(report, applied),
+        "analysed": analysed_record(report, _relative_to_run(options)),
+        "left_alone": left_alone_count(report, applied),
         "relaxed_findings": [finding.to_json() for finding in findings],
     }
     if engine.preview_incomplete:
@@ -2543,13 +2552,15 @@ def _quick_report(engine: "UnificationRefactorEngine") -> "RunReport":
     from towel.unification.fixed_point import RunReport
 
     census = engine.last_census
+    locations = engine.last_left_alone
     return RunReport(
         declined_pairs=engine.declined_pairs,
         candidate_pairs=engine.last_pair_tally.candidate_pairs,
         files_analysed=census.files,
         functions_analysed=census.functions,
         skipped_files=census.skipped,
-        left_alone=engine.last_left_alone,
+        left_alone=locations,
+        unlisted_pairs=sum(engine.declined_pairs.values()) - len(locations),
         not_examined=census.not_examined,
     )
 
@@ -2582,6 +2593,7 @@ def _run_quick_preview(options: PreviewOptions) -> None:
         strict=options.strict,
         complete_scope=options.complete_scope,
         max_candidate_pairs=options.max_pairs,
+        location_detail="explain" if options.explain else "largest",
         settings=_execution_settings(options.jobs),
         include_ignored=options.include_ignored,
         parameterize_constants=True,

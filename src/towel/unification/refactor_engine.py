@@ -71,6 +71,7 @@ from .engine_state import (
     PerBlockKey,
     UnifyKey,
 )
+from .pair_locations import LocationDetail, PairLocations
 from .defaults import (
     DEFAULT_MAX_CANDIDATE_PAIRS,
     DEFAULT_MAX_PARAMETERS,
@@ -105,7 +106,6 @@ from .compiler_literals import sharing_compiler_literal_facts
 from .return_source_uses import sharing_return_source_uses
 from .models import (
     AnalysisCensus,
-    BlockLocation,
     LeftAlone,
     SkippedFile,
     CodeBlockPair,
@@ -387,6 +387,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         incremental_global_passes: bool = True,
         max_candidate_pairs: int = DEFAULT_MAX_CANDIDATE_PAIRS,
         expression_candidates: bool = True,
+        location_detail: LocationDetail = "all",
         settings: Optional[Settings] = None,
     ):
         """
@@ -658,7 +659,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejection_subject: Optional[str] = None
         self._pair_rejections: Dict[str, int] = {}
-        self._pair_left_alone: List[LeftAlone] = []
+        self._location_detail = location_detail
+        self._pair_left_alone = PairLocations(location_detail, cross_module_helpers)
         self._census = AnalysisCensus()
         self._skips_reported: Set[str] = set()
         self._duplicate_pairs = 0
@@ -783,7 +785,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
         if not python_files:
             self._census = AnalysisCensus(skipped=self._input_skips())
-            self._pair_rejections, self._pair_left_alone = {}, []
+            self._reset_pair_report()
             self._pair_tally = PairTally()
             return []
 
@@ -1121,6 +1123,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
             else:
                 self._extraction_exclusions.pop(entry.node, None)
 
+    def _reset_pair_report(self) -> None:
+        self._pair_rejections = {}
+        self._pair_left_alone = PairLocations(
+            self._location_detail if self._collect_locations else "counts",
+            self.cross_module_helpers,
+            self._stage_report_path,
+        )
+
     def process_block_pairs(
         self,
         block_pairs: List[CodeBlockPair],
@@ -1129,7 +1139,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         *,
         progress: ProgressMode,
     ) -> List[RefactoringProposal]:
-        self._pair_rejections, self._pair_left_alone = {}, []
+        self._reset_pair_report()
         self._duplicate_pairs = self._proposing_pairs = 0
         self._pair_tally = PairTally()
         if not block_pairs:
@@ -1229,15 +1239,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             self._pair_rejections[verdict.counted] = (
                 self._pair_rejections.get(verdict.counted, 0) + 1
             )
-            self._pair_left_alone.append(
-                LeftAlone(
-                    (
-                        BlockLocation(pair.file_path, *pair.block1_range),
-                        BlockLocation(pair.file_path2, *pair.block2_range),
-                    ),
-                    verdict.counted,
-                )
-            )
+            self._pair_left_alone.add(pair, verdict.counted)
         elif verdict.proposal is None:
             # Its own judgement found the duplicate (``_finish_proposal``).
             self._duplicate_pairs += 1
@@ -1282,7 +1284,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
     @property
     def last_left_alone(self) -> Tuple[LeftAlone, ...]:
         """Where each candidate pair the latest analysis declined stands, with its reason."""
-        return tuple(self._pair_left_alone)
+        return tuple(self._pair_left_alone.locations())
 
     def _allocate_helper_name(
         self,

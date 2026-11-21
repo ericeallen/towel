@@ -62,6 +62,11 @@ def _current_budget() -> _Budget | None:
     return budget if budget is not None and not budget.abandoned else None
 
 
+def has_time_limit() -> bool:
+    """Whether a deadline can interrupt the current run."""
+    return _current_budget() is not None
+
+
 def _expire(signum: int, frame: FrameType | None) -> None:
     budget = _current_budget()
     if budget is not None and os.getpid() == budget.owner and not budget.expiry_delivered:
