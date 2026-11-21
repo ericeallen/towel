@@ -646,7 +646,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._project_helper_names: Dict[str, HelperNameClaims] = {}
         # What each project's coverage.py excludes, read once per engine.
         self._coverage_exclusions: Dict[str, CoverageExclusion] = {}
-        self._origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path] = {}
+        self._forget_run_lookups()
         self._project_builtin_mapping_replacements: Mapping[str, bool] = {}
         # Local refreshes visit only the rewritten files. Keep prior root/fact
         # observations for other files so changing that subset is not mistaken
@@ -1139,6 +1139,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._settled_identities = set()
         self._record_function_paths(all_functions)
         if self._should_use_parallel(len(block_pairs)):
+            self._prepare_python_floors_for_workers({entry.file_path for entry in all_functions})
             proposals = self._evaluate_pairs_parallel(
                 block_pairs, all_functions, class_infos, progress=progress
             )

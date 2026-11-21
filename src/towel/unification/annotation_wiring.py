@@ -60,6 +60,7 @@ from .annotation_ladder import (
     used_imports,
     without_quoted_none,
 )
+from .bounded_cache import memoizing
 from .expression_sites import expression_at
 from .annotations import (
     OLDEST_PYTHON,
@@ -99,7 +100,7 @@ from ..formatting import formatting_repeatability
 from ..mypy_ci_policy import UnsupportedMypyPolicy, mypy_policy
 from ..checker_project import _read_json_config
 from ..declared_python import declared_requirement, python_lower_bound
-from ..project_layout import find_project_root, load_pyproject
+from ..project_layout import find_project_root, load_pyproject, raising_pyproject_errors
 from ..type_baseline import (
     TYPE_CHECKING_REMEDIES,
     UNTYPED_REMEDY as UNTYPED_REMEDY,
@@ -250,6 +251,11 @@ def _checker_targets(path: Path) -> List[PythonVersion]:
     return [target for target in targets if target is not None]
 
 
+def _package_python_floor(root: Path) -> Optional[PythonVersion]:
+    requirement = declared_requirement(root)
+    return python_lower_bound(requirement) if requirement is not None else None
+
+
 def declared_oldest_python(
     path: Path, *, project_root: Optional[Path] = None
 ) -> Optional[PythonVersion]:
@@ -264,13 +270,57 @@ def declared_oldest_python(
     A caller that already resolved the layout can supply that root; checker
     configuration still resolves from the actual module's original path.
     """
-    requirement = declared_requirement(project_root or find_project_root(path))
-    if requirement is not None:
-        bound = python_lower_bound(requirement)
+    return _package_python_floor(project_root or find_project_root(path)) or min(
+        _checker_targets(path), default=None
+    )
+
+
+class ProjectPythonVersions(EngineState):
+    """Declared version lookups shared by the run's pair, cluster and annotation decisions."""
+
+    def _forget_run_lookups(self) -> None:
+        super()._forget_run_lookups()
+        self._package_floors: dict[Path, Optional[PythonVersion]] = {}
+        self._checker_floors: dict[Path, Optional[PythonVersion]] = {}
+        # Annotation spelling uses the first helper host's declaration in each project.
+        self._declared_pythons: dict[Path, Optional[PythonVersion]] = {}
+
+    def _declared_python_for(self, file_path: str) -> Optional[PythonVersion]:
+        origin = self._origin_in_run(file_path)
+        root = self._project_root_in_run(file_path)
+        if memoizing():
+            try:
+                return self._cached_python_floor(origin, root)
+            except (OSError, ValueError, configparser.Error):
+                # Reproduce the original lookup's warnings, fallback or exception on demand.
+                pass
+        return declared_oldest_python(origin, project_root=root)
+
+    def _cached_python_floor(self, origin: Path, root: Path) -> Optional[PythonVersion]:
+        if root not in self._package_floors:
+            with raising_pyproject_errors():
+                self._package_floors[root] = _package_python_floor(root)
+        bound = self._package_floors[root]
         if bound is not None:
             return bound
-    targets = _checker_targets(path)
-    return min(targets) if targets else None
+        # Checker discovery walks up from the original directory, even if a sibling
+        # in the same distribution has a nearer mypy.ini or pyrightconfig.json.
+        directory = origin.parent
+        if directory not in self._checker_floors:
+            with raising_pyproject_errors():
+                self._checker_floors[directory] = min(_checker_targets(origin), default=None)
+        return self._checker_floors[directory]
+
+    def _prepare_python_floors_for_workers(self, paths: set[str]) -> None:
+        """Fork with the parent's config snapshot; only an actual query can issue a diagnostic."""
+        if memoizing():
+            for path in paths:
+                try:
+                    self._cached_python_floor(
+                        self._origin_in_run(path), self._project_root_in_run(path)
+                    )
+                except (OSError, ValueError, configparser.Error):
+                    continue
 
 
 _LADDER_FLAGS = ("disallow_untyped_defs", "warn_return_any", "check_untyped_defs")
@@ -478,11 +528,9 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
 
 
-class HelperAnnotationWiring(EngineState):
+class HelperAnnotationWiring(ProjectPythonVersions):
     """Helper AnnotationWiring methods of the engine; see the module docstring."""
 
-    # The oldest Python each project root declares, read once per run.
-    _declared_pythons: Mapping[str, Optional[PythonVersion]] = {}
     # What the project's mypy settles about the fallback rungs, per module, once per run.
     _ladder_policies: Mapping[str, _LadderPolicy] = {}
 
@@ -503,7 +551,6 @@ class HelperAnnotationWiring(EngineState):
         self._type_run_oracle = self.type_oracle
         self._type_run_baseline = None
         self._type_check_ran = False
-        self._declared_pythons = {}
         self._forget_run_lookups()
         self._ladder_policies = {}
         self._type_known = KnownErrors()
@@ -747,14 +794,9 @@ class HelperAnnotationWiring(EngineState):
         anyway, so its own evidence raises the floor
         (:func:`~towel.unification.annotations.evaluated_syntax`).
         """
-        root = str(self._project_root_in_run(file_path))
+        root = self._project_root_in_run(file_path)
         if root not in self._declared_pythons:
-            self._declared_pythons = {
-                **self._declared_pythons,
-                root: declared_oldest_python(
-                    self._origin_in_run(file_path), project_root=Path(root)
-                ),
-            }
+            self._declared_pythons[root] = self._declared_python_for(file_path)
         declared = self._declared_pythons[root] or OLDEST_PYTHON
         return max(declared, evaluated_syntax(host)) if host is not None else declared
 
