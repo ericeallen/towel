@@ -19,6 +19,10 @@ from __future__ import annotations
 from array import array
 from bisect import bisect_right
 from itertools import repeat
+import pickle  # nosec B403: only a private temporary file written in this process
+import tempfile
+from threading import Lock
+import weakref
 from typing import Callable, Iterator, Literal
 
 from ..reason_sentences import cross_module_condition, explain
@@ -60,6 +64,9 @@ class PairLocations:
         # others of the same rank. Keep those occurrences in their exact order.
         self._order = array("Q")
         self._counts = array("Q")
+
+    def __bool__(self) -> bool:
+        return bool(self._largest or self._sites or self.conditions)
 
     def _path(self, path: str) -> str:
         if self._public is None:
@@ -139,3 +146,21 @@ class PairLocations:
             sites = list(self._sites)
             for index, count in zip(self._order, self._counts):
                 yield from repeat(sites[index], count)
+
+
+class SavedPairLocations:
+    """A completed report still observable while the engine collects an independent analysis."""
+
+    def __init__(self, locations: PairLocations) -> None:
+        self._read_lock = Lock()
+        self._file = tempfile.TemporaryFile()
+        weakref.finalize(self, self._file.close)
+        pickle.dump(locations, self._file, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def read(self) -> PairLocations:
+        with self._read_lock:
+            self._file.seek(0)
+            # Only our own descriptor can access the unlinked temporary file.
+            locations = pickle.load(self._file)  # nosec B301
+        assert isinstance(locations, PairLocations)
+        return locations

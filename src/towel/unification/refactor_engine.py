@@ -1124,6 +1124,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 self._extraction_exclusions.pop(entry.node, None)
 
     def _reset_pair_report(self) -> None:
+        if self._output_origin is None:
+            # A standalone analysis replaces last_left_alone, but callers can
+            # still ask run_report for the preceding completed fixed-point run.
+            self._release_report_locations(preserve=True)
         self._pair_rejections = {}
         self._pair_left_alone = PairLocations(
             self._location_detail if self._collect_locations else "counts",

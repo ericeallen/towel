@@ -35,11 +35,9 @@ from towel.execution_budget import (
     recording_application,
 )
 
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 import dataclasses
 import os
-import pickle  # nosec B403: only an anonymous file written through our own descriptor
-import tempfile
 from dataclasses import dataclass, field
 import textwrap
 import time
@@ -86,7 +84,7 @@ from .models import (
     SkippedFile,
     TerminationReason,
 )
-from .pair_locations import ModuleCondition, PairLocations
+from .pair_locations import ModuleCondition, PairLocations, SavedPairLocations
 from .overlap import filter_overlapping_proposals
 from .progress import (
     write_note,
@@ -192,6 +190,16 @@ class RunReport:
     module_conditions: Optional[Tuple[ModuleCondition, ...]] = None
 
 
+@dataclass(frozen=True, slots=True)
+class _AnalysisReport:
+    """Publish the tally and its locations together, even when a deadline interrupts the pass."""
+
+    reasons: Mapping[str, int] = field(default_factory=dict)
+    tally: PairTally = PairTally()
+    emitted: int = 0
+    locations: PairLocations | SavedPairLocations | None = None
+
+
 @dataclass(frozen=True)
 class Publication:
     """What a finished run is about to write, for a caller that may stop it first.
@@ -242,14 +250,8 @@ class FixedPointDrivers(Materialization):
     # the latest reason; and what its last whole analysis declined.
     _declined: Dict[str, DeclineReason] = {}
     _unverifiable_details: Dict[str, str] = {}
-    _last_declined_pairs: Dict[str, int] = {}
-    # How the last whole analysis's pairs ended, and how many proposals it emitted.
-    _last_pair_tally: PairTally = PairTally()
-    _last_emitted: int = 0
-    # What the run's first analysis read; where the last whole analysis's
-    # declined pairs, and the proposals not applied, stand.
+    _last_analysis = _AnalysisReport()
     _run_census: Optional[AnalysisCensus] = None
-    _last_left_alone: Optional[PairLocations] = None
     _collect_locations = True
     _stage_report_path: Optional[Callable[[str], str]] = None
     _timed_preview = False
@@ -264,21 +266,24 @@ class FixedPointDrivers(Materialization):
         proposals: Dict[DeclineReason, int] = {}
         for reason in self._declined.values():
             proposals[reason] = proposals.get(reason, 0) + 1
-        tally = self._last_pair_tally
+        analysis = self._last_analysis
+        tally = analysis.tally
         census = self._run_census or AnalysisCensus()
         not_applied = tuple(
             LeftAlone(self._declined_where.get(identity, ()), str(reason))
             for identity, reason in self._declined.items()
         )
-        locations = self._last_left_alone
+        locations = analysis.locations
+        if isinstance(locations, SavedPairLocations):
+            locations = locations.read()
         pairs = tuple(locations.locations()) if locations else ()
         return RunReport(
-            dict(self._last_declined_pairs),
+            dict(analysis.reasons),
             proposals,
             candidate_pairs=tally.candidate_pairs,
             duplicate_pairs=tally.duplicate_pairs,
-            overlapping_proposals=tally.distinct_proposals - self._last_emitted,
-            emitted_proposals=self._last_emitted,
+            overlapping_proposals=tally.distinct_proposals - analysis.emitted,
+            emitted_proposals=analysis.emitted,
             signatures_verified=self._signatures_verified,
             signatures_refused=self._signatures_refused,
             first_unverifiable_reason=next(
@@ -295,54 +300,51 @@ class FixedPointDrivers(Materialization):
             skipped_files=census.skipped,
             not_examined=census.not_examined,
             left_alone=pairs + not_applied,
-            unlisted_pairs=sum(self._last_declined_pairs.values()) - len(pairs),
+            unlisted_pairs=sum(analysis.reasons.values()) - len(pairs),
             module_conditions=(
                 tuple(locations.conditions) if locations and locations.cross_module else None
             ),
         )
 
+    def _release_report_locations(self, *, preserve: bool) -> None:
+        """Keep the previous result available off heap only if a caller can still request it."""
+        locations = self._last_analysis.locations
+        if isinstance(locations, PairLocations):
+            self._last_analysis = dataclasses.replace(
+                self._last_analysis,
+                locations=SavedPairLocations(locations) if preserve and locations else None,
+            )
+
     @contextmanager
     def _report_analysis(self, whole: bool = True) -> Iterator[None]:
-        """Only a whole pass supersedes the report. A timed preview may need it on interruption."""
+        """Only a whole pass supersedes the report. A timed preview can still request its predecessor."""
         if not whole:
             yield
             return
-        with ExitStack() as stack:
-            previous = None
-            if self._timed_preview and self._last_left_alone is not None:
-                # The previous report must survive a deadline during this pass.
-                # Keep it off the heap until we know the new pass finished.
-                previous = stack.enter_context(tempfile.TemporaryFile())
-                pickle.dump(self._last_left_alone, previous, protocol=pickle.HIGHEST_PROTOCOL)
-            try:
-                self._last_left_alone = None
+        self._release_report_locations(preserve=self._timed_preview)
+        self._pair_left_alone = PairLocations("counts")
+        self._collect_locations = True
+        try:
+            yield
+        finally:
+            if self._last_analysis.locations is not self._pair_left_alone:
                 self._pair_left_alone = PairLocations("counts")
-                self._collect_locations = True
-                yield
-            except BudgetExpired:
-                self._pair_left_alone = PairLocations("counts")
-                if previous is not None and self._last_left_alone is None:
-                    previous.seek(0)
-                    # The anonymous file has never had another reader or writer.
-                    self._last_left_alone = pickle.load(previous)  # nosec B301
-                raise
-            finally:
-                self._collect_locations = False
+            self._collect_locations = False
 
     def _note_analysis(
         self, analyzed: Path, emitted: int, reporter: Optional["_ApplyProgress"] = None
     ) -> None:
         """Keep what a whole analysis of ``analyzed`` declined and emitted, for the run's report."""
-        self._last_declined_pairs = self._pair_rejections
-        self._last_pair_tally, self._last_emitted = self._pair_tally, emitted
         self._pair_left_alone.finish()
-        self._last_left_alone = self._pair_left_alone
+        self._last_analysis = _AnalysisReport(
+            self._pair_rejections, self._pair_tally, emitted, self._pair_left_alone
+        )
         if self._run_census is None:
             self._run_census = self._census
-        if reporter is not None and self._last_declined_pairs:
+        if reporter is not None and self._pair_rejections:
             reporter.detail(
-                f"Declined {sum(self._last_declined_pairs.values())} candidate pair(s): "
-                f"{counted_reasons(self._last_declined_pairs)}"
+                f"Declined {sum(self._pair_rejections.values())} candidate pair(s): "
+                f"{counted_reasons(self._pair_rejections)}"
             )
 
     def _decline(self, proposal: RefactoringProposal, reason: DeclineReason) -> None:
@@ -399,12 +401,13 @@ class FixedPointDrivers(Materialization):
         self.preview_incomplete = False
         self._run_applied = ()
         self._unchecked, self._unchecked_reason = frozenset(), ""
-        self._declined, self._last_declined_pairs = {}, {}
+        self._declined = {}
+        self._last_analysis = _AnalysisReport()
         self._unverifiable_details = {}
-        self._run_census, self._last_left_alone, self._declined_where = None, None, {}
+        self._run_census, self._declined_where = None, {}
         self._skips_reported = set()
-        self._pair_tally = self._last_pair_tally = PairTally()
-        self._last_emitted = self._signatures_verified = self._signatures_refused = 0
+        self._pair_tally = PairTally()
+        self._signatures_verified = self._signatures_refused = 0
 
     def _refuse_a_run_the_checker_emptied(self, applied: int) -> None:
         """Raise when nothing was applied and the checker failed on some proposal.

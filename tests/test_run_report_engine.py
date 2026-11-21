@@ -301,3 +301,27 @@ def test_timed_preview_releases_the_previous_analysis_and_can_still_explain_it(
     assert result.status == 124, result
     assert "\n".join(expected) in result.stdout, result.stdout
     assert not retained, f"{len(retained)} records from the previous analysis remain live"
+
+
+@pytest.mark.strict_mode
+def test_a_standalone_analysis_can_follow_a_run_without_keeping_two_sets_of_sites(
+    tmp_path: Path,
+) -> None:
+    first = _many_left_alone(tmp_path / "first", 1)
+    second = _many_left_alone(tmp_path / "second", 1)
+    engine = UnificationRefactorEngine()
+    engine.refactor_directory_to_fixed_point(str(first), str(tmp_path / "out"), progress="none")
+    previous = len(engine.run_report.left_alone)
+    assert previous
+    engine.analyze_directory(str(second), progress="none")
+    assert engine.last_left_alone
+    assert not any(
+        type(obj) is BlockLocation and Path(obj.path).parent == tmp_path / "out"
+        for obj in gc.get_objects()
+    )
+    assert all(
+        Path(block.path).parent == tmp_path / "out"
+        for site in engine.run_report.left_alone
+        for block in site.blocks
+    )
+    assert len(engine.run_report.left_alone) == previous
