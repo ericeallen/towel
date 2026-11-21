@@ -650,3 +650,24 @@ def test_a_note_on_an_argument_a_parameter_replaced_stays_beside_the_parameter()
     text = weave_comments(helper, helper, merged).text
     assert "__param_1,  # source is LaTeX snippet" in text, text
     assert "]  # output MathML snippet" in text
+
+
+def test_region_search_reads_each_module_version_once_per_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import Mock
+
+    from towel.source_files import source_policy_context
+    from towel.unification import block_comments
+
+    search = Mock(wraps=block_comments._ANY_REGION)
+    monkeypatch.setattr(block_comments, "_ANY_REGION", search)
+    plain = "a = 1\nb = 2\n"
+    directed = "# fmt: off\n" + plain
+    for run in (1, 2):
+        context = source_policy_context(strict=False)
+        for source in (plain, directed):
+            for stmt in ast.parse(source).body:
+                site = context.run(site_comments, source, [stmt])
+                assert bool(site.around) == (source == directed)
+        assert search.search.call_count == 2 * run

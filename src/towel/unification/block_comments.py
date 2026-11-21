@@ -80,6 +80,7 @@ from .substitution import Substitution
 from ..coverage_config import DEFAULT_EXCLUDE, CoverageExclusion
 from ..source_text import source_lines
 from .splicing import shared_lines
+from .run_syntax import run_syntax
 
 DEFAULT_EXCLUSION = CoverageExclusion().pattern
 """coverage.py's own exclusion regexes, joined: for a block whose project sets none."""
@@ -1302,6 +1303,18 @@ def _header_reach(holder: ast.stmt) -> FrozenSet[Home]:
     return frozenset()
 
 
+def _may_have_region_directives(source: str) -> bool:
+    """Classify the whole module once while examining its individual blocks."""
+    facts = run_syntax.get()
+    # Bound the retained text as well as the number of modules.
+    if facts is None or type(source) is not str or len(source) > 1024 * 1024:
+        return _ANY_REGION.search(source) is not None
+    known = facts.region_directives.get(source)
+    if known is None:
+        known = facts.region_directives.put(source, _ANY_REGION.search(source) is not None)
+    return known
+
+
 def _around(
     source: str, block: Sequence[ast.stmt], excluded: FrozenSet[int]
 ) -> Tuple[Surrounding, ...]:
@@ -1317,7 +1330,7 @@ def _around(
     depends on where it is written (``Surrounding.governs``).
     """
     first = block[0].lineno
-    if not excluded and _ANY_REGION.search(source) is None:
+    if not excluded and not _may_have_region_directives(source):
         return ()
     read = _module_comments(source)
     if read is None:
