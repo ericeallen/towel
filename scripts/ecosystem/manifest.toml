@@ -829,6 +829,8 @@ deps = [
     "jsonpath-ng",
     "virtue",
 ]
+expect_broken = "frame-relative: warnings.warn stacklevel in __getattr__ attributes deprecation warnings to an extracted helper's caller; tests assert the warning's filename"
+known_failures = ["jsonschema/tests/test_deprecations.py::TestDeprecations::test_RefResolutionError", "jsonschema/tests/test_deprecations.py::TestDeprecations::test_RefResolver"]
 
 [[project]]
 name = "virtualenv"

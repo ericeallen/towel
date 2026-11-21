@@ -94,6 +94,7 @@ alone and, with `--explain`, says why. See
 output, exceptions and order of side effects. This holds for programs that do
 not use reflection or self-instrumentation, including through code they call.
 Examples include reading frames, source or line numbers with `inspect.stack()`,
+attributing a warning to a caller with `warnings.warn(..., stacklevel=...)`,
 logging the caller with `%(funcName)s` and rewriting functions as pytest does
 when it rewrites assertions. Mark functions that depend on these behaviors with
 `# towel: no-extract`.

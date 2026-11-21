@@ -81,6 +81,7 @@ To leave a whole file or directory alone, pass `--exclude NAME`
 output, exceptions and order of side effects. This holds for programs that do
 not use reflection or self-instrumentation, including through code they call.
 Examples include reading frames, source or line numbers with `inspect.stack()`,
+attributing a warning to a caller with `warnings.warn(..., stacklevel=...)`,
 logging the caller with `%(funcName)s` and rewriting functions as pytest does
 when it rewrites assertions. Mark functions that depend on these behaviors with
 `# towel: no-extract`.
@@ -100,9 +101,11 @@ program meeting these conditions is a bug.
 Towel does not look for reflection or self-instrumentation, so it is up to you
 to protect code that uses them:
 
-- **Reflection**: `inspect.stack()`, `sys._getframe()`, `locals()`, reading a
-  function's source, bytecode or `__qualname__`, or listing a module's names
-  (a new helper is a new name).
+- **Reflection**: `inspect.stack()`, `sys._getframe()`,
+  `warnings.warn(..., stacklevel=...)` (a helper adds a frame, so the warning
+  names a different file and line), `locals()`, reading a function's source,
+  bytecode or `__qualname__`, or listing a module's names (a new helper is a
+  new name).
 - **Self-instrumentation** includes typeguard, numba, inline-snapshot and
   pytest's assertion rewriting. Pytest normally rewrites test files. An
   ordinary module under `src/` can be refactored even if pytest tests it.
