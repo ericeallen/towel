@@ -7,12 +7,15 @@ from __future__ import annotations
 import ast
 from contextvars import ContextVar
 from hashlib import sha256
-from typing import Callable, Generic, TypeVar
+from typing import TYPE_CHECKING, Callable, Generic, TypeVar
 from weakref import WeakKeyDictionary
 
 from ..canonical_ast import exact_dump
 from .ast_paths import Step
 from .bounded_cache import BoundedCache, memoizing
+
+if TYPE_CHECKING:
+    from .literal_windows import CheckedWindow, LiteralCall
 
 _T = TypeVar("_T")
 
@@ -51,6 +54,8 @@ class RunSyntaxFacts:
         from .cluster_helpers import ClusterHelperMemo
 
         self.cluster_helpers = ClusterHelperMemo()
+        self.checked_literal_windows: BoundedCache[CheckedWindow, bool] = BoundedCache(8192)
+        self.literal_calls: _StatementMemo[LiteralCall | None] = _StatementMemo()
         self.region_directives: BoundedCache[str, bool] = BoundedCache(8)
         self.unsupported: _StatementMemo[str | None] = _StatementMemo()
         self.literal_paths: _StatementMemo[tuple[tuple[Step, ...], ...]] = _StatementMemo()
