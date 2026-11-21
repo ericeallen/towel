@@ -42,7 +42,7 @@ from ..source_text import try_read_source
 from .assignment_analyzer import own_scope_bindings
 from .bounded_cache import BoundedCache, memoizing
 from .import_graph import ImportGraphCache
-from .resource_budget import WorkLimitReached
+from .resource_budget import ResourceBudget, WorkLimitReached
 from .resource_reexports import ReexportSearch, reachable_constructors
 from .module_bindings import dotted_name, import_origin
 from .models import is_generated_helper_name
@@ -143,12 +143,15 @@ class _Resolution:
         depth: int = 0,
         *,
         deferred: bool = False,
+        budget: Optional[ResourceBudget] = None,
     ) -> FrozenSet[str]:
         if depth >= 16:
             return frozenset()
         head, _, tail = spelling.partition(".")
         current = self.scopes[scope]
         events = current.bindings.get(head, ())
+        if budget is not None:
+            budget.take(1 + len(events))
         earlier = [event for event in events if event.position < position]
         # A definite assignment supersedes previous imports; a conditional one
         # retains both possibilities. A parameter/local never falls through to
@@ -169,19 +172,27 @@ class _Resolution:
             targets = (
                 frozenset({event.spelling})
                 if event.imported
-                else self.origins(event.spelling, scope, event.position, depth + 1)
+                else self.origins(event.spelling, scope, event.position, depth + 1, budget=budget)
             )
+            if budget is not None:
+                budget.take(len(targets))
             found.update(f"{target}.{tail}" if tail else target for target in targets)
         if earlier:
             return frozenset(found)
         if head in current.globals and scope:
-            return self.origins(spelling, 0, (10**9, 0), depth + 1, deferred=True)
+            return self.origins(spelling, 0, (10**9, 0), depth + 1, deferred=True, budget=budget)
         if head in current.nonlocals and current.parent is not None:
-            return self.origins(spelling, current.parent, (10**9, 0), depth + 1, deferred=True)
+            return self.origins(
+                spelling, current.parent, (10**9, 0), depth + 1, deferred=True, budget=budget
+            )
         if events or head in current.parameters:
             return frozenset(found)
         if current.parent is not None:
-            return self.origins(spelling, current.parent, (10**9, 0), depth + 1, deferred=True)
+            return self.origins(
+                spelling, current.parent, (10**9, 0), depth + 1, deferred=True, budget=budget
+            )
+        if budget is not None:
+            budget.take(len(current.stars))
         found.update(f"{prefix}{spelling}" for prefix in current.stars)
         if head == "open":
             found.add(f"builtins.{spelling}")
@@ -347,7 +358,8 @@ class _StageAnswers:
     root: Path
     answers: BoundedCache[_AnswerKey, FrozenSet[str]]
     searches: dict[ParserConfiguration, ReexportSearch] = field(default_factory=dict)
-    programs: BoundedCache[Path, Path] = field(default_factory=lambda: BoundedCache(2048))
+    # A candidate asks about the same importer for each of its calls.
+    scopes: BoundedCache[str, tuple[Path, Path]] = field(default_factory=lambda: BoundedCache(2048))
 
 
 _STAGE_ANSWERS: ContextVar[Optional[_StageAnswers]] = ContextVar("resource_answers", default=None)
@@ -372,26 +384,22 @@ class ResourceImports:
     cache: ImportGraphCache
 
     def follow(self, origins: FrozenSet[str]) -> FrozenSet[str]:
-        """The recognized constructors reachable from these call origins."""
+        """Possible constructors, or _MAY_BE_RESOURCE when the run exhausts its work limit."""
         if not origins or origins <= _RECOGNIZED:
             return origins
         stage = _STAGE_ANSWERS.get()
         configuration = parser_configuration()
         if stage is not None and (stage.graph is not self.cache or not memoizing()):
             stage = None
-        file = (
-            self.cache.resolve(self.file_path)
-            if stage is not None
-            else Path(self.file_path).resolve()
-        )
-        if stage is not None:
-            scope: Optional[Path]
-            if any(origin.startswith(".") for origin in origins):
-                scope = file.parent
-            else:
-                scope = stage.programs.get(file)
-                if scope is None:
-                    scope = stage.programs[file] = self.cache.program_root_for(file)
+        if stage is None:
+            file = Path(self.file_path).resolve()
+        else:
+            scopes = stage.scopes.get(self.file_path)
+            if scopes is None:
+                file = Path(self.file_path).resolve()
+                scopes = stage.scopes.put(self.file_path, (file, self.cache.program_root_for(file)))
+            file, program = scopes
+            scope = file.parent if any(origin.startswith(".") for origin in origins) else program
             key = (scope, origins, configuration)
             previous = stage.answers.get(key)
             if previous is not None:
@@ -406,6 +414,11 @@ class ResourceImports:
 
         def exported(file: Path, name: str) -> FrozenSet[str]:
             nonlocal stage
+            try:
+                self.cache.resource_budget.take(1 + file.stat().st_size // 1024)
+            except OSError:
+                stage = None
+                return frozenset()
             source = try_read_source(file)
             if stage is not None and (
                 source is None or not file.is_relative_to(stage.root) or not parsing_is_pure(source)
@@ -418,7 +431,9 @@ class ResourceImports:
             except SyntaxError:
                 return frozenset()
             resolution = memoized_per_node(_RESOLUTIONS, module, _resolution)
-            return resolution.origins(name, 0, (10**9, 0), deferred=True)
+            return resolution.origins(
+                name, 0, (10**9, 0), deferred=True, budget=self.cache.resource_budget
+            )
 
         try:
             found = reachable_constructors(
@@ -426,16 +441,20 @@ class ResourceImports:
             )
         except WorkLimitReached:
             return _MAY_BE_RESOURCE
-        if stage is not None:
+        if stage is not None and search.shareable:
             stage.searches[configuration] = search
             return stage.answers.put(key, found)
         return found
 
 
 _RECOGNIZED = RESOURCE_CONSTRUCTORS | WEAK_REFERENCE_CONSTRUCTORS
-# The unknown call must be refused even in a with statement: it might watch
-# its argument weakly. A union of known constructors alone loses that fact.
-_MAY_BE_RESOURCE = _RECOGNIZED | {"<re-export work limit>"}
+
+
+class _UnknownResources(frozenset[str]):
+    """Any constructor is possible. Even a with statement may lose a weak referent."""
+
+
+_MAY_BE_RESOURCE = _UnknownResources(_RECOGNIZED)
 
 
 _RESOLUTIONS: WeakKeyDictionary[ast.AST, _Resolution] = WeakKeyDictionary()

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import ast
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +27,7 @@ from ..analysis_sources import parse_analysis_source, parsing_is_pure
 from ..source_text import try_read_source
 from .module_bindings import import_origin
 from .resource_budget import ResourceBudget
+from .resource_terminal_source import terminal_syntax
 from .statement_facts import imported_binding_name
 from .visitors import evaluated_before_definition
 
@@ -69,12 +71,18 @@ class TerminalIndex:
             raise IncompleteNamespace
         self.budget.take(1 + file.stat().st_size // 1024)
         source = try_read_source(file)
-        if source is None or not parsing_is_pure(source):
+        if source is None:
             raise IncompleteNamespace
-        try:
-            module = parse_analysis_source(source, str(file))
-        except SyntaxError:
-            return set()
+        if parsing_is_pure(source):
+            try:
+                module = parse_analysis_source(source, str(file))
+            except SyntaxError:
+                return set()
+        else:
+            projected = terminal_syntax(source, self.budget)
+            if projected is None:
+                raise IncompleteNamespace
+            module = projected
         heads = {"builtins"}  # deferred open also names builtins.open
         pending: list[ast.AST] = list(module.body)
         while pending:
@@ -127,14 +135,17 @@ class TerminalIndex:
                 if space.directory is not None:
                     if space.directory.is_symlink():
                         raise IncompleteNamespace
-                    for entry in space.directory.iterdir():
-                        self.budget.take()
-                        name = entry.stem if entry.suffix.lower() == ".py" else entry.name
-                        if name.isidentifier():
-                            child = self.child(space, name)
-                            if child is not None:
-                                pending.append(child)
-        except (OSError, IncompleteNamespace):
+                    with os.scandir(space.directory) as entries:
+                        for entry in entries:
+                            self.budget.take()
+                            name = entry.name
+                            if name.lower().endswith(".py"):
+                                name = name[:-3]
+                            if name.isidentifier():
+                                child = self.child(space, name)
+                                if child is not None:
+                                    pending.append(child)
+        except (OSError, ValueError, RecursionError, IncompleteNamespace):
             self.complete = False
             return False
         if not self.possible or len(self.covered) != old_count:

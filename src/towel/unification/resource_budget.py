@@ -33,7 +33,7 @@ class WorkLimitReached(Exception):
 class ResourceBudget:
     def __init__(self) -> None:
         self._lock = Lock()
-        self.remaining = _WORK_LIMIT
+        self._remaining = _WORK_LIMIT
         self._exhausted = False
         self._shared: Optional[SynchronizedArray[int]] = None
 
@@ -44,6 +44,10 @@ class ResourceBudget:
             )
 
     @property
+    def remaining(self) -> int:
+        return self._shared[0] if self._shared is not None else self._remaining
+
+    @property
     def exhausted(self) -> bool:
         return bool(self._shared[1]) if self._shared is not None else self._exhausted
 
@@ -51,10 +55,10 @@ class ResourceBudget:
         shared = self._shared
         if shared is None:
             with self._lock:
-                if self.remaining >= amount:
-                    self.remaining -= amount
+                if self._remaining >= amount:
+                    self._remaining -= amount
                     return
-                self.remaining = 0
+                self._remaining = 0
                 self._exhausted = True
         else:
             with shared.get_lock():

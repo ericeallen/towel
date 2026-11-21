@@ -72,7 +72,8 @@ def _bounded_search_calls(limit: int) -> Iterator[None]:
 
 
 def test_reexport_star_cycle_expands_a_finite_graph_once(package: Path) -> None:
-    # Every miss can take another lap around the same eight modules.
+    # This possible constructor name survives the terminal index. Every miss
+    # can take another lap around the same eight modules.
     width = 8
     for index in range(width):
         (package / f"ring{index}.py").write_text(
@@ -83,13 +84,13 @@ def test_reexport_star_cycle_expands_a_finite_graph_once(package: Path) -> None:
             )
         )
     client = package / "client.py"
-    client.write_text("from reexport_graph.ring0 import factory\n")
+    client.write_text("from reexport_graph.ring0 import TemporaryDirectory\n")
     graph = ImportGraphCache()
     with sharing_analysis_sources(), sharing_resource_answers(graph, package.parent):
         with _bounded_search_calls(6000):
             assert (
                 ResourceImports(str(client), graph).follow(
-                    frozenset({"reexport_graph.ring0.factory"})
+                    frozenset({"reexport_graph.ring0.TemporaryDirectory"})
                 )
                 == frozenset()
             )
@@ -354,3 +355,73 @@ def test_reexport_budget_spent_in_a_pair_worker_reaches_the_parents_census(
     monkeypatch.setattr(parallel, "_stop_pool", after_results)
     engine.analyze_files([str(file)], progress="none")
     assert ["may be resources" in report for report in reports] == [False, True]
+
+
+def test_uncertain_reexport_source_preserves_import_and_assignment_names() -> None:
+    import warnings
+
+    from towel.unification.resource_budget import ResourceBudget
+    from towel.unification.resource_terminal_source import terminal_syntax
+
+    source = (
+        "from ...lazy_provider.core import lazy_factory as lazy_alias\n"
+        "import lazy_top.branch as maker\n"
+        "((renamed)) = maker.lazy_attr\n"
+        "(typed): object = lazy_alias\n"
+        "if (assigned := lazy_alias): pass\n"
+        "K = lazy_alias\n"  # Python normalizes this identifier to K.
+        r"label = '\q'" + "\n"
+    )
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        module = terminal_syntax(source, ResourceBudget())
+    assert emitted == []
+    assert module is not None
+    first, second = module.body[:2]
+    assert (
+        isinstance(first, ast.ImportFrom)
+        and first.module == "lazy_provider.core"
+        and first.level == 3
+    )
+    assert [(alias.name, alias.asname) for alias in first.names] == [("lazy_factory", "lazy_alias")]
+    assert isinstance(second, ast.Import)
+    assert [(alias.name, alias.asname) for alias in second.names] == [("lazy_top.branch", "maker")]
+    names = {node.id for node in ast.walk(module) if isinstance(node, ast.Name)}
+    assert {"renamed", "maker", "typed", "lazy_alias", "assigned", "K"} <= names
+    assert {node.attr for node in ast.walk(module) if isinstance(node, ast.Attribute)} == {
+        "lazy_attr"
+    }
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'value = f"{(kept := factory)}"',  # A binding inside a literal.
+        r'value = f"\{1}"',  # A C tokenizer can warn before yielding this token.
+        "lazy import provider",  # The soft keyword here is part of the grammar.
+        "import lazy_top as _towel_terminal_name_0",  # A fresh name would collide.
+    ],
+)
+def test_uncertain_reexport_source_declines_unproven_projections(source: str) -> None:
+    import warnings
+
+    from towel.unification.resource_budget import ResourceBudget
+    from towel.unification.resource_terminal_source import terminal_syntax
+
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        assert terminal_syntax(source, ResourceBudget()) is None
+    assert emitted == []
+
+
+def test_reexport_missing_external_provider_is_checked_for_the_next_importer(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    graph = ImportGraphCache()
+    origins = frozenset({"..external.factory"})
+    with sharing_analysis_sources(), sharing_resource_answers(graph, stage):
+        assert ResourceImports(str(stage / "first.py"), graph).follow(origins) == set()
+        (tmp_path / "external.py").write_text("from weakref import ref as factory\n")
+        assert ResourceImports(str(stage / "second.py"), graph).follow(origins) == {"weakref.ref"}

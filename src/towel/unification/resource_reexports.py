@@ -65,6 +65,8 @@ class ReexportSearch:
         self.graph = graph
         self.budget = graph.resource_budget
         self.constructors = constructors
+        self.stage = stage
+        self.shareable = True
         self.prefixes = {
             ".".join(name.split(".")[:end])
             for name in constructors
@@ -108,15 +110,28 @@ class ReexportSearch:
         if location.path is None:
             return None
         path = location.path.joinpath(*parts)
+        if self.stage is not None and self.shareable:
+            # Even a missing module is a filesystem dependency. The stage's
+            # program resolves absolute imports in the original layout and
+            # maps their definitions into the stage. Relative imports can also
+            # climb out of the stage entirely, where sources can change.
+            program = location.program
+            staged_layout = (
+                program is not None
+                and program.stage_root == self.stage
+                and path.is_relative_to(program.model.root)
+            )
+            if not staged_layout and not path.resolve().is_relative_to(self.stage):
+                self.shareable = False
         directory = path if path.is_dir() else None
         module = location.definition(parts)
         if module is None and directory is None:
             return None
-        program = 0
+        program_id = 0
         if directory is not None and location.program is not None:
-            program = id(location.program)
-            self.programs[program] = location.program
-        return Namespace(module, directory, program)
+            program_id = id(location.program)
+            self.programs[program_id] = location.program
+        return Namespace(module, directory, program_id)
 
     def _roots(self, file: Path, head: str) -> tuple[Namespace, ...]:
         # Relative dots use only the importing directory. Absolute heads use
@@ -279,7 +294,7 @@ def reachable_constructors(
 ) -> FrozenSet[str]:
     """Raise WorkLimitReached if the run cannot finish the proof within its budget."""
     return (search or ReexportSearch(graph, constructors)).follow(
-        Path(importer) if isinstance(importer, Path) else Path(importer).resolve(),
+        importer if search is not None and isinstance(importer, Path) else Path(importer).resolve(),
         origins,
         exported,
         lexical_exports=search is not None,
