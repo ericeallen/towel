@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 from unittest.mock import patch
+import warnings
 
 import pytest
 
@@ -348,3 +349,36 @@ def test_cyclic_star_exports_stay_finite_and_reread_protocol_bindings(
         assert allowed is not protocol
         assert calls > 0
         assert ast.dump(tree, include_attributes=True) == snapshot
+
+
+@pytest.mark.parametrize("warns", [False, True], ids=["pure", "parser-diagnostic"])
+def test_a_refresh_resolves_the_class_base_once_if_pure(tmp_path: Path, warns: bool) -> None:
+    source = _module("from aliases import Contract", "class Box(Contract):\n    v = 1\n")
+    _files(tmp_path, {"box.py": source, "aliases.py": "class Contract:\n    pass\n"})
+    engine = UnificationRefactorEngine(
+        min_lines=3, skip_trivial_helpers=False, annotate_helpers=False, strict=False
+    )
+    host = tmp_path / "box.py"
+    with engine._staged_output(host, host) as stage:
+        for definition, host_class in (
+            ("class Contract:\n    pass\n", "Box"),
+            ("from typing import Protocol as Contract\n", None),
+        ):
+            (stage.target.parent / "aliases.py").write_text(
+                definition + (r"message = '\q'" + "\n" if warns else "")
+            )
+            with (
+                warnings.catch_warnings(record=True) as diagnostics,
+                patch(
+                    "towel.unification.protocol_bases.imported_alias_sites",
+                    wraps=import_graph.imported_alias_sites,
+                ) as lookup,
+            ):
+                warnings.simplefilter("always")
+                proposals = engine.analyze_files([str(stage.target)], progress="none")
+            assert {proposal.insert_into_class for proposal in proposals} == {host_class}
+            if warns:
+                assert lookup.call_count > 1
+                assert len([w for w in diagnostics if "\\q" in str(w.message)]) >= lookup.call_count
+            else:
+                assert lookup.call_count == 1

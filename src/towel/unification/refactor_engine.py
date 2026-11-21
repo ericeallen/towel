@@ -101,6 +101,7 @@ from ..coverage_config import CoverageExclusion
 from ..consumers import MAXIMUM_FILES
 from .if_binding_transfer import sharing_if_transfer_sources
 from .resource_guard import sharing_resource_answers
+from .protocol_bases import sharing_base_answers
 from .compiler_literals import sharing_compiler_literal_facts
 from .return_source_uses import sharing_return_source_uses
 from .models import (
@@ -862,13 +863,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
             changed_files: When given, only pairs with a function in one of
                 these files are considered (see ``incremental_global_passes``).
         """
+        stage = self._output_origin[1] if self._output_origin is not None else None
         with (
             sharing_analysis_sources(check_ast_immutable=self._settings.check_ast_immutable),
             sharing_if_transfer_sources(),
-            sharing_resource_answers(
-                self.import_graph,
-                self._output_origin[1] if self._output_origin is not None else None,
-            ),
+            sharing_resource_answers(self.import_graph, stage),
+            sharing_base_answers(self.import_graph, stage),
             sharing_compiler_literal_facts(),
             sharing_return_source_uses(self),
             deferring_pair_if_proofs(self),

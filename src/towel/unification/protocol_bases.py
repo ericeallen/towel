@@ -24,11 +24,17 @@ origins. This is not an evaluation of arbitrary calls or external libraries.
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Dict, Optional, Set, Tuple
+from typing import Callable, Dict, Iterator, Optional, Set, Tuple
+from weakref import ref
 
-from ..source_text import read_source
+from ..analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
+from ..source_text import decode_source
+from .bounded_cache import BoundedCache
 from .import_graph import (
     ImportGraphCache,
     _module_scope_bindings,
@@ -56,31 +62,61 @@ def _joined(values: Tuple[_BaseValue, ...]) -> _BaseValue:
     return _BaseValue.DYNAMIC if _BaseValue.DYNAMIC in values else _BaseValue.ORDINARY
 
 
+@dataclass(frozen=True)
+class _StageBaseAnswers:
+    graph: ImportGraphCache
+    root: Path
+    answers: BoundedCache[
+        Tuple[Path, ref[ast.Module], ref[ast.ClassDef], ParserConfiguration], bool
+    ]
+
+
+_STAGE: ContextVar[Optional[_StageBaseAnswers]] = ContextVar("protocol_base_answers", default=None)
+
+
+@contextmanager
+def sharing_base_answers(graph: ImportGraphCache, stage: Optional[Path]) -> Iterator[None]:
+    """The private stage can change only between analyses, including other modules' bases."""
+    current = _StageBaseAnswers(graph, stage, BoundedCache(2048)) if stage is not None else None
+    token = _STAGE.set(current)
+    try:
+        yield
+    finally:
+        _STAGE.reset(token)
+
+
 class _ProtocolBases:
-    """One query's immutable trees and visited alias edges; no verdict survives the query."""
+    """One query's trees and visited alias edges. Partial answers depend on the path taken."""
 
     def __init__(
         self,
-        path: str,
+        path: Path,
         tree: ast.Module,
         bindings: ModuleBindings,
         cache: ImportGraphCache,
         parse: Callable[[str], ast.Module],
+        stage: Optional[_StageBaseAnswers],
     ) -> None:
-        self.path = cache.resolve(path)
         self.cache = cache
         self.parse = parse
-        self.trees: Dict[Path, Optional[ast.Module]] = {self.path: tree}
-        self.bindings: Dict[Path, Optional[ModuleBindings]] = {self.path: bindings}
+        self.stage = stage
+        self.trees: Dict[Path, Optional[ast.Module]] = {path: tree}
+        self.bindings: Dict[Path, Optional[ModuleBindings]] = {path: bindings}
         self.seen: Set[Tuple[Path, str]] = set()
 
     def _tree(self, path: Path) -> Optional[ast.Module]:
         if path not in self.trees:
             try:
-                source = read_source(path)
+                data = path.read_bytes()
+                if self.stage is not None and (
+                    not path.resolve().is_relative_to(self.stage.root) or not parsing_is_pure(data)
+                ):
+                    self.stage = None
+                source = decode_source(data)
                 self.trees[path] = self.parse(source)
                 self.bindings[path] = global_bindings(source)
             except (OSError, UnicodeError, SyntaxError, ValueError):
+                self.stage = None
                 self.trees[path] = None
         return self.trees[path]
 
@@ -189,7 +225,16 @@ def bases_allow_private_helpers(
     """
     if not klass.bases:
         return True
-    resolver = _ProtocolBases(path, tree, bindings, cache, parse)
-    return all(
-        resolver.expression(base, resolver.path) is _BaseValue.ORDINARY for base in klass.bases
-    )
+    host = cache.resolve(path)
+    stage = _STAGE.get()
+    # Key the host by its actual parse without retaining a module after the parser drops it.
+    key = (host, ref(tree), ref(klass), parser_configuration())
+    if stage is not None and stage.graph is cache and host.is_relative_to(stage.root):
+        previous = stage.answers.get(key)
+        if previous is not None:
+            return previous
+    else:
+        stage = None
+    resolver = _ProtocolBases(host, tree, bindings, cache, parse, stage)
+    allowed = all(resolver.expression(base, host) is _BaseValue.ORDINARY for base in klass.bases)
+    return resolver.stage.answers.put(key, allowed) if resolver.stage is not None else allowed
