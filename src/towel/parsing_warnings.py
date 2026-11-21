@@ -20,6 +20,7 @@ changes warning filters: its only retained result is an immutable boolean.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 import io
 import os
@@ -270,13 +271,25 @@ class _LexicalCache:
 _CACHE = _LexicalCache()
 
 
-def _cached_tokens_cannot_warn(source: str) -> bool:
+_RUN_CACHE: ContextVar[_LexicalCache | None] = ContextVar("lexical_run_cache", default=None)
+
+
+def begin_lexical_run() -> None:
+    """Install a fresh byte-bounded table in the new run's private context."""
+    _RUN_CACHE.set(_LexicalCache())
+
+
+def _cached_tokens_cannot_warn(source: str, run_cache: _LexicalCache | None) -> bool:
     global _CACHE
-    cache = _CACHE
+    cache = run_cache if run_cache is not None else _CACHE
     if cache.pid != os.getpid():
         # A fork may inherit a lock held by a different parent thread. Start
         # fresh before acquiring it, without installing process-wide hooks.
-        cache = _CACHE = _LexicalCache()
+        cache = _LexicalCache()
+        if run_cache is None:
+            _CACHE = cache
+        else:
+            _RUN_CACHE.set(cache)
     return cache.cannot_warn(source)
 
 
@@ -287,9 +300,9 @@ def parsing_cannot_warn(source: str) -> bool:
     independent of parser limits and warning policy. Counted string storage
     (plus a conservative UTF-8 reserve for non-ASCII text), rather than a
     worst-case size per entry, lets an ordinary source corpus remain cached.
-    Entry and character caps also bound bookkeeping and each
-    admitted source; larger sources are classified without retention. No AST
-    is held here. The bounded cache is process-local and resets after fork.
+    The run owns its table so even large modules can share an answer across
+    refreshes within the byte budget. Standalone calls keep the smaller
+    per-source character limit. Both tables reset after fork.
     """
     # CPython 3.15 Parser/action_helpers.c warns for ``from . lazy import x``.
     # Reject every spelling containing the soft keyword, including continued
@@ -297,6 +310,11 @@ def parsing_cannot_warn(source: str) -> bool:
     if sys.version_info[:2] >= (3, 15) and "lazy" in source:
         return False
     # Subclasses can override hashing/size operations; only native strings are pure keys.
-    if type(source) is not str or not memoizing() or len(source) > _MAX_SOURCE_CHARACTERS:
+    run_cache = _RUN_CACHE.get()
+    if (
+        type(source) is not str
+        or not memoizing()
+        or (run_cache is None and len(source) > _MAX_SOURCE_CHARACTERS)
+    ):
         return _POSSIBLE_WARNING.search(source) is None or _tokens_cannot_warn(source)
-    return _cached_tokens_cannot_warn(source)
+    return _cached_tokens_cannot_warn(source, run_cache)

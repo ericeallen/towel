@@ -166,3 +166,22 @@ def test_fork_discards_an_inherited_locked_parent_cache(monkeypatch: pytest.Monk
             receive.close()
     assert parsing_warnings._CACHE is cache
     assert tuple(cache.entries) == ("parent = r'\\d'",)
+
+
+def test_analysis_run_tokenizes_large_equal_sources_once(tokenized: list[str]) -> None:
+    from towel.analysis_sources import parsing_is_pure
+    from towel.source_files import source_policy_context
+
+    source = "# " + "x" * parsing_warnings._MAX_SOURCE_CHARACTERS + "\nvalue = r'\\d'\n"
+    changed = source.replace("r'", "'")
+
+    def analyze_and_refresh() -> None:
+        assert parsing_is_pure(source)
+        refresh = source_policy_context(strict=False)
+        assert refresh.run(parsing_is_pure, source.encode().decode())
+        assert not refresh.run(parsing_is_pure, changed)
+        assert not parsing_is_pure(changed)
+
+    for runs in (1, 2):
+        source_policy_context(strict=False).run(analyze_and_refresh)
+        assert len(tokenized) == 2 * runs
