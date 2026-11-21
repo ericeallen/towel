@@ -82,7 +82,7 @@ class ReexportSearch:
         self.children: dict[tuple[Namespace, str], Optional[Namespace]] = {}
         self.exports: dict[tuple[Path, str], FrozenSet[str]] = {}
         self.terminals = TerminalIndex(
-            self.budget, constructors, stage, self._namespace, self._child
+            self.budget, graph.terminal_facts, constructors, stage, self._namespace, self._child
         )
         self.expand: deque[_State] = deque()
         self.deliver: deque[tuple[_State, Optional[_Suffix], Namespace, int]] = deque()

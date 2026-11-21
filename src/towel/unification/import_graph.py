@@ -53,6 +53,7 @@ from typing import (
 )
 
 from .resource_budget import ResourceBudget
+from .resource_terminals import TerminalFacts
 from .bounded_cache import BoundedCache, memoizing
 from ..analysis_sources import (
     ParserConfiguration,
@@ -130,6 +131,9 @@ class ImportGraphCache:
     def __init__(self, limit: int = 8192, *, excluded_names: Iterable[str] = ()) -> None:
         self.excluded_names = frozenset(excluded_names)
         self._resource_budget: Optional[ResourceBudget] = None
+        self.terminal_facts: BoundedCache[tuple[ParserConfiguration, bytes], TerminalFacts] = (
+            BoundedCache(limit)
+        )
         self._stage: Optional[Tuple[Path, Path]] = None
         self._programs: Dict[Path, ProgramImports] = {}
         self._unreadable: Dict[Path, ProjectScanLimitError] = {}
@@ -191,6 +195,7 @@ class ImportGraphCache:
         self._conditional = {}
         self._distributions = {}
         for table in (
+            self.terminal_facts,
             self.edges,
             self.bindings,
             self.effects,

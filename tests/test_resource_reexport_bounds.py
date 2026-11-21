@@ -29,7 +29,7 @@ import pytest
 
 from tests.test_parallel_evaluation import _lower_thresholds, _module, _settings
 from tests.test_run_report_engine import DUPLICATES
-from towel.analysis_sources import sharing_analysis_sources
+from towel.analysis_sources import parse_analysis_source, sharing_analysis_sources
 from towel.cli_reporting import census_line
 from towel.unification import parallel
 from towel.unification.import_graph import ImportGraphCache, ImportLocation, import_location
@@ -425,3 +425,29 @@ def test_reexport_missing_external_provider_is_checked_for_the_next_importer(
         assert ResourceImports(str(stage / "first.py"), graph).follow(origins) == set()
         (tmp_path / "external.py").write_text("from weakref import ref as factory\n")
         assert ResourceImports(str(stage / "second.py"), graph).follow(origins) == {"weakref.ref"}
+
+
+def test_reexport_terminal_bindings_follow_current_contents_across_analyses(package: Path) -> None:
+    from towel.unification import resource_terminals
+
+    provider = package / "provider.py"
+    source = "from tempfile import TemporaryDirectory as factory\n"
+    provider.write_text(source)
+    client = package / "client.py"
+    client.write_text("from reexport_graph.provider import factory\n")
+    graph = ImportGraphCache()
+    origins = frozenset({"reexport_graph.provider.factory"})
+    original_stat = provider.stat()
+    with patch.object(
+        resource_terminals, "parse_analysis_source", wraps=parse_analysis_source
+    ) as parses:
+        for current, expected in [
+            (source, {"tempfile.TemporaryDirectory"}),
+            (source, {"tempfile.TemporaryDirectory"}),
+            (source.replace("factory", "another"), set()),
+        ]:
+            provider.write_text(current)
+            os.utime(provider, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+            with sharing_analysis_sources(), sharing_resource_answers(graph, package.parent):
+                assert ResourceImports(str(client), graph).follow(origins) == expected
+        assert sum(args[0] == source for args, _ in parses.call_args_list) == 1

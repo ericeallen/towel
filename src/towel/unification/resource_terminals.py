@@ -17,14 +17,21 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, FrozenSet, Iterable, Optional
 
-from ..analysis_sources import parse_analysis_source, parsing_is_pure
+from ..analysis_sources import (
+    ParserConfiguration,
+    parse_analysis_source,
+    parser_configuration,
+    parsing_is_pure,
+)
 from ..source_text import try_read_source
+from .bounded_cache import BoundedCache
 from .module_bindings import import_origin
 from .resource_budget import ResourceBudget
 from .resource_terminal_source import terminal_syntax
@@ -44,6 +51,14 @@ class IncompleteNamespace(Exception):
     """The available files cannot certify the set of possible bindings."""
 
 
+@dataclass(frozen=True)
+class TerminalFacts:
+    """What this exact source can import or rename, independent of its location."""
+
+    heads: FrozenSet[str]
+    renames: FrozenSet[tuple[str, str]]
+
+
 @dataclass
 class TerminalIndex:
     """A closed overestimate of the modules any rewrite from the given roots could inspect.
@@ -56,6 +71,7 @@ class TerminalIndex:
     """
 
     budget: ResourceBudget
+    facts: BoundedCache[tuple[ParserConfiguration, bytes], TerminalFacts]
     constructors: FrozenSet[str]
     stage: Optional[Path]
     roots: Callable[[Path, str], Optional[Namespace]]
@@ -66,23 +82,18 @@ class TerminalIndex:
     possible: FrozenSet[str] = frozenset()
     complete: bool = True
 
-    def _bindings(self, file: Path) -> set[str]:
-        if self.stage is not None and not file.is_relative_to(self.stage):
-            raise IncompleteNamespace
-        self.budget.take(1 + file.stat().st_size // 1024)
-        source = try_read_source(file)
-        if source is None:
-            raise IncompleteNamespace
+    def _source_facts(self, source: str, file: Path) -> TerminalFacts:
         if parsing_is_pure(source):
             try:
                 module = parse_analysis_source(source, str(file))
             except SyntaxError:
-                return set()
+                return TerminalFacts(frozenset(), frozenset())
         else:
             projected = terminal_syntax(source, self.budget)
             if projected is None:
                 raise IncompleteNamespace
             module = projected
+        renames: set[tuple[str, str]] = set()
         heads = {"builtins"}  # deferred open also names builtins.open
         pending: list[ast.AST] = list(module.body)
         while pending:
@@ -102,7 +113,7 @@ class TerminalIndex:
                         last = (import_origin(node, alias) or "").rpartition(".")[2]
                     name = imported_binding_name(alias)
                     if name and last != name:
-                        self.renames[last].add(name)
+                        renames.add((last, name))
             elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
                 value = node.value
                 if isinstance(value, (ast.Attribute, ast.Name)):
@@ -110,9 +121,28 @@ class TerminalIndex:
                     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                     for target in targets:
                         if isinstance(target, ast.Name) and last != target.id:
-                            self.renames[last].add(target.id)
+                            renames.add((last, target.id))
             pending.extend(ast.iter_child_nodes(node))
-        return heads
+        return TerminalFacts(frozenset(heads), frozenset(renames))
+
+    def _bindings(self, file: Path) -> FrozenSet[str]:
+        if self.stage is not None and not file.is_relative_to(self.stage):
+            raise IncompleteNamespace
+        # Re-read every provider. A fixed-point pass can rewrite a source
+        # without changing its size or mtime. Only its syntax is shareable:
+        # the importing directory and the module layout are checked afresh.
+        self.budget.take(1 + file.stat().st_size // 4096)
+        source = try_read_source(file)
+        if source is None:
+            raise IncompleteNamespace
+        key = (parser_configuration(), hashlib.sha256(source.encode("utf-8")).digest())
+        facts = self.facts.get(key)
+        if facts is None:
+            facts = self.facts.put(key, self._source_facts(source, file))
+        self.budget.take(len(facts.renames))
+        for last, name in facts.renames:
+            self.renames[last].add(name)
+        return facts.heads
 
     def covers(self, starts: Iterable[Namespace]) -> bool:
         if not self.complete:
