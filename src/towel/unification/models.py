@@ -603,7 +603,7 @@ class LeftAlone:
     blocks: Tuple[BlockLocation, ...]
     reason: str
     occurrences: int = field(default=1, repr=False)
-    """Consecutive identical rows at this display rank in a full CLI explanation."""
+    """How many declined sites this record represents in a report."""
 
     @property
     def lines(self) -> int:

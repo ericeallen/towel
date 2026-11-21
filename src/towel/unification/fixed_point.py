@@ -84,7 +84,7 @@ from .models import (
     SkippedFile,
     TerminationReason,
 )
-from .pair_locations import ModuleCondition, PairLocations, SavedPairLocations
+from .pair_locations import ModuleCondition, PairLocations, ReasonPlaces, SavedPairLocations
 from .overlap import filter_overlapping_proposals
 from .progress import (
     write_note,
@@ -188,6 +188,8 @@ class RunReport:
     unlisted_pairs: int = 0
     """Declined pairs counted but outside the requested location detail."""
     module_conditions: Optional[Tuple[ModuleCondition, ...]] = None
+
+    explained_pairs: Mapping[str, ReasonPlaces] = field(default_factory=dict)
 
     @property
     def left_alone_total(self) -> int:
@@ -304,6 +306,7 @@ class FixedPointDrivers(Materialization):
             skipped_files=census.skipped,
             not_examined=census.not_examined,
             left_alone=pairs + not_applied,
+            explained_pairs=locations.explained if locations else {},
             unlisted_pairs=sum(analysis.reasons.values()) - sum(site.occurrences for site in pairs),
             module_conditions=(
                 tuple(locations.conditions) if locations and locations.cross_module else None

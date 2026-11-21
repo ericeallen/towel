@@ -81,8 +81,10 @@ is now a site, and shows every command's output.
 - Every run reports what it read (`Analysed 2 Python files (4 functions)`) and
   what it skipped. A run that extracts nothing says why, in a sentence per
   reason, with what you can do; after a run that extracted something,
-  `--explain` lists the pairs it declined. In relaxed mode, files that do not parse are skipped with a
-  warning; `--strict` still refuses them.
+  `--explain` includes the matches it declined. For each reason it shows up to
+  20 distinct places, their closest matches and how many more places qualify.
+  In relaxed mode, files that do not parse are skipped with a warning;
+  `--strict` still refuses them.
 - An empty search says when it could not see everything: `No repeated code
   found in the code Towel examined in 12 files.`, then `12 files hold
   module-level code or early-return guards that Towel does not examine;

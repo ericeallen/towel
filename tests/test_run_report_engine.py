@@ -252,7 +252,8 @@ def test_timed_preview_releases_the_previous_analysis_and_can_still_explain_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A deadline during the next whole pass reports the last completed one, including ties."""
-    from towel.cli_reporting import left_alone_lines
+    from towel.cli_reporting import reason_lines
+    from towel.unification.pair_locations import ReasonPlaces
     from towel.execution_budget import BudgetExpired
 
     target = tmp_path / "sample.py"
@@ -272,15 +273,20 @@ def test_timed_preview_releases_the_previous_analysis_and_can_still_explain_it(
     ) -> list[RefactoringProposal]:
         if previous_sites:
             retained.extend(
-                id(o) for o in gc.get_objects() if type(o) is LeftAlone and id(o) in previous_sites
+                id(o)
+                for o in gc.get_objects()
+                if type(o) is ReasonPlaces and id(o) in previous_sites
             )
             raise BudgetExpired()
         proposals = original(engine, pairs, functions, classes, progress=progress)
-        sites = engine.last_left_alone
-        assert proposals and sites
-        previous_sites.update(map(id, sites))
+        groups = engine.last_explained_places
+        assert proposals and groups
+        previous_sites.update(map(id, groups.values()))
+        report = RunReport(declined_pairs=engine.declined_pairs, explained_pairs=groups)
         expected.extend(
-            left_alone_lines(RunReport(left_alone=sites), lambda _: target.name, every=True)
+            line
+            for line in reason_lines(report, locate=lambda _: target.name)
+            if ": similar to " in line
         )
         return proposals
 
@@ -299,7 +305,7 @@ def test_timed_preview_releases_the_previous_analysis_and_can_still_explain_it(
         ]
     )
     assert result.status == 124, result
-    assert "\n".join(expected) in result.stdout, result.stdout
+    assert expected and all(line in result.stdout.splitlines() for line in expected), result.stdout
     assert not retained, f"{len(retained)} records from the previous analysis remain live"
 
 
@@ -330,7 +336,7 @@ def test_a_standalone_analysis_can_follow_a_run_without_keeping_two_sets_of_site
 def test_explain_counts_repetitions_separated_by_a_different_rank(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An intervening location of a different rank cannot separate repetitions in sorted output."""
+    """Repeated verdicts still count, but a peer appears only once across different ranks."""
     source = tmp_path / "sample.py"
     source.write_text(PRICING)
     original = UnificationRefactorEngine._settle
@@ -344,7 +350,8 @@ def test_explain_counts_repetitions_separated_by_a_different_rank(
         for index in range(100):
             right = (10, 12) if index % 2 else (10, 11)
             original(engine, replace(pair, block1_range=(1, 2), block2_range=right), decline)
-        retained.append(len(engine.last_left_alone))
+        (group,) = engine.last_explained_places.values()
+        retained.append(sum(len(peers) for peers in group.shown.values()))
         pairs.append(100)
 
     monkeypatch.setattr(UnificationRefactorEngine, "_settle", alternate)
@@ -361,19 +368,14 @@ def test_explain_counts_repetitions_separated_by_a_different_rank(
         ]
     )
     assert result.status == 0, result
-    lines = [
-        line.split(": ", 1)[0]
-        for line in result.stdout.splitlines()
-        if line.startswith("  sample.py:")
+    assert sum(pairs) > 0
+    assert f"Found {sum(pairs)} places with similar code" in result.stdout
+    assert [line.strip() for line in result.stdout.splitlines() if ": similar to " in line] == [
+        "sample.py:10-12: similar to sample.py:1-2",
+        "sample.py:1-2: similar to sample.py:10-11 and 1 other place",
+        "sample.py:10-11: similar to sample.py:1-2",
     ]
-    expected = sum(pairs) // 2
-    assert expected > 0
-    assert (
-        lines
-        == ["  sample.py:1-2 and sample.py:10-12"] * expected
-        + ["  sample.py:1-2 and sample.py:10-11"] * expected
-    )
-    assert max(retained) == 2
+    assert max(retained) == 4
 
 
 def test_quick_preview_does_not_keep_conditions_for_every_pair_of_modules(

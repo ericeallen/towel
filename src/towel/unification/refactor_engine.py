@@ -71,7 +71,7 @@ from .engine_state import (
     PerBlockKey,
     UnifyKey,
 )
-from .pair_locations import LocationDetail, PairLocations
+from .pair_locations import LocationDetail, PairLocations, ReasonPlaces
 from .defaults import (
     DEFAULT_MAX_CANDIDATE_PAIRS,
     DEFAULT_MAX_PARAMETERS,
@@ -1285,6 +1285,11 @@ class UnificationRefactorEngine(ParallelEvaluation):
     def last_pair_tally(self) -> PairTally:
         """How the latest analysis's candidate pairs ended, apart from the declined ones."""
         return self._pair_tally
+
+    @property
+    def last_explained_places(self) -> Mapping[str, ReasonPlaces]:
+        """The largest places for each reason when the CLI requests an explanation."""
+        return self._pair_left_alone.explained
 
     @property
     def last_left_alone(self) -> Tuple[LeftAlone, ...]:

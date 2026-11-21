@@ -247,24 +247,31 @@ def _many_left_alone(root: Path, count: int) -> Path:
 
 
 @pytest.mark.strict_mode
-def test_five_largest_places_by_default_and_every_one_with_explain(tmp_path: Path) -> None:
-    """Item 4: five lines by default; ``--explain`` lists all, from the last analysis only."""
+def test_five_largest_pairs_by_default_and_distinct_places_per_reason_with_explain(
+    tmp_path: Path,
+) -> None:
+    """Item 4: five lines by default; group places from the last analysis by reason."""
     target = _many_left_alone(tmp_path / "project", 3)
     plain = invoke(["preview", str(target), *FLAGS])
     explained = invoke(["preview", str(target), "--explain", *FLAGS])
     located = re.compile(r"^  module_\d\.py:\d+-\d+ and module_\d\.py:\d+-\d+: ", re.MULTILINE)
     shown = located.findall(plain.stdout)
-    every = located.findall(explained.stdout)
     assert len(shown) == 5
     assert "The 5 largest of" in plain.stdout and "(--explain lists them all)" in plain.stdout
-    assert len(every) == len(set(every)) > 5
-    assert "Places left alone, largest first:" in explained.stdout
     assert "REJECT[" not in explained.stdout + explained.stderr
-    sizes = [
-        sum(int(b) - int(a) + 1 for a, b in re.findall(r":(\d+)-(\d+)", line))
-        for line in re.findall(r"^  module_.*$", explained.stdout, re.MULTILINE)
+    groups = re.split(r"^ +\d+  ", explained.stdout, flags=re.MULTILINE)[1:]
+    assert len(groups) == (2 if lifetime_order_certified() else 1)
+    rows = [
+        re.findall(r"^    (module_\d.py):(\d+)-(\d+): similar to ", group, re.MULTILINE)
+        for group in groups
     ]
-    assert sizes == sorted(sizes, reverse=True)
+    assert sum(map(len, rows)) == 18
+    for places in rows:
+        assert len(set(places)) == len(places)
+        assert places == sorted(places, key=lambda p: (int(p[1]) - int(p[2]), p[0], int(p[1])))
+    if lifetime_order_certified():
+        assert "[owned_binding_frame_boundary]" in groups[0]
+        assert "[unprofitable_helper]" in groups[1]
 
 
 @pytest.mark.strict_mode
@@ -422,3 +429,40 @@ def test_a_run_stopped_at_the_cap_says_so_in_words(tmp_path: Path) -> None:
         )["termination"]
         == "iteration_cap"
     )
+
+
+def test_explain_is_bounded_on_a_dense_group_of_generators(tmp_path: Path) -> None:
+    """The NetworkX reporting defect: quadratic declines must fit a single page per reason."""
+    source = tmp_path / "many.py"
+    count = 220
+    source.write_text(
+        "".join(
+            f"def read_{i}(items):\n    for item in items:\n        if item > {i}:\n            yield item\n\n"
+            for i in range(count)
+        )
+    )
+    result = invoke(["preview", str(source), "--explain", *FLAGS])
+    assert result.status == 0, result.stderr
+    assert f"Found {count * (count - 1) // 2} places" in result.stdout
+    assert len(result.stdout.encode()) < 3000, len(result.stdout.encode())
+    assert len(result.stdout.splitlines()) <= 40
+    rows = [line.strip() for line in result.stdout.splitlines() if ": similar to " in line]
+    assert len(rows) == 20
+    assert rows[0] == "many.py:2-4: similar to many.py:7-9 and 218 other places"
+    assert rows[-1].startswith("many.py:97-99: similar to many.py:2-4")
+    assert "... and 200 more places left alone for this reason" in result.stdout
+    assert result.stdout.count("Towel does not share code that yields.") == 1
+    assert "directory or file" in result.stdout
+
+
+def test_explain_prefers_the_closest_syntax_at_equal_length(tmp_path: Path) -> None:
+    source = tmp_path / "shape.py"
+    source.write_text(
+        "".join(
+            f"def f_{i}(items):\n    for x in items:\n        if x > 1:\n            yield {expr}\n\n"
+            for i, expr in enumerate(["x", "x * 2", "x"])
+        )
+    )
+    result = invoke(["preview", str(source), "--explain", *FLAGS])
+    assert result.status == 0, result.stderr
+    assert "shape.py:2-4: similar to shape.py:12-14 and 1 other place" in result.stdout

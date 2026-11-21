@@ -435,7 +435,7 @@ def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(
 
 @pytest.mark.strict_mode
 def test_explain_locates_declined_blocks_in_sentences(tmp_path: Path) -> None:
-    """``--explain`` lists each place left alone with a sentence, not the trace (audit finding 7).
+    """``--explain`` groups the places under their reason and omits the trace (audit finding 7).
 
     The developer trace (``REJECT[code]: ...``) is kept for
     ``DEBUG_PROPOSAL_REJECTIONS`` and is not part of ``--explain`` since 2.0, and
@@ -450,10 +450,7 @@ def test_explain_locates_declined_blocks_in_sentences(tmp_path: Path) -> None:
     assert result.status == 0
     if lifetime_order_certified():
         assert "[unprofitable_helper]" in result.stdout
-        assert (
-            "tiny.py:2-4 and tiny.py:7-9: The shared code does not repay the helper"
-            in result.stdout
-        )
+        assert "tiny.py:2-4: similar to tiny.py:7-9" in result.stdout
     else:
         assert "[lifetime_order_uncertified]" in result.stdout
         assert "order in which objects are released" in result.stdout
