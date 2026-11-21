@@ -108,6 +108,17 @@ class OutputLimit(BaseException):
     """Captured output exceeded the observation budget."""
 
 
+_RESOURCE_RECORDS: Mapping[str, bytes] = {
+    exhausted: json.dumps({"observer_resource": exhausted}).encode("utf-8")
+    for exhausted in ("memory", "output")
+}
+"""The record written when a budget runs out, encoded before any budget applies.
+
+Writing one with ``os.write`` allocates nothing, so it succeeds even when the
+observed program still holds all the memory the budget allows.
+"""
+
+
 class _BoundedOutput(io.StringIO):
     def write(self, text: str) -> int:
         if self.tell() + len(text) > _TEXT_LIMIT:
@@ -438,10 +449,14 @@ def observe(root: str, spec: Mapping[str, Any]) -> Record:
     return _Observation(root, spec).run()
 
 
-def main(argv: Sequence[str]) -> int:
-    root, spec_path, out_path = argv
-    with open(spec_path, encoding="utf-8") as handle:
-        spec = json.load(handle)
+def _observe_into(descriptor: int, root: str, spec: Mapping[str, Any]) -> Optional[str]:
+    """Observe under the memory budget and write the record to ``descriptor``.
+
+    Return ``None`` when the record was written, or the budget that ran out.
+    The exception is not kept, and this frame is gone by the time the caller
+    writes the fallback, so the traceback cannot hold the observed program's
+    allocations alive while the fallback is written.
+    """
     # Darwin's existing virtual mappings can already exceed a useful absolute
     # RLIMIT_AS. The parent watches RSS there; Linux also caps allocations here.
     if sys.platform == "linux":
@@ -450,13 +465,39 @@ def main(argv: Sequence[str]) -> int:
     reserve = bytearray(1024 * 1024)
     try:
         record = observe(os.path.realpath(root), spec)
-        with open(out_path, "w", encoding="utf-8") as handle:
-            json.dump(record, handle, indent=1, sort_keys=True)
-    except (MemoryError, OutputLimit) as error:
-        del reserve
-        reason = "memory" if isinstance(error, MemoryError) else "output"
-        with open(out_path, "w", encoding="utf-8") as handle:
-            json.dump({"observer_resource": reason}, handle)
+        _write_all(descriptor, json.dumps(record, indent=1, sort_keys=True).encode("utf-8"))
+        return None
+    except MemoryError:
+        exhausted = "memory"
+    except OutputLimit:
+        exhausted = "output"
+    del reserve
+    return exhausted
+
+
+def _write_all(descriptor: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(descriptor, view) :]
+
+
+def main(argv: Sequence[str]) -> int:
+    root, spec_path, out_path = argv
+    with open(spec_path, encoding="utf-8") as handle:
+        spec = json.load(handle)
+    # Open the output before the budget applies, so that recording an
+    # exhausted budget needs no new descriptor, buffer or encoder.
+    descriptor = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        exhausted = _observe_into(descriptor, root, spec)
+        if exhausted is not None:
+            fallback = _RESOURCE_RECORDS[exhausted]
+            os.ftruncate(descriptor, 0)
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            if os.write(descriptor, fallback) != len(fallback):
+                raise OSError(f"short write of the {exhausted} resource record")
+    finally:
+        os.close(descriptor)
     return 0
 
 

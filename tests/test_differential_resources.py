@@ -20,6 +20,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import sys
 from unittest.mock import Mock
 
 import pytest
@@ -59,18 +60,40 @@ def test_growing_input_seed_is_inconclusive_without_launching_after(tmp_path: Pa
     assert not (tmp_path / "after.observer.stdout").exists()
 
 
+def test_original_exhausting_memory_reaches_the_observer_fallback(tmp_path: Path) -> None:
+    """Strict seed 58534072798479847871598822171 grows the list it iterates until memory runs out.
+
+    On Linux ``RLIMIT_AS`` raises ``MemoryError`` inside the observer, whose
+    traceback kept the grown list alive; the fallback's own allocations then
+    failed and the observer exited 1, a harness error that aborted the 2.0
+    strict grammar campaign. On macOS the parent's RSS sampler stops the
+    observer first, so only Linux exercises the fallback itself.
+    """
+    case = generate_case(58534072798479847871598822171, bindings=True)
+    outcome = runner.run_case(case, replace(runner.DEFAULT, strict=True), tmp_path)
+    assert outcome.status == "inconclusive"
+    assert outcome.applied > 0
+    assert '"observer_resource": "memory"' in outcome.detail
+    assert not (tmp_path / "after.observer.stdout").exists()
+    if sys.platform == "linux":
+        observed = json.loads((tmp_path / "before.observed.json").read_text())
+        assert observed == {"observer_resource": "memory"}
+
+
 @pytest.mark.parametrize(
     ("body", "limited"),
     [
         # Cross the memory budget before the call alarm without depending on
         # how many millions of Python iterations the machine can run in 0.5 s.
         ("values = []\n    while True:\n        values.append(b'x' * (1024 * 1024))", True),
+        # The shape of seed 58534072798479847871598822171, transformed side only.
+        ("values = [0]\n    for value in values:\n        values.extend(values)", True),
         ("while True:\n        pass", True),
         ("while True:\n        print('x' * 1000)", True),
         ("raise MemoryError('control')", True),
         ("return 2", False),
     ],
-    ids=["memory", "timeout", "output", "memory-exception", "wrong-result"],
+    ids=["memory", "memory-iterated", "timeout", "output", "memory-exception", "wrong-result"],
 )
 def test_transformed_only_failures_remain_findings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, limited: bool
