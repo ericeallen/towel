@@ -117,6 +117,15 @@ def test_sharing_nothing_names_each_failed_condition_and_the_remedy(tmp_path: Pa
     assert message.count("pkg/contacts.py and pkg/labels.py") == 1
 
 
+def test_cycle_does_not_recommend_adding_an_import(tmp_path: Path) -> None:
+    """Polish 4: re-exporting both modules makes the recommended import circular."""
+    source, output = _scenario(tmp_path, "reach/p6_xmod")
+    (source / "pkg/__init__.py").write_text("from . import contacts, labels\n")
+    printed, _ = _dry(source, output)
+    assert "closes a cycle" in printed
+    assert "Adding that import" not in printed
+
+
 def test_the_remedy_works(tmp_path: Path) -> None:
     """With ``import pkg.contacts`` at the top of labels.py, p6 shares its loop."""
     source, output = _scenario(tmp_path, "reach/p6_xmod")

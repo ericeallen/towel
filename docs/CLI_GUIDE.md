@@ -46,7 +46,7 @@ path. Both take the same options:
 | `--time-limit SECONDS` | none | Give up after `SECONDS`, a positive number up to 100,000,000; write nothing and exit 124. |
 | `--max-pairs N` | 20,000,000 | Compare at most `N` pairs of similar blocks; 0 means no limit. |
 | `--jobs N` | `TOWEL_WORKERS`, else the smallest of 8, the cores and what fits in memory | Use at most `N` worker processes; `N` must be positive. |
-| `--explain` | off | List every place left alone, not only the five largest, and the pairs a run that extracted something otherwise omits. |
+| `--explain` | off | List every place left alone. By default Towel shows up to five and omits declined pairs after applying changes. |
 | `--stats` | off | Count what became of each pair of similar blocks. |
 | `--json` | off | Print one JSON result on stdout ([automation](COMPATIBILITY.md)). |
 | `--progress MODE` | `auto` | On stderr. `auto` draws a bar on a terminal and nothing in a pipe; `tqdm` uses tqdm, and warns if it is missing; `detail` logs each pass; `none` shows nothing. |

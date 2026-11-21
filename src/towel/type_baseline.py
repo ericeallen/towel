@@ -1551,7 +1551,7 @@ def names_any_warning(
     elsewhere = [path for path in names_any if path not in changed]
     count = sum(len(errors) for errors in names_any.values())
     lines = [
-        f"warning: {count} import(s) or error(s) leave a name the checker cannot type (an "
+        f"{count} import(s) or error(s) leave a name the checker cannot type (an "
         "import it cannot resolve or finds no types for, or a decorator without types), "
         "and whatever such a name reaches is Any to the checker, which accepts any use "
         "of it, so a new error there would go unseen."
@@ -1585,7 +1585,7 @@ def unlooked_warning(regions: Mapping[str, Sequence[Tuple[int, int]]], root: Pat
     root = Path(resolved_path(str(root)))
     listed = [(path, start, end) for path, spans in sorted(regions.items()) for start, end in spans]
     lines = [
-        f"warning: the type checker does not look at {len(listed)} region(s) of the code this "
+        f"the type checker does not look at {len(listed)} region(s) of the code this "
         "run may change: it takes them to be unreachable, for the platform and Python it checks "
         "for (a sys.platform, sys.version_info or TYPE_CHECKING test it makes false, an assert "
         "it knows fails) or because the declared types rule them out (an isinstance test they "

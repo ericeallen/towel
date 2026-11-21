@@ -234,7 +234,7 @@ Examples, in a directory holding src/:
   towel preview src/          # Show what would change, changing nothing
   towel dry src/ cleaned/     # Write a refactored copy of src/ to cleaned/
   towel dry src/ src/         # Refactor in place (commit your work first)
-  towel rename-helpers src/ --complete-scope    # Name the new helpers
+  towel rename-helpers src/ --list              # List the new helpers to name
 
 Run towel COMMAND --help for a command's options and examples, and see
 {DOCS_URL}/QUICKSTART/ for a first run.
@@ -775,8 +775,8 @@ def _add_report_flags(options: argparse._ActionsContainer) -> None:
         "--explain",
         action="store_true",
         help="After the run, list every place with similar code that was left alone, largest "
-        "first, with its files, lines and the reason in a sentence (default: off, which lists "
-        f"the {LARGEST_SHOWN} largest).",
+        "first, with its files, lines and reason (default: off; show up to the "
+        f"{LARGEST_SHOWN} largest; after applying changes, omit declined pairs).",
     )
     options.add_argument(
         "--stats",
@@ -909,7 +909,7 @@ Examples, in a directory holding src/:
   # The summary and diff of everything dry would change
   towel preview src/
 
-  # Only the summary: how many refactorings, and any that were declined
+  # Show the counts; add --explain to include declined pairs after changes
   towel preview src/ --summary
 
   # A faster, rougher list, without type checks or formatting
@@ -1301,7 +1301,7 @@ def _generated_code_formatter(
         reported.add(choice.note)
         if choice.tool is None:
             remedy = (
-                "Configure Ruff or Black in the project to format generated code."
+                'Configure Ruff or Black in the project and install "code-towel[format]" to use it.'
                 if choice.note == "no formatter configured"
                 else 'Install the format extra (pip install "code-towel[format]") to format it.'
             )

@@ -88,8 +88,7 @@ If the only obstacle is a missing import and the modules belong together, add
 it and run Towel again. For `import_cycle`, check the package's `__init__.py`
 as well as the two modules. Importing `shop.orders` runs the package
 initializer, which may itself import `shop.invoices` to re-export a function.
-Towel follows that path even if `orders.py` never mentions invoices. Another
-import cannot break the cycle. Leave the copies alone unless the re-export
+Towel follows that path even if `orders.py` never mentions invoices. Towel omits the advice to add an import when it reports a cycle. Leave the copies alone unless the re-export
 can be removed without changing the package's public API.
 
 Towel also shares nothing between modules of different distributions (directories

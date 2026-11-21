@@ -40,6 +40,7 @@ from towel.relaxed_suitability import FindingJSON
 from towel.reason_sentences import Explanation, explain, reason_code, without_subject
 from towel.source_files import python_sources
 from towel.source_text import decode_source
+from towel.unification.models import RejectReason
 
 if TYPE_CHECKING:
     from towel.unification.fixed_point import RunReport
@@ -511,12 +512,15 @@ def cross_module_lines(report: "RunReport", relative: Callable[[str], str]) -> L
     reason only such a pair can meet.
     """
     found: Dict[Tuple[str, str, str], None] = {}
+    has_cycle = False
     for site in report.left_alone:
         paths = sorted({relative(block.path) for block in site.blocks})
         code = reason_code(site.reason)
         sentence = explain(code).sentence
         if len(paths) < 2 or not sentence.startswith(CROSS_MODULE_PREFIX):
             continue
+        if code == RejectReason.IMPORT_CYCLE:
+            has_cycle = True
         # The reason's subject names the modules and what failed; without
         # one, the reason's own sentence says what failed.
         subject = site.reason[len(code) + 1 : -1] if site.reason != code else ""
@@ -528,8 +532,7 @@ def cross_module_lines(report: "RunReport", relative: Callable[[str], str]) -> L
         "",
         "--cross-module shared nothing between modules. What each pair of modules lacked:",
         *(f"  {first} and {others}: {condition}." for first, others, condition in found),
-        CROSS_MODULE_REMEDY,
-    ]
+    ] + ([] if has_cycle else [CROSS_MODULE_REMEDY])
 
 
 def analysed_record(report: "RunReport", relative: Callable[[str], str]) -> AnalysedRecord:

@@ -16,11 +16,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
+from towel.diagnostics import _CurrentStderrHandler
 from towel.type_baseline import names_any_warning, unlooked_warning
 from towel.type_inference import CheckFailure, CheckResult, CheckSuccess, TypeDiagnostic
 from towel.unification.exceptions import RefactoringError
@@ -78,6 +80,25 @@ def test_warnings_for_unchanged_regions_name_remedies(tmp_path: Path) -> None:
     unreachable = unlooked_warning({path: [(1, 3)]}, tmp_path)
     assert "--no-types" in unreachable
     assert "install" not in unreachable
+
+
+@pytest.mark.parametrize("unreachable", [False, True])
+def test_typed_warning_prints_one_severity(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], unreachable: bool
+) -> None:
+    """Polish 4: both typed diagnostics get one severity label on stderr."""
+    path = str(tmp_path / "program.py")
+    message = (
+        unlooked_warning({path: [(1, 3)]}, tmp_path)
+        if unreachable
+        else names_any_warning(
+            {path: (TypeDiagnostic(path, "missing import", 1),)}, tmp_path, {path}
+        )
+    )
+    assert message is not None
+    record = logging.LogRecord("towel", logging.WARNING, __file__, 1, message, (), None)
+    _CurrentStderrHandler().handle(record)
+    assert capsys.readouterr().err.lower().count("warning:") == 1
 
 
 def test_import_warning_defaults_match_the_relaxed_engine(tmp_path: Path) -> None:
