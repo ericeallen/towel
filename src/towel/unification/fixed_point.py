@@ -189,6 +189,10 @@ class RunReport:
     """Declined pairs counted but outside the requested location detail."""
     module_conditions: Optional[Tuple[ModuleCondition, ...]] = None
 
+    @property
+    def left_alone_total(self) -> int:
+        return self.unlisted_pairs + sum(site.occurrences for site in self.left_alone)
+
 
 @dataclass(frozen=True, slots=True)
 class _AnalysisReport:
@@ -300,7 +304,7 @@ class FixedPointDrivers(Materialization):
             skipped_files=census.skipped,
             not_examined=census.not_examined,
             left_alone=pairs + not_applied,
-            unlisted_pairs=sum(analysis.reasons.values()) - len(pairs),
+            unlisted_pairs=sum(analysis.reasons.values()) - sum(site.occurrences for site in pairs),
             module_conditions=(
                 tuple(locations.conditions) if locations and locations.cross_module else None
             ),

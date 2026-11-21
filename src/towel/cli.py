@@ -2560,7 +2560,8 @@ def _quick_report(engine: "UnificationRefactorEngine") -> "RunReport":
         functions_analysed=census.functions,
         skipped_files=census.skipped,
         left_alone=locations,
-        unlisted_pairs=sum(engine.declined_pairs.values()) - len(locations),
+        unlisted_pairs=sum(engine.declined_pairs.values())
+        - sum(site.occurrences for site in locations),
         not_examined=census.not_examined,
     )
 

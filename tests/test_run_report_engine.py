@@ -325,3 +325,52 @@ def test_a_standalone_analysis_can_follow_a_run_without_keeping_two_sets_of_site
         for block in site.blocks
     )
     assert len(engine.run_report.left_alone) == previous
+
+
+def test_explain_counts_repetitions_separated_by_a_different_rank(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An intervening location of a different rank cannot separate repetitions in sorted output."""
+    source = tmp_path / "sample.py"
+    source.write_text(PRICING)
+    original = UnificationRefactorEngine._settle
+    retained = []
+    pairs = []
+
+    def alternate(
+        engine: UnificationRefactorEngine, pair: CodeBlockPair, verdict: PairVerdict
+    ) -> None:
+        decline = replace(verdict, counted="unprofitable_helper", identity=None, proposal=None)
+        for index in range(100):
+            right = (10, 12) if index % 2 else (10, 11)
+            original(engine, replace(pair, block1_range=(1, 2), block2_range=right), decline)
+        retained.append(len(engine.last_left_alone))
+        pairs.append(100)
+
+    monkeypatch.setattr(UnificationRefactorEngine, "_settle", alternate)
+    result = invoke(
+        [
+            "preview",
+            str(source),
+            "--quick",
+            "--explain",
+            "--no-types",
+            "--no-format",
+            "--progress",
+            "none",
+        ]
+    )
+    assert result.status == 0, result
+    lines = [
+        line.split(": ", 1)[0]
+        for line in result.stdout.splitlines()
+        if line.startswith("  sample.py:")
+    ]
+    expected = sum(pairs) // 2
+    assert expected > 0
+    assert (
+        lines
+        == ["  sample.py:1-2 and sample.py:10-12"] * expected
+        + ["  sample.py:1-2 and sample.py:10-11"] * expected
+    )
+    assert max(retained) == 2

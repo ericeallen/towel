@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from difflib import unified_diff
+from itertools import repeat
 import json
 from pathlib import Path
 from typing import (
@@ -319,9 +320,9 @@ def outcome_line(report: "RunReport", applied: int, target: str) -> Optional[str
     if outcome == "no_repeated_code":
         return f"No repeated code found in {_plural(report.files_analysed, 'file')}."
     if outcome == "all_left_alone":
-        places = report.unlisted_pairs + len(report.left_alone) or sum(
-            report.declined_pairs.values()
-        ) + sum(report.declined_proposals.values())
+        places = report.left_alone_total or sum(report.declined_pairs.values()) + sum(
+            report.declined_proposals.values()
+        )
         return f"Found {_plural(places, 'place')} with similar code and extracted none."
     return None
 
@@ -386,9 +387,9 @@ def shows_pairs(applied: int, every: bool) -> bool:
 def left_alone_count(report: "RunReport", applied: int) -> int:
     """How many places the report lists as left alone by default (``shows_pairs``)."""
     if shows_pairs(applied, False):
-        return report.unlisted_pairs + len(report.left_alone)
+        return report.left_alone_total
     pair_reasons = set(report.declined_pairs)
-    return sum(1 for site in report.left_alone if site.reason not in pair_reasons)
+    return sum(site.occurrences for site in report.left_alone if site.reason not in pair_reasons)
 
 
 UNRESOLVED_NAMES_REASON = "not verifiable: its file holds a name the type checker cannot type"
@@ -472,7 +473,7 @@ def left_alone_lines(
     if not located:
         return []
     shown = located if every else located[:LARGEST_SHOWN]
-    total = len(located) + (report.unlisted_pairs if pairs else 0)
+    total = sum(site.occurrences for site in located) + (report.unlisted_pairs if pairs else 0)
     heading = (
         "Places left alone, largest first:"
         if every or total <= LARGEST_SHOWN
@@ -480,10 +481,15 @@ def left_alone_lines(
         " (--explain lists them all):"
     )
     lines = ["", heading]
+    remaining = total if every else LARGEST_SHOWN
     for site in shown:
+        if not remaining:
+            break
         spans = [_span(b.path, b.first_line, b.last_line, relative) for b in site.blocks]
         where = spans[0] if len(spans) == 1 else ", ".join(spans[:-1]) + " and " + spans[-1]
-        lines.append(f"  {where}: {explain(site.reason).sentence}")
+        count = min(remaining, site.occurrences)
+        lines.extend(repeat(f"  {where}: {explain(site.reason).sentence}", count))
+        remaining -= count
     return lines
 
 

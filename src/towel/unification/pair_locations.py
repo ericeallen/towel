@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from array import array
 from bisect import bisect_right
+from dataclasses import replace
 from itertools import repeat
 import pickle  # nosec B403: only a private temporary file written in this process
 import tempfile
@@ -62,6 +63,7 @@ class PairLocations:
         self._sites: dict[LeftAlone, int] = {}
         # Full output can repeat the same printed line, even interleaved with
         # others of the same rank. Keep those occurrences in their exact order.
+        self._rank_tails: dict[tuple[str, int, str, int, int], int] = {}
         self._order = array("Q")
         self._counts = array("Q")
 
@@ -122,9 +124,20 @@ class PairLocations:
             (self._blocks.setdefault(left, left), self._blocks.setdefault(right, right)), reason
         )
         index = self._sites.setdefault(site, len(self._sites))
-        if self._order and self._order[-1] == index:
-            self._counts[-1] += 1
+        # The CLI sorts by line count, paths and start lines. A row of a
+        # different rank cannot interrupt a run of identical printed rows.
+        # The API also exposes the original order across different ranks.
+        rank_key = (
+            (first_path, first_start, second_path, second_start, first_end + second_end)
+            if self.detail == "explain"
+            else None
+        )
+        last = self._rank_tails.get(rank_key, -1) if rank_key is not None else len(self._order) - 1
+        if last >= 0 and self._order[last] == index:
+            self._counts[last] += 1
         else:
+            if rank_key is not None:
+                self._rank_tails[rank_key] = len(self._order)
             self._order.append(index)
             self._counts.append(1)
 
@@ -132,6 +145,7 @@ class PairLocations:
         """The stage that named these files can now be released."""
         self._public = None
         self._paths.clear()
+        self._rank_tails.clear()
         self._blocks.clear()
         self._reason_conditions.clear()
         self._printed_reasons.clear()
@@ -145,7 +159,10 @@ class PairLocations:
         elif self._sites:
             sites = list(self._sites)
             for index, count in zip(self._order, self._counts):
-                yield from repeat(sites[index], count)
+                if self.detail == "explain" and count > 1:
+                    yield replace(sites[index], occurrences=count)
+                else:
+                    yield from repeat(sites[index], count)
 
 
 class SavedPairLocations:
