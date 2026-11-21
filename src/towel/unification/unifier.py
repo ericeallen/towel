@@ -36,7 +36,7 @@ from .compiler_literals import (
     immutable_literal_value,
     is_pooled_expression,
     pooled_expression_positions,
-    pooled_literal_nodes,
+    pooled_literals_in_tree,
     unstable_literal_pool,
 )
 from .parameterization import Parameterization
@@ -1394,7 +1394,7 @@ class Unifier(Parameterization, LiteralPromotion):
         self._pattern_parameters_allowed = False
         self._block_free_variables_cache.clear()
         self.current_blocks = blocks
-        self._pooled_literal_nodes = tuple(pooled_literal_nodes(block) for block in blocks)
+        self._pooled_literal_nodes = tuple(pooled_literals_in_tree(block) for block in blocks)
         self._pooled_literal_parts = tuple(
             frozenset(structural_text(node) for node in nodes)
             for nodes in self._pooled_literal_nodes
