@@ -48,6 +48,9 @@ class _StatementMemo(Generic[_T]):
 
 class RunSyntaxFacts:
     def __init__(self) -> None:
+        from .cluster_helpers import ClusterHelperMemo
+
+        self.cluster_helpers = ClusterHelperMemo()
         self.region_directives: BoundedCache[str, bool] = BoundedCache(8)
         self.unsupported: _StatementMemo[str | None] = _StatementMemo()
         self.literal_paths: _StatementMemo[tuple[tuple[Step, ...], ...]] = _StatementMemo()

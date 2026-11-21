@@ -307,3 +307,45 @@ def test_class_insertion_position_uses_the_engine_parse_memo() -> None:
     assert engine._parse_source(source) is engine._parse_source(source)
     with pytest.raises(RefactoringError, match="does not parse"):
         engine._find_class_insert_position("class C(:\n", "C")
+
+
+def test_cluster_helper_construction_survives_a_refresh_with_new_site_positions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Build each helper once, while resolving every replacement in the current file."""
+    import sys
+
+    from towel.source_files import source_policy_context
+    from towel.unification.extractor import HygienicExtractor
+
+    path = tmp_path / "shifted.py"
+    source = _similar_module(3)
+    engine = UnificationRefactorEngine(annotate_helpers=False, strict=False)
+    monkeypatch.setenv("TOWEL_WORKERS", "1")
+    constructions = 0
+    original = HygienicExtractor.extract_function
+
+    def counting(self, **kwargs):
+        nonlocal constructions
+        if sys._getframe(1).f_code.co_name == "_cluster_candidate_call":
+            constructions += 1
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(HygienicExtractor, "extract_function", counting)
+    run = source_policy_context(strict=False)
+    path.write_text(source)
+    first = run.run(_analyze, engine, [path])
+    assert constructions and first
+    constructions = 0
+    path.write_text("\n" + source)
+    shifted = run.run(_analyze, engine, [path])
+    assert shifted
+    assert [[(r.line_range, ast.unparse(r.node)) for r in p.replacements] for p in shifted] == [
+        [((r.line_range[0] + 1, r.line_range[1] + 1), ast.unparse(r.node)) for r in p.replacements]
+        for p in first
+    ]
+    assert constructions == 0
+    # The same engine in an independent run starts cold again.
+    path.write_text("\n\n" + source)
+    assert _analyze(engine, [path])
+    assert constructions > 0
