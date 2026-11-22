@@ -296,18 +296,22 @@ def test_a_new_helper_cannot_be_reported_as_an_input_definition(tmp_path: Path) 
     body = (
         "    t = 0\n"
         + "".join(
-            f"    g.step_{i}(x)\n    v = g.load_{i}(x)\n    t += v\n    assert g.ok(t)\n    pass\n"
+            f"    print({', '.join(str(i * 100 + j) for j in range(7))})\n"
+            f"    print({i}, t)\n    t += {i}\n    assert t >= 0\n    pass\n"
             for i in range(13)
         )
         + "    return t\n"
     )
     path = tmp_path / "two_funcs.py"
-    path.write_text(f"def f1(g, x):\n{body}def f2(g, x):\n{body}")
+    path.write_text(f"def f1():\n{body}def f2():\n{body}")
     engine = UnificationRefactorEngine(strict=True)
     _, applied, _ = engine.refactor_to_fixed_point(
         str(path), output_path=str(tmp_path / "out.py"), progress="none"
     )
-    assert applied > 0
+    assert applied == 1
+    (last_file,) = engine.last_census.not_examined
+    (helper,) = last_file.limited_functions
+    assert helper.function == "__extracted_func_0" and helper.windows > helper.limit
     report = engine.run_report
     assert report.functions_analysed == 2
     (entry,) = report.not_examined
