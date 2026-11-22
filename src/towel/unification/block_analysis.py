@@ -61,6 +61,7 @@ from . import argument_ownership
 from .argument_ownership import argument_handoff_plan
 from .extraction_policy import overlaps_protected
 from .block_signature import BlockSignature, BlockSignatureIndex, extract_block_signature
+from .bounded_cache import memoizing
 from .builtins import BUILTIN_NAMES
 from .extractor import has_complete_return_coverage, is_value_producing
 from .function_scope import code_names, function_names, identifiers, scope_moving_names
@@ -502,7 +503,7 @@ class BlockAnalysis(EngineState):
         if (
             len(blocks) == 2
             and (modules is None or len(modules) == 2)
-            and exceeds_literal_parameter_limit(blocks[0], blocks[1], self.unifier.max_parameters)
+            and self._over_literal_limit(blocks[0], blocks[1])
         ):
             self._check_over_limit_windows(blocks, modules)
             return None
@@ -546,6 +547,29 @@ class BlockAnalysis(EngineState):
             None if result is None else store_substitution(result, blocks, hygienic_renames)
         )
         return result
+
+    def _over_literal_limit(self, left: Sequence[ast.stmt], right: Sequence[ast.stmt]) -> bool:
+        """Reuse only the literal proof. Typing lookups and earlier guards still run."""
+        limit = self.unifier.max_parameters
+        if not left or len(left) != len(right) or not isinstance(left[0], ast.Expr):
+            return False
+        if self._output_origin is None or not memoizing():
+            return exceeds_literal_parameter_limit(left, right, limit)
+        try:
+            key = (self._sid(left), self._sid(right), limit)
+        except RecursionError:
+            # Computing the structural key can recurse past the short prefix the proof reads.
+            return exceeds_literal_parameter_limit(left, right, limit)
+        if key in self._over_limit_pairs:
+            return True
+        if not exceeds_literal_parameter_limit(left, right, limit):
+            return False
+        # A dense bucket can have over a million pairs. Keep their content IDs
+        # without owning ASTs, and bound even a run over many such buckets.
+        if len(self._over_limit_pairs) >= 2_000_000:
+            self._over_limit_pairs.clear()
+        self._over_limit_pairs.add(key)
+        return True
 
     def _check_over_limit_windows(
         self, blocks: Sequence[Sequence[ast.stmt]], modules: Optional[Sequence[ModuleText]]

@@ -29,6 +29,7 @@ buckets out when the projected pair count exceeds ``max_candidate_pairs``.
 import ast
 import dataclasses
 from dataclasses import dataclass
+from functools import lru_cache
 import os
 import re
 from typing import (
@@ -60,7 +61,7 @@ from .progress import DEFAULT_PROGRESS, ProgressMode, ProgressRenderer, progress
 
 from .parallel import ParallelEvaluation
 from .pair_evaluation import deferring_pair_if_proofs
-from .bounded_cache import BoundedCache
+from .bounded_cache import BoundedCache, memoizing
 from .argument_ownership import ArgumentHandoffMemo
 from .engine_state import (
     BlockSite,
@@ -689,6 +690,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
             FunctionNode, List[Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]]
         ] = WeakKeyDictionary()
         self._exact_truth_blocks: WeakKeyDictionary[ast.AST, List[ast.stmt]] = WeakKeyDictionary()
+
+    def _forget_run_lookups(self) -> None:
+        super()._forget_run_lookups()
+        self._signature_filter = lru_cache(maxsize=16_384)(quick_filter)
 
     # --- Debug helpers ---
     def _debug_reject(
@@ -1389,6 +1394,11 @@ class UnificationRefactorEngine(ParallelEvaluation):
         excluded = _buckets_over_budget(buckets, self.max_candidate_pairs, partners)
         if excluded:
             buckets = [bucket.without(excluded) for bucket in buckets]
+        accepts_signatures = (
+            self._signature_filter
+            if self._output_origin is not None and memoizing()
+            else quick_filter
+        )
         reporter = _PairingProgress(progress, partners.function_pairs)
         pairs: List[CodeBlockPair] = []
         # The changed set holds absolute paths; the analysis spells paths as
@@ -1416,7 +1426,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
                             for block2_range, block2_nodes, sig2 in buckets[j].by_key.get(key1, []):
                                 if i == j and not block1_range[1] < block2_range[0]:
                                     continue  # one function: the earlier block first, apart
-                                if not quick_filter(sig1, sig2):
+                                if not accepts_signatures(sig1, sig2):
                                     continue
                                 if is_expression_block(block1_nodes):
                                     if i == j:

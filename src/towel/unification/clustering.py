@@ -833,6 +833,21 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis, ProjectPythonV
         Returns:
             True if blocks are similar enough
         """
+        if self._output_origin is None or not memoizing():
+            return self._compare_shapes(block1, block2, threshold)
+        try:
+            key = self._sid(block1), self._sid(block2), threshold
+        except RecursionError:
+            return self._compare_shapes(block1, block2, threshold)
+        known = self._similar_shapes.get(key)
+        if known is not None:
+            return known
+        return self._similar_shapes.put(key, self._compare_shapes(block1, block2, threshold))
+
+    @staticmethod
+    def _compare_shapes(
+        block1: Sequence[ast.AST], block2: Sequence[ast.AST], threshold: float
+    ) -> bool:
         if len(block1) != len(block2):
             return False
 

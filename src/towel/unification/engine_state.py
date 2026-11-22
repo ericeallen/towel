@@ -502,6 +502,8 @@ class EngineState:
     def _forget_run_lookups(self) -> None:
         """Begin or end a run: forget where the files of the last one stood."""
         self._origins_in_run = {}
+        self._similar_shapes: BoundedCache[tuple[str, str, float], bool] = BoundedCache(32_768)
+        self._over_limit_pairs: set[tuple[str, str, int]] = set()
 
     def _module_digest(self, func: Optional[FunctionNode]) -> Optional[str]:
         """Provided by UnificationRefactorEngine."""
