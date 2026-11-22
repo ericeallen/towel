@@ -139,6 +139,18 @@ is now a site, and shows every command's output.
   whole.
 - Files Git ignores, and `build/`, `dist/`, `site-packages/` and `*.egg-info`,
   are not analyzed.
+- `preview` and `dry` help say when declined matches appear. The first naming
+  example lists helpers, an import cycle no longer suggests adding an import,
+  typed warnings show one severity label, and the formatter note names
+  `code-towel[format]`.
+- Within a run, Towel reads the project's declared Python versions once, and
+  reuses syntax, comment and block-only checks for code a rewrite left
+  unchanged. Memory stays bounded on large projects: relaxed mode follows
+  re-exports, cyclic star imports included, only to a fixed depth, and Towel
+  keeps only the declined matches it can show. Relaxed mode still takes much
+  longer than strict mode on large, repetitive code, because it applies more
+  refactorings and analyzes again after each
+  ([performance](https://github.com/ericeallen/towel/blob/v2.0/docs/PERFORMANCE.md)).
 
 ### Fixed
 
