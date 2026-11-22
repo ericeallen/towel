@@ -575,7 +575,7 @@ def left_alone_lines(
         "Places left alone, largest first:"
         if total <= LARGEST_SHOWN
         else f"The {LARGEST_SHOWN} largest of {total} places left alone"
-        " (--explain lists them all):"
+        " (--explain shows more, grouped by reason):"
     )
     lines = ["", heading]
     remaining = LARGEST_SHOWN

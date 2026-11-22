@@ -257,7 +257,10 @@ def test_five_largest_pairs_by_default_and_distinct_places_per_reason_with_expla
     located = re.compile(r"^  module_\d\.py:\d+-\d+ and module_\d\.py:\d+-\d+: ", re.MULTILINE)
     shown = located.findall(plain.stdout)
     assert len(shown) == 5
-    assert "The 5 largest of" in plain.stdout and "(--explain lists them all)" in plain.stdout
+    assert (
+        "The 5 largest of" in plain.stdout
+        and "(--explain shows more, grouped by reason)" in plain.stdout
+    )
     assert "REJECT[" not in explained.stdout + explained.stderr
     groups = re.split(r"^ +\d+  ", explained.stdout, flags=re.MULTILINE)[1:]
     assert len(groups) == (2 if lifetime_order_certified() else 1)
