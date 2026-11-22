@@ -150,6 +150,7 @@ from .pipeline import run_pipeline, AnalysisSession
 # has 21,041 and would otherwise produce 1,309,875 same-function judgments.
 MAX_SAME_FUNCTION_WINDOWS: Final = 1024
 
+_InputFunctionName = Tuple[str, Tuple[str, ...], Optional[str], str]
 _SignedBlock = Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]
 
 
@@ -749,7 +750,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
     def _forget_run_lookups(self) -> None:
         super()._forget_run_lookups()
-        self._input_function_lines: Dict[Tuple[str, str, int], int] = {}
+        self._input_function_lines: Dict[_InputFunctionName, List[int]] = {}
+        self._repeated_definitions: Dict[str, Dict[int, Tuple[_InputFunctionName, int]]] = {}
         self._pass_to_input_lines: Dict[Tuple[str, int], int] = {}
         self._signature_filter = lru_cache(maxsize=16_384)(quick_filter)
 
@@ -1421,28 +1423,46 @@ class UnificationRefactorEngine(ParallelEvaluation):
     def _locate_run_limits(
         self, functions: Sequence[FunctionArtifact], limits: Dict[str, List[LimitedFunction]]
     ) -> None:
-        """Relate shifted definitions to their input lines, even for same-named methods.
-
-        Extraction inserts fresh helper names and preserves the order of existing
-        definitions with the same name. Only input definitions have input lines.
-        """
-        if self._output_origin is None or (self._run_census is not None and not limits):
+        """Locate surviving input definitions in the current tree, including same-name siblings."""
+        first = self._run_census is None
+        if self._output_origin is None or (
+            not first and not limits and not self._repeated_definitions
+        ):
             return
         self._pass_to_input_lines = {}
-        occurrences: Dict[Tuple[str, str], int] = {}
+        grouped: Dict[_InputFunctionName, List[int]] = {}
         for f in functions:
-            if self._run_census is not None and f.file_path not in limits:
+            if first or f.file_path in limits or f.file_path in self._repeated_definitions:
+                name = (f.file_path, tuple(f.ancestry), f.class_name, f.node.name)
+                grouped.setdefault(name, []).append(f.node.lineno)
+
+        for path in {key[0] for key in grouped}:
+            self._repeated_definitions.pop(path, None)
+        for name, current_lines in grouped.items():
+            path = name[0]
+            if first:
+                self._input_function_lines[name] = current_lines
+            input_lines = self._input_function_lines.get(name, [])
+            for current, original in zip(current_lines, input_lines):
+                if path in limits:
+                    self._pass_to_input_lines[path, current] = original
+                if len(input_lines) > 1:
+                    self._repeated_definitions.setdefault(path, {})[current] = (name, original)
+
+    def _applied(self, proposal: RefactoringProposal) -> None:
+        """Remove nested definitions from their old scope when the enclosing block moves."""
+        super()._applied(proposal)
+        for replacement in proposal.replacements:
+            path = replacement.file_path or proposal.file_path
+            repeated = self._repeated_definitions.get(path)
+            if not repeated or replacement.expression is not None:
                 continue
-            name = (f.file_path, f.node.name)
-            ordinal = occurrences.get(name, 0)
-            occurrences[name] = ordinal + 1
-            key = (*name, ordinal)
-            if self._run_census is None:
-                self._input_function_lines[key] = f.node.lineno
-            elif f.file_path in limits and key in self._input_function_lines:
-                self._pass_to_input_lines[f.file_path, f.node.lineno] = self._input_function_lines[
-                    key
-                ]
+            first, last = replacement.line_range
+            # A nested def starts strictly after the compound statement that
+            # contains it. Replacing a one-line function's body keeps its def.
+            for line in [line for line in repeated if first < line <= last]:
+                name, original = repeated.pop(line)
+                self._input_function_lines[name].remove(original)
 
     def find_block_pairs(
         self,

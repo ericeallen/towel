@@ -312,3 +312,31 @@ def test_a_new_helper_cannot_be_reported_as_an_input_definition(tmp_path: Path) 
     assert report.functions_analysed == 2
     (entry,) = report.not_examined
     assert [(f.function, f.line) for f in entry.limited_functions] == [("f1", 1), ("f2", 69)]
+
+
+@pytest.mark.parametrize("inside_setup", [False, True], ids=["method", "same-scope"])
+def test_moving_a_nested_definition_preserves_the_other_input_lines(
+    tmp_path: Path, inside_setup: bool
+) -> None:
+    """Cap census re-review 4: extracting a def inside an if must not renumber another run."""
+    guarded = (
+        "    if flag:\n        def run(v):\n            w = v + 10\n            return w * 20\n"
+        "        a = run(x + 1)\n        b = run(a + 2)\n        sink.emit(a, b, x)\n"
+    )
+    setup = f"def setup_one(flag, sink, x):\n{guarded}\ndef setup_two(flag, sink, x):\n{guarded}"
+    before_run = setup if inside_setup else setup + "class Builder:\n"
+    path = tmp_path / "shifted.py"
+    path.write_text(
+        before_run
+        + "    def run(g, x):\n"
+        + "".join(f"        g.send({' + '.join(['x'] * (3 * i + 1))})\n" for i in range(60))
+    )
+    engine = UnificationRefactorEngine(strict=False)
+    _, applied, _ = engine.refactor_to_fixed_point(
+        str(path), output_path=str(tmp_path / "out.py"), progress="none"
+    )
+    assert applied > 0
+    (entry,) = engine.run_report.not_examined
+    assert [(f.function, f.line) for f in entry.limited_functions] == [
+        ("run", before_run.count("\n") + 1)
+    ]
