@@ -183,6 +183,7 @@ class RunReport:
     left_alone: Tuple[LeftAlone, ...] = ()
     not_examined: Tuple[NotExamined, ...] = ()
     """Per file the first analysis read, the code no candidate is drawn from (``NotExamined``)."""
+    resource_limit_reached: bool = False
 
 
 @dataclass(frozen=True)
@@ -227,6 +228,7 @@ class FixedPointDrivers(Materialization):
 
     # Proposals the last run dropped because the checker could not run, by
     # identity, and the last reason it gave.
+    _resource_limit_reached: bool = False
     preview_incomplete: bool = False
     _run_applied: Tuple[RefactoringProposal, ...] = ()
     _unchecked: FrozenSet[str] = frozenset()
@@ -278,6 +280,8 @@ class FixedPointDrivers(Materialization):
                 ),
                 None,
             ),
+            resource_limit_reached=self._resource_limit_reached
+            or self.import_graph.resource_budget.exhausted,
             files_analysed=census.files,
             functions_analysed=census.functions,
             skipped_files=census.skipped,
@@ -354,6 +358,7 @@ class FixedPointDrivers(Materialization):
         return len(self._unchecked)
 
     def _begin_counting_checker_failures(self) -> None:
+        self._resource_limit_reached = False
         self.preview_incomplete = False
         self._run_applied = ()
         self._unchecked, self._unchecked_reason = frozenset(), ""
@@ -1039,6 +1044,7 @@ class FixedPointDrivers(Materialization):
                 self._output_origin = None
                 self._unwritable_in_place = frozenset()
                 self._forget_run_lookups()
+                self._resource_limit_reached = self.import_graph.resource_budget.exhausted
                 self.import_graph.begin_run()
 
     def _apply_until_fixed_point(

@@ -432,6 +432,8 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
                             work = _PairWork(
                                 self, all_functions, class_infos, block_pairs, frozenset(probe)
                             )
+                            if not self.strict:
+                                self.import_graph.resource_budget.share_before_fork()
                             executor = ProcessPoolExecutor(
                                 max_workers=workers,
                                 mp_context=multiprocessing.get_context("fork"),

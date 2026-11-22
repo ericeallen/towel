@@ -34,15 +34,17 @@ from weakref import WeakKeyDictionary
 
 from ..analysis_sources import (
     ParserConfiguration,
+    decoding_is_pure,
     parse_analysis_source,
     parser_configuration,
     parsing_is_pure,
 )
-from ..source_text import try_read_source
+from ..source_text import decode_source
 from .assignment_analyzer import own_scope_bindings
-from .bounded_cache import BoundedCache
+from .bounded_cache import BoundedCache, memoizing
 from .import_graph import ImportGraphCache
-from .resource_reexports import reachable_constructors
+from .resource_budget import ResourceBudget, WorkLimitReached
+from .resource_reexports import ReexportSearch, reachable_constructors
 from .module_bindings import dotted_name, import_origin
 from .models import is_generated_helper_name
 from .parameters import parameter_nodes
@@ -142,12 +144,15 @@ class _Resolution:
         depth: int = 0,
         *,
         deferred: bool = False,
+        budget: Optional[ResourceBudget] = None,
     ) -> FrozenSet[str]:
         if depth >= 16:
             return frozenset()
         head, _, tail = spelling.partition(".")
         current = self.scopes[scope]
         events = current.bindings.get(head, ())
+        if budget is not None:
+            budget.take(1 + len(events))
         earlier = [event for event in events if event.position < position]
         # A definite assignment supersedes previous imports; a conditional one
         # retains both possibilities. A parameter/local never falls through to
@@ -168,19 +173,27 @@ class _Resolution:
             targets = (
                 frozenset({event.spelling})
                 if event.imported
-                else self.origins(event.spelling, scope, event.position, depth + 1)
+                else self.origins(event.spelling, scope, event.position, depth + 1, budget=budget)
             )
+            if budget is not None:
+                budget.take(len(targets))
             found.update(f"{target}.{tail}" if tail else target for target in targets)
         if earlier:
             return frozenset(found)
         if head in current.globals and scope:
-            return self.origins(spelling, 0, (10**9, 0), depth + 1, deferred=True)
+            return self.origins(spelling, 0, (10**9, 0), depth + 1, deferred=True, budget=budget)
         if head in current.nonlocals and current.parent is not None:
-            return self.origins(spelling, current.parent, (10**9, 0), depth + 1, deferred=True)
+            return self.origins(
+                spelling, current.parent, (10**9, 0), depth + 1, deferred=True, budget=budget
+            )
         if events or head in current.parameters:
             return frozenset(found)
         if current.parent is not None:
-            return self.origins(spelling, current.parent, (10**9, 0), depth + 1, deferred=True)
+            return self.origins(
+                spelling, current.parent, (10**9, 0), depth + 1, deferred=True, budget=budget
+            )
+        if budget is not None:
+            budget.take(len(current.stars))
         found.update(f"{prefix}{spelling}" for prefix in current.stars)
         if head == "open":
             found.add(f"builtins.{spelling}")
@@ -345,6 +358,21 @@ class _StageAnswers:
     graph: ImportGraphCache
     root: Path
     answers: BoundedCache[_AnswerKey, FrozenSet[str]]
+    searches: dict[ParserConfiguration, ReexportSearch] = field(default_factory=dict)
+    # A candidate asks about the same importer for each of its calls.
+    scopes: BoundedCache[str, tuple[Path, Path]] = field(default_factory=lambda: BoundedCache(2048))
+
+    def remember(
+        self, key: _AnswerKey, scope: Path, search: ReexportSearch, answer: FrozenSet[str]
+    ) -> FrozenSet[str]:
+        self.searches[key[2]] = search
+        search.known.put((scope, key[1]), answer)
+        # The release bypassed the per-importer cache if an export's parse
+        # could warn. A terminal proof can skip such an export. In that case
+        # revalidate the original layout even for this same importer.
+        if not search.layout or search.terminals.pure_providers:
+            self.answers.put(key, answer)
+        return answer
 
 
 _STAGE_ANSWERS: ContextVar[Optional[_StageAnswers]] = ContextVar("resource_answers", default=None)
@@ -369,26 +397,68 @@ class ResourceImports:
     cache: ImportGraphCache
 
     def follow(self, origins: FrozenSet[str]) -> FrozenSet[str]:
-        """The recognized constructors reachable from these call origins."""
+        """Possible constructors, or _MAY_BE_RESOURCE when the run exhausts its work limit."""
         if not origins or origins <= _RECOGNIZED:
             return origins
         stage = _STAGE_ANSWERS.get()
-        key = (self.file_path, origins, parser_configuration())
-        if stage is not None and stage.graph is not self.cache:
+        configuration = parser_configuration()
+        if stage is not None and (stage.graph is not self.cache or not memoizing()):
             stage = None
-        if stage is not None:
+        if stage is None:
+            file = Path(self.file_path).resolve()
+        else:
+            # This is the release's per-importer, per-analysis cache. A new
+            # importer can share the chart only after verifying its layout.
+            key = (self.file_path, origins, configuration)
             previous = stage.answers.get(key)
             if previous is not None:
                 return previous
+            scopes = stage.scopes.get(self.file_path)
+            if scopes is None:
+                lexical = Path(self.file_path).absolute()
+                file = lexical.resolve()
+                scopes = (file, self.cache.program_root_for(file))
+                if file == lexical and file.is_relative_to(stage.root):
+                    stage.scopes.put(self.file_path, scopes)
+                else:
+                    # An external link can redirect the importer itself.
+                    stage = None
+            file, program = scopes
+            scope = file.parent if any(origin.startswith(".") for origin in origins) else program
+        if self.cache.resource_budget.exhausted:
+            return _MAY_BE_RESOURCE
+        # Take ownership until completion. No interrupted or impure lookup
+        # may leave a partially expanded search for the next caller.
+        search = stage.searches.pop(configuration, None) if stage is not None else None
+        if stage is not None and search is not None:
+            try:
+                current = search.layout.unchanged()
+            except WorkLimitReached:
+                return _MAY_BE_RESOURCE
+            if current:
+                previous = search.known.get((scope, origins))
+                if previous is not None:
+                    return stage.remember(key, scope, search, previous)
+            else:
+                stage.answers.clear()
+                stage.searches.clear()
+                search = None
+        if search is None:
+            search = ReexportSearch(self.cache, _RECOGNIZED, stage.root if stage else None)
 
         def exported(file: Path, name: str) -> FrozenSet[str]:
             nonlocal stage
-            source = try_read_source(file)
-            if source is None:
+            try:
+                self.cache.resource_budget.take(1 + file.stat().st_size // 1024)
+                data = file.read_bytes()
+                source = decode_source(data)
+            except (OSError, UnicodeError, SyntaxError):
                 stage = None
                 return frozenset()
             if stage is not None and (
-                not file.is_relative_to(stage.root) or not parsing_is_pure(source)
+                not file.is_relative_to(stage.root)
+                or not decoding_is_pure(data)
+                or not parsing_is_pure(source)
             ):
                 stage = None
             try:
@@ -396,13 +466,29 @@ class ResourceImports:
             except SyntaxError:
                 return frozenset()
             resolution = memoized_per_node(_RESOLUTIONS, module, _resolution)
-            return resolution.origins(name, 0, (10**9, 0), deferred=True)
+            return resolution.origins(
+                name, 0, (10**9, 0), deferred=True, budget=self.cache.resource_budget
+            )
 
-        found = reachable_constructors(self.file_path, origins, self.cache, _RECOGNIZED, exported)
-        return stage.answers.put(key, found) if stage is not None else found
+        try:
+            found = reachable_constructors(
+                file, origins, self.cache, _RECOGNIZED, exported, search=search
+            )
+        except WorkLimitReached:
+            return _MAY_BE_RESOURCE
+        if stage is not None and search.shareable:
+            return stage.remember(key, scope, search, found)
+        return found
 
 
 _RECOGNIZED = RESOURCE_CONSTRUCTORS | WEAK_REFERENCE_CONSTRUCTORS
+
+
+class _UnknownResources(frozenset[str]):
+    """Any constructor is possible. Even a with statement may lose a weak referent."""
+
+
+_MAY_BE_RESOURCE = _UnknownResources(_RECOGNIZED)
 
 
 _RESOLUTIONS: WeakKeyDictionary[ast.AST, _Resolution] = WeakKeyDictionary()
@@ -625,6 +711,13 @@ def resource_guard(
                 refusal=(
                     f"This block calls a generated helper (line {node.lineno}) whose resource ownership "
                     "Towel cannot preserve through another helper. Keep this call in place, or use `--strict`."
+                )
+            )
+        if origins is _MAY_BE_RESOURCE:
+            return ResourceGuard(
+                refusal=(
+                    f"This call (line {node.lineno}) may be a resource. Towel reached its re-export "
+                    "work limit and cannot prove that the resource stays alive in a helper."
                 )
             )
         resource = bool(origins & RESOURCE_CONSTRUCTORS)

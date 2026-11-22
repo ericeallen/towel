@@ -63,10 +63,22 @@ about spaced relative imports of ``lazy`` (Parser/action_helpers.c). The lexical
 guard excludes that token before permitting reuse. Unknown parsers stay uncached.
 """
 
-_CODING_COOKIE = re.compile(rb"coding[:=]\s*([-\w.]+)", re.ASCII)
+_CODING_COOKIE = re.compile(rb"coding[:=][ \t]*([-\w.]+)", re.ASCII)
 _WARNING_FREE_ENCODINGS = frozenset(
     {b"utf-8", b"utf8", b"utf-8-sig", b"ascii", b"latin-1", b"iso-8859-1", b"iso-latin-1"}
 )
+
+
+def decoding_is_pure(source: bytes) -> bool:
+    """Whether a speculative source read can decode without calling an arbitrary codec."""
+    for line in source.split(b"\n", 2)[:2]:
+        cookie = _CODING_COOKIE.search(line)
+        if (
+            cookie is not None
+            and cookie[1].lower().replace(b"_", b"-") not in _WARNING_FREE_ENCODINGS
+        ):
+            return False
+    return True
 
 
 def _cacheable_text(source: Union[str, bytes]) -> Optional[str]:
@@ -79,13 +91,8 @@ def _cacheable_text(source: Union[str, bytes]) -> Optional[str]:
     if not _KNOWN_WARNING_SITES or type(source) not in (str, bytes):
         return None
     if isinstance(source, bytes):
-        for line in source.split(b"\n", 2)[:2]:
-            cookie = _CODING_COOKIE.search(line)
-            if (
-                cookie is not None
-                and cookie[1].lower().replace(b"_", b"-") not in _WARNING_FREE_ENCODINGS
-            ):
-                return None
+        if not decoding_is_pure(source):
+            return None
         try:
             text = decode_source(source)
         except (SyntaxError, UnicodeError, LookupError):
