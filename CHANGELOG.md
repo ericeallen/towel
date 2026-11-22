@@ -79,7 +79,7 @@ is now a site, and shows every command's output.
   take in equal literals, and a run that shares nothing between modules says
   what each pair lacked.
 - When a function has more than 1,024 blocks that could match elsewhere in
-  its own body, Towel searches the first 1,024 in source order. The run
+  its own body, Towel retains up to 1,024 for comparison. The run
   reports the limit. `--explain` and JSON locate each affected function.
   All its blocks still participate in comparisons with other functions.
 - Every run reports what it read (`Analysed 2 Python files (4 functions)`) and

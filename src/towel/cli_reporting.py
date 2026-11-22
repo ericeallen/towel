@@ -396,8 +396,8 @@ def not_examined_lines(
         for function in entry.limited_functions:
             lines.append(
                 f"{path}:{function.line}: {function.function} has {function.windows:,} similar "
-                f"blocks of consecutive statements. Towel considered the first {function.limit:,} in source order "
-                "when looking for repetition inside this function."
+                f"blocks of consecutive statements. Towel retained {function.limit:,} "
+                "for comparison inside this function."
             )
     return lines
 

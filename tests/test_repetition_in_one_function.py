@@ -238,3 +238,24 @@ def test_cap_restricts_only_pairs_inside_one_function(
     # a capped function could still evict a bucket needed by two other functions.
     engine.max_candidate_pairs = len(expected)
     assert engine.find_block_pairs(functions, progress="none") == expected
+
+
+def test_long_overlapping_windows_leave_room_for_a_short_repetition(tmp_path: Path) -> None:
+    """Cap census low 1: long windows without a retained partner can hide a usable extraction."""
+    lines = [f"    g.step({', '.join(str(i * 100 + j) for j in range(7))})" for i in range(80)]
+    repeated = [
+        "    g.start_alpha(99, 98, 97)",
+        "    g.mark_beta(96, 95, 94)",
+        "    g.finish_omega(93, 92, 91)",
+    ]
+    for start in (28, 36):
+        lines[start : start + 3] = repeated
+    path = tmp_path / "build.py"
+    path.write_text("def build(g):\n" + "\n".join(lines) + "\n")
+    engine = UnificationRefactorEngine(strict=True)
+    output, applied, _ = engine.refactor_to_fixed_point(
+        str(path), output_path=str(tmp_path / "out.py"), progress="none", max_iterations=1
+    )
+    assert applied == 1
+    assert output.count("g.mark_beta(") == 1
+    assert output.count("extracted_func_0(") == 3

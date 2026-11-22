@@ -141,7 +141,7 @@ def test_census_locates_the_windows_left_out_of_one_function(
         {"function": "build", "line": 4, "windows": 23, "limit": 5}
     ]
     assert any(
-        "build" in line and "23" in line and "first 5" in line
+        "build" in line and "23" in line and "retained 5" in line
         for line in not_examined_lines(report, relative, nothing_found=False, explain=True)
     )
     assert any(

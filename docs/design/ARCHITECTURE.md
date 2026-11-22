@@ -103,8 +103,10 @@ flowchart TD
    out the largest buckets of similar blocks with a warning naming them
    (`_buckets_over_budget`). Within a function, only windows with a disjoint
    window of the same statement-type sequence can pair. If there are more
-   than 1,024 such windows, the engine retains the first 1,024 in source
-   order and records the limit in the input census. The pair-budget
+   than 1,024 such windows, the engine starts with the first 1,024 in source
+   order. It keeps every disjoint pair in that prefix and fills the remaining
+   slots with eligible windows in order of their ending lines. The run census
+   records limits encountered on any pass, after pair-budget exclusions. The pair-budget
    projection counts only retained pairs inside the function. Between
    functions, all windows participate. A function pairs with others in
    its own module unless `cross_module_helpers`

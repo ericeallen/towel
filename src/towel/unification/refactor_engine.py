@@ -147,7 +147,7 @@ from .pipeline import run_pipeline, AnalysisSession
 
 # Input maxima for windows with a disjoint same-bucket partner: tabulate 208,
 # toolz 495, boltons 51, croniter 897. NetworkX's les_miserables_graph alone
-# has 21,041. Keeping the first 1,024 cuts its judged pairs from 1,309,875 to 56.
+# has 21,041 and would otherwise produce 1,309,875 same-function judgments.
 MAX_SAME_FUNCTION_WINDOWS: Final = 1024
 
 _SignedBlock = Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]
@@ -262,17 +262,12 @@ def _body_lines(function: FunctionNode) -> int:
     return (last.end_lineno or last.lineno) - first.lineno + 1
 
 
-def _limit_same_function(
-    bucket: _FunctionBuckets,
-) -> Optional[Tuple[_FunctionBuckets, Counter[BlockBucketKey]]]:
-    """The first eligible statement windows in source order, only when a function exceeds the limit.
+def _pairable_windows(bucket: _FunctionBuckets) -> List[int]:
+    """Indices with a disjoint statement window in the same bucket.
 
-    A window can pair within its function only if a window in the same
-    bucket ends before it starts or starts after it ends. The two extreme
-    endpoints settle this for every window without forming a single pair.
+    The earliest end and latest start settle this for every window without
+    forming a single pair.
     """
-    if len(bucket.blocks) <= MAX_SAME_FUNCTION_WINDOWS:
-        return None
     bounds = {
         key: (min(block[0][1] for block in members), max(block[0][0] for block in members))
         for key, members in bucket.by_key.items()
@@ -284,14 +279,34 @@ def _limit_same_function(
             first_end, last_start = bounds[key]
             if first_end < span[0] or span[1] < last_start:
                 eligible.append(index)
+    return eligible
+
+
+def _limit_same_function(
+    bucket: _FunctionBuckets,
+) -> Optional[Tuple[_FunctionBuckets, Counter[BlockBucketKey]]]:
+    """Bound windows per function while preserving every pair in the initial source prefix."""
+    if len(bucket.blocks) <= MAX_SAME_FUNCTION_WINDOWS:
+        return None
+    eligible = _pairable_windows(bucket)
     if len(eligible) <= MAX_SAME_FUNCTION_WINDOWS:
         return None
     # Break equal line-span ties by deterministic syntax-tree traversal. Keep
     # the original enumeration order among the selected windows so surviving
     # proposals have the same priority as in the unrestricted search.
     by_source = sorted(eligible, key=lambda index: bucket.blocks[index][0])
-    kept = sorted(by_source[:MAX_SAME_FUNCTION_WINDOWS])
-    return _bucketed([bucket.blocks[index] for index in kept]), Counter(
+    prefix = by_source[:MAX_SAME_FUNCTION_WINDOWS]
+    within_prefix = _pairable_windows(_bucketed([bucket.blocks[i] for i in prefix]))
+    kept = {prefix[i] for i in within_prefix}
+    if len(kept) < len(prefix):
+        # A long window can occupy a slot even though its only possible partner
+        # starts past the cutoff. Spend those slots on the windows that finish
+        # earliest, so short repetitions farther along the function can pair.
+        by_end = sorted(
+            (i for i in by_source if i not in kept), key=lambda i: bucket.blocks[i][0][1]
+        )
+        kept.update(by_end[: len(prefix) - len(kept)])
+    return _bucketed([bucket.blocks[index] for index in sorted(kept)]), Counter(
         bucket.block_keys[index] for index in eligible
     )
 
@@ -1438,8 +1453,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         The two functions share a file unless ``cross_module_helpers`` is
         set, when they may be anywhere in the analysis. Two blocks of one
         function pair when they share no line, the earlier one first. Above
-        MAX_SAME_FUNCTION_WINDOWS, only the first eligible windows in source
-        order participate in this search. Each can still pair with any
+        MAX_SAME_FUNCTION_WINDOWS, a bounded selection of eligible windows
+        participates in this search. Each can still pair with any
         eligible window of another function.
 
         Args:

@@ -61,8 +61,8 @@ Towel compares blocks within each file pairwise, so a few large modules full
 of near-identical methods cost more than many small ones. `--min-lines` raises
 the smallest block considered, and `--max-pairs` caps the pairs one analysis
 compares, leaving out the largest groups of similar blocks with a warning.
-Within a single function, Towel searches the first 1,024 blocks that could
-match another block of the function, in source order. This bounds the work on
+Within a single function, Towel retains up to 1,024 blocks that could
+match another block of the function. This bounds the work on
 long runs of similar statements. Use `--explain` to locate a limited search.
 
 After each change, Towel analyses the changed files again, because one
