@@ -356,25 +356,21 @@ def not_examined_lines(
     report: "RunReport", relative: Callable[[str], str], *, nothing_found: bool, explain: bool
 ) -> List[str]:
     """Qualify an empty search once. With --explain, locate every coverage limit."""
-    count = len(report.not_examined)
+    structural = [
+        entry
+        for entry in report.not_examined
+        if entry.module_statements or entry.early_return_guards
+    ]
     limited = sum(len(entry.limited_functions) for entry in report.not_examined)
-    if limited:
-        summary = (
-            f"Towel limited its search for repeated blocks inside {_plural(limited, 'function')}"
-        )
-        if not explain:
-            return [summary + ". Use --explain to see what was not examined."]
-    else:
-        if not count or not (nothing_found or explain):
-            return []
+    lines: List[str] = []
+    if structural and (nothing_found or explain or limited):
+        count = len(structural)
         summary = (
             f"{_plural(count, 'file')} {'holds' if count == 1 else 'hold'} module-level code "
             "or early-return guards that Towel does not examine"
         )
-        if not explain:
-            return [summary + "; --explain lists them."]
-    lines = [summary + "."]
-    for entry in report.not_examined:
+        lines.append(summary + ("." if explain else "; --explain lists them."))
+    for entry in structural if explain else ():
         path = relative(entry.path)
         if entry.module_statements:
             lines.append(
@@ -388,6 +384,15 @@ def not_examined_lines(
                 f"{_plural(entry.early_return_guards, 'guard')}. "
                 "Extract the shared condition into a function, keeping each return in its caller."
             )
+    if limited:
+        summary = (
+            f"Towel limited its search for repeated blocks inside {_plural(limited, 'function')}."
+        )
+        lines.append(
+            summary if explain else summary + " Use --explain to see what was not examined."
+        )
+    for entry in report.not_examined if explain and limited else ():
+        path = relative(entry.path)
         for function in entry.limited_functions:
             lines.append(
                 f"{path}:{function.line}: {function.function} has {function.windows:,} similar "

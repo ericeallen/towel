@@ -202,3 +202,46 @@ def test_a_declined_match_is_a_finding_for_the_coverage_summary(tmp_path: Path) 
     assert "with similar code and extracted none." in result.stdout
     assert "module-level code or early-return guards" not in result.stdout
     assert "Module-level code is not examined:" not in result.stdout
+
+
+@pytest.mark.parametrize("explain", [False, True])
+def test_mixed_coverage_limits_have_their_own_headings(tmp_path: Path, explain: bool) -> None:
+    """Cap census 3: the cap and the unrelated script's code both qualify the search."""
+    many = tmp_path / "many.py"
+    many.write_text(
+        "def f(g, x):\n"
+        + "".join(f"    g.send({' + '.join(['x'] * (3 * i + 1))})\n" for i in range(60))
+    )
+    (tmp_path / "script.py").write_text(
+        "a = 1\nb = 2\nc = a + b\n"
+        "def guard(x):\n    if x < 0:\n        return None\n"
+        "    if x > 10:\n        return None\n    return x\n"
+    )
+    result = invoke(
+        [
+            "preview",
+            str(tmp_path),
+            "--strict",
+            "--no-types",
+            "--no-format",
+            "--progress",
+            "none",
+            *(["--explain"] if explain else []),
+        ]
+    )
+    assert result.status == 0, result
+    lines = result.stdout.splitlines()
+    module = next(
+        i for i, line in enumerate(lines) if line.startswith("1 file holds module-level code")
+    )
+    limited = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("Towel limited its search for repeated blocks inside 1 function.")
+    )
+    if explain:
+        assert lines[module + 1].startswith("Module-level code is not examined: script.py has 3")
+        assert lines[module + 2].startswith(
+            "Early-return guards are not examined on their own: script.py has 2"
+        )
+        assert lines[limited + 1].startswith("many.py:1: f has 1,091")
