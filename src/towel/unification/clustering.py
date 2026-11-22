@@ -52,6 +52,9 @@ from .block_analysis import (
     expression_arguments_outlive_a_handler,
 )
 from .block_comments import call_argument_lines, directive_conflict
+from .bounded_cache import memoizing
+from .cluster_helpers import BuiltClusterHelper
+from .run_syntax import run_syntax
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .unsupported_syntax import unsupported_syntax
@@ -115,7 +118,7 @@ from .placement import HelperPlacement
 from .block_analysis import BlockAnalysis
 from .function_index import FunctionIndex
 from .function_scope import function_names, identifiers
-from .annotation_wiring import declared_oldest_python
+from .annotation_wiring import ProjectPythonVersions
 from .parameters import is_generated_parameter
 from .models import BlockBindingSnapshot, ClusterContext, HelperTemplate, encloses
 
@@ -140,7 +143,7 @@ def _lines_of(line_range: Tuple[int, int]) -> range:
     return range(line_range[0], line_range[1] + 1)
 
 
-class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
+class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis, ProjectPythonVersions):
     """Clustering methods of the engine; see the module docstring."""
 
     def _builtin_parameter_positions(
@@ -229,35 +232,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         # not identify the meanings of the existing helper's
         # arguments. Only reuse the helper when extraction from
         # this substitution produces the same body/signature.
-        try:
-            candidate_helper, candidate_order = HygienicExtractor().extract_function(
-                template_block=pair.block1_nodes,
-                source_parameters=template.source_parameters,
-                substitution=subst2,
-                free_variables=template.free_vars,
-                enclosing_names=template.enclosing_names,
-                is_value_producing=template.is_value_producing,
-                return_variables=list(template.return_variables),
-                global_decls=template.globals_to_declare or None,
-                nonlocal_decls=template.nonlocals_to_declare or None,
-                function_name=template.func_def.name,
-                oldest_python=min(
-                    declared_oldest_python(
-                        self._origin_in_run(path), project_root=self._project_root_in_run(path)
-                    )
-                    or (3, 11)
-                    for path in (pair.file_path, pair.file_path2, candidate.file_path)
-                ),
-            )
-        except UnsupportedExtraction as error:
-            self._debug_decline_site(
-                RejectReason.UNSUPPORTED_EXTRACTION,
-                pair,
-                candidate.function,
-                candidate.nodes,
-                error,
-            )
-            return None
+        oldest_python = min(
+            self._declared_python_for(path) or (3, 11)
+            for path in (pair.file_path, pair.file_path2, candidate.file_path)
+        )
         policy = self._value_policy(
             (
                 (pair.function1_node, pair.block1_nodes, pair.scope_analyzer1, available[0]),
@@ -265,14 +243,49 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             ),
             cluster_renames,
         )
-        candidate_order = reorder_eligible_thunk_parameters(
-            candidate_helper, subst2, candidate_order, policy
-        )
-        inline_leading_thunks(candidate_helper, subst2, candidate_order, policy)
-        if (
-            candidate_order != template.param_order
-            or canonical_dump(candidate_helper) != template.func_def_dump
-        ):
+        run = run_syntax.get()
+        memo = run.cluster_helpers if run is not None and memoizing() else None
+        key = memo.key(template, candidate.nodes, subst2, policy, oldest_python) if memo else None
+        built = memo.built.get(key) if memo is not None and key is not None else None
+        if built is None:
+            try:
+                candidate_helper, candidate_order = HygienicExtractor().extract_function(
+                    template_block=pair.block1_nodes,
+                    source_parameters=template.source_parameters,
+                    substitution=subst2,
+                    free_variables=template.free_vars,
+                    enclosing_names=template.enclosing_names,
+                    is_value_producing=template.is_value_producing,
+                    return_variables=list(template.return_variables),
+                    global_decls=template.globals_to_declare or None,
+                    nonlocal_decls=template.nonlocals_to_declare or None,
+                    function_name=template.func_def.name,
+                    oldest_python=oldest_python,
+                )
+            except UnsupportedExtraction as error:
+                self._debug_decline_site(
+                    RejectReason.UNSUPPORTED_EXTRACTION,
+                    pair,
+                    candidate.function,
+                    candidate.nodes,
+                    error,
+                )
+                return None
+            candidate_order = reorder_eligible_thunk_parameters(
+                candidate_helper, subst2, candidate_order, policy
+            )
+            inline_leading_thunks(candidate_helper, subst2, candidate_order, policy)
+            built = BuiltClusterHelper(
+                canonical_dump(candidate_helper),
+                tuple(candidate_order.items()),
+                frozenset(subst2.params_used_as_callee),
+                frozenset(subst2.inlined_parameters),
+            )
+            if memo is not None and key is not None:
+                memo.built[key] = built
+        else:
+            built.restore_flags(subst2)
+        if dict(built.order) != template.param_order or built.body != template.func_def_dump:
             return None
         if has_impure_eager_parameters(subst2, available):
             return None

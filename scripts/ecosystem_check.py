@@ -3768,7 +3768,7 @@ PRE_EXISTING = re.compile(
 )
 NAMES_ANY = re.compile(
     # The wording before and after imports were also asked about directly.
-    r"^warning: (\d+) (?:of these error\(s\)|import\(s\) or error\(s\)) leave a name the "
+    r"^(?:Warning: )?(?:warning: )?(\d+) (?:of these error\(s\)|import\(s\) or error\(s\)) leave a name the "
     r"checker cannot type",
     re.M,
 )
@@ -3794,7 +3794,9 @@ def _count_of(found: "Optional[re.Match[str]]") -> int:
 
 
 UNVERIFIABLE = _counted_reason("not verifiable: its file holds a name the type checker cannot type")
-UNLOOKED = re.compile(r"^warning: the type checker does not look at (\d+) region\(s\)", re.M)
+UNLOOKED = re.compile(
+    r"^(?:Warning: )?(?:warning: )?the type checker does not look at (\d+) region\(s\)", re.M
+)
 UNLOOKED_DECLINED = _counted_reason(
     "not verifiable: the type checker does not look at the code it changes"
 )

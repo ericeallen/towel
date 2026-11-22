@@ -97,7 +97,7 @@ from .semantic_safety import (
 )
 from .clustering import Clustering
 from .reuse import ExistingFunctionReuse
-from .annotation_wiring import HelperAnnotationWiring, declared_oldest_python
+from .annotation_wiring import HelperAnnotationWiring
 from .annotations import complete_with_any
 from .placement import HelperPlacement, _helper_reads_class_private_names
 from .profitability import helper_rejection
@@ -1704,10 +1704,7 @@ class PairEvaluation(
                 # Use hygienic double-underscore name; engine will prefix underscore for methods.
                 function_name="__extracted_func",
                 oldest_python=min(
-                    declared_oldest_python(
-                        self._origin_in_run(path), project_root=self._project_root_in_run(path)
-                    )
-                    or (3, 11)
+                    self._declared_python_for(path) or (3, 11)
                     for path in (pair.file_path, pair.file_path2)
                 ),
             )

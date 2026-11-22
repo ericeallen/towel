@@ -63,3 +63,31 @@ def test_comment_stays_with_class_after_real_extraction(tmp_path: Path) -> None:
     assert proposals
     rendered = engine.apply_refactoring(str(path), proposals[0])
     assert "# Exceptions\nclass Error(Exception):" in rendered
+
+
+def test_class_comment_stays_attached_after_expression_extraction(tmp_path: Path) -> None:
+    """Polish 4: a real helper is inserted before the class comment even on 3.14+."""
+    from tests.test_expression_extraction import CONDITION
+
+    comment = "# Exceptions\nclass Error(Exception):"
+    source = (
+        f"import sys\n\n{comment}\n    pass\n\n"
+        f"def can_post(member, now):\n    if {CONDITION}:\n        return True\n    return False\n\n"
+        f"def visible(members, now):\n    return [member for member in members if {CONDITION}]\n"
+    )
+    path = tmp_path / "example.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(min_lines=3, annotate_helpers=False)
+    engine.refactor_to_fixed_point(str(path))
+    rendered = path.read_text()
+    helper, error, first, second = ast.parse(rendered).body[1:]
+    assert isinstance(helper, ast.FunctionDef) and helper.name.startswith("__extracted_func")
+    assert isinstance(error, ast.ClassDef) and error.name == "Error"
+    for caller in (first, second):
+        assert any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == helper.name
+            for node in ast.walk(caller)
+        )
+    assert comment in rendered

@@ -74,6 +74,22 @@ def test_help_fits_the_terminal(command: List[str], monkeypatch: pytest.MonkeyPa
     assert not long_lines, long_lines
 
 
+def test_first_naming_example_lists_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Polish 4: the first naming command works without waiting for a reply."""
+    assert "towel rename-helpers src/ --list" in _help([], monkeypatch)
+
+
+@pytest.mark.parametrize("command", ["dry", "preview"])
+def test_help_explains_declines_after_changes(
+    command: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Polish 4: successful runs omit declined pairs unless asked to explain."""
+    text = " ".join(_help([command], monkeypatch).split())
+    assert "after applying changes, omit declined pairs" in text
+    if command == "preview":
+        assert "add --explain to include declined pairs" in text
+
+
 def test_help_links_to_pages_an_installed_wheel_can_open(monkeypatch: pytest.MonkeyPatch) -> None:
     """Documentation audit A15: the wheel has no repository-relative Markdown guides."""
     pages = set()

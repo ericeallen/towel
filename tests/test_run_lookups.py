@@ -233,3 +233,74 @@ def test_the_run_lookups_keep_nothing_when_memoization_is_off(
     with memoization_disabled():
         assert engine.analyze_directory(str(package), progress="none")
     assert max(calls.values()) > 1, calls
+
+
+def test_extraction_reads_one_requirement_per_project_and_per_analysis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Polish 4: pairs and clustered copies share one read, even on a reused engine."""
+    from towel.declared_python import declared_requirement
+    from towel.unification import annotation_wiring
+    from tests.test_synthetic_positional_only import SOURCE
+
+    package = _project(tmp_path, {"left": 1, "right": 1})
+    for module in ("left", "right"):
+        (package / f"{module}.py").write_text(SOURCE)
+    reads: list[Path] = []
+
+    def read(root: Path) -> str | None:
+        reads.append(root)
+        return declared_requirement(root)
+
+    monkeypatch.setattr(annotation_wiring, "declared_requirement", read)
+    engine = UnificationRefactorEngine(
+        settings=SERIAL, skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False
+    )
+    for floor in ("3.7", "3.10"):
+        (tmp_path / "pyproject.toml").write_text(f'[project]\nrequires-python = ">={floor}"\n')
+        reads.clear()
+        proposals = engine.analyze_directory(str(package), progress="none")
+        assert {Path(p.file_path).stem for p in proposals} == {"left", "right"}
+        assert reads == [tmp_path.resolve()]
+        for proposal in proposals:
+            rendered = ast.parse(engine.apply_refactoring(proposal.file_path, proposal))
+            helper = next(
+                node
+                for node in rendered.body
+                if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func")
+            )
+            assert bool(helper.args.posonlyargs) == (floor == "3.10")
+        assert reads == [tmp_path.resolve()]
+
+
+def test_nested_checker_targets_do_not_share_a_python_floor(tmp_path: Path) -> None:
+    """Polish 4: modules in one distribution can have different checker targets."""
+    package = _project(tmp_path, {})
+    paths = []
+    for directory, minor in (("old", 7), ("new", 10)):
+        root = package / directory
+        root.mkdir()
+        (root / "mypy.ini").write_text(f"[mypy]\npython_version = 3.{minor}\n")
+        path = root / "mod.py"
+        path.write_text("value = 1\n")
+        paths.append(str(path))
+    engine = UnificationRefactorEngine(settings=SERIAL)
+    engine.begin_refactoring_run(paths)
+    # Pair and cluster evaluation must use the configuration of each participant.
+    assert [engine._declared_python_for(path) for path in paths] == [(3, 7), (3, 10)]
+
+
+def test_speculative_python_floor_does_not_consume_a_parse_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Polish 4: warming a worker is silent; a malformed config still warns on each real read."""
+    package = _project(tmp_path, {"mod": 1})
+    path = str(package / "mod.py")
+    (tmp_path / "pyproject.toml").write_text("[broken\n")
+    engine = UnificationRefactorEngine(settings=SERIAL)
+    engine._prepare_python_floors_for_workers({path})
+    assert not caplog.records
+    for _ in range(2):
+        engine._declared_python_for(path)
+        assert "could not be parsed" in caplog.text
+        caplog.clear()

@@ -162,7 +162,8 @@ and step 4 replaces them. The first line says how the inserted code is laid out.
 configures no formatter, but its files already match Black's defaults, so
 Towel formats with Black when Black is installed where Towel runs (the
 `format` extra installs it). With the plain install above it is not, and the
-note says instead that generated code is inserted unformatted.
+note says that generated code is inserted unformatted and names the
+`code-towel[format]` extra.
 
 ## 3. Write the change to a copy
 

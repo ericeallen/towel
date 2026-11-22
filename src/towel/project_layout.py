@@ -23,12 +23,26 @@ docs/design/DECISIONS.md, "Import names come from the program").
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List
 
 from .diagnostics import LOG
 
 import tomllib
+
+_RAISE_READ_ERRORS = ContextVar("raise_pyproject_read_errors", default=False)
+
+
+@contextmanager
+def raising_pyproject_errors() -> Iterator[None]:
+    """Let a speculative config lookup abandon a read that would issue a diagnostic."""
+    token = _RAISE_READ_ERRORS.set(True)
+    try:
+        yield
+    finally:
+        _RAISE_READ_ERRORS.reset(token)
 
 
 def load_pyproject(project_root: Path, *, strict: bool = False) -> Dict[str, Any]:
@@ -45,11 +59,11 @@ def load_pyproject(project_root: Path, *, strict: bool = False) -> Dict[str, Any
         with pyproject_path.open("rb") as f:
             return tomllib.load(f)
     except OSError:
-        if strict:
+        if strict or _RAISE_READ_ERRORS.get():
             raise
         return {}
     except ValueError as error:
-        if strict:
+        if strict or _RAISE_READ_ERRORS.get():
             raise
         LOG.warning(
             "%s could not be parsed; none of its settings are read: %s",

@@ -55,6 +55,7 @@ from towel.unification.pair_locations import (
     location_rank,
     place_rank,
 )
+from towel.unification.models import RejectReason
 
 if TYPE_CHECKING:
     from towel.unification.fixed_point import RunReport
@@ -614,6 +615,13 @@ def cross_module_lines(
     reason only such a pair can meet.
     """
     found: Dict[Tuple[str, str, str], None] = {}
+    # Adding an import cannot help a pair that already imports each other, so
+    # the remedy is withheld when any declined pair met an import cycle. The
+    # full reason counts decide it, not the sampled locations.
+    has_cycle = any(
+        reason_code(reason) == RejectReason.IMPORT_CYCLE
+        for reason in (*report.declined_pairs, *report.declined_proposals)
+    )
     sites = report.left_alone
     if report.module_conditions is not None:
         for a, b, why in report.module_conditions:
@@ -632,13 +640,14 @@ def cross_module_lines(
         found[(paths[0], " and ".join(paths[1:]), condition)] = None
     if not found:
         return []
+    remedy = [] if has_cycle else [CROSS_MODULE_REMEDY]
     if explaining:
-        return ["--cross-module shared nothing between modules. " + CROSS_MODULE_REMEDY]
+        return [" ".join(["--cross-module shared nothing between modules.", *remedy])]
     return [
         "",
         "--cross-module shared nothing between modules. What each pair of modules lacked:",
         *(f"  {first} and {others}: {condition}." for first, others, condition in found),
-        CROSS_MODULE_REMEDY,
+        *remedy,
     ]
 
 

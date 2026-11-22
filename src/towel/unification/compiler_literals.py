@@ -34,7 +34,8 @@ from typing import FrozenSet, Iterator, Optional, Sequence, Tuple
 from weakref import WeakKeyDictionary
 
 from .statement_facts import memoized_per_node
-from .ast_paths import Path, path_map
+from .ast_paths import Path, Step, path_map, resolve_path
+from .run_syntax import run_syntax
 from .substitution import structural_text
 
 
@@ -182,6 +183,30 @@ def pooled_literal_nodes(block: Sequence[ast.AST]) -> FrozenSet[ast.AST]:
         node
         for node, protected in _runtime_walk(block, frozenset(roots | membership))
         if isinstance(node, ast.expr) and (protected or node in membership)
+    )
+
+
+def _protected_literal_paths(statement: ast.AST) -> tuple[tuple[Step, ...], ...]:
+    block = (statement,)
+    nodes = pooled_literal_nodes(block)
+    if not nodes:
+        return ()
+    return tuple(steps for node, (_, steps) in path_map(block).items() if node in nodes)
+
+
+def pooled_literals_in_tree(block: Sequence[ast.AST]) -> FrozenSet[ast.AST]:
+    """Protected occurrences in blocks the unifier has checked for shared expressions.
+
+    An occurrence has the same path after a reparse or line shift. Resolve the
+    saved paths on the caller's statements so identity comparisons use its nodes.
+    """
+    facts = run_syntax.get()
+    if facts is None:
+        return pooled_literal_nodes(block)
+    return frozenset(
+        resolve_path(block, (index, steps))
+        for index, statement in enumerate(block)
+        for steps in facts.literal_paths.get(statement, _protected_literal_paths)
     )
 
 

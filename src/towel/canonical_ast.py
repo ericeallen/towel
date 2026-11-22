@@ -84,27 +84,31 @@ def canonical_dump(node: ast.AST) -> str:
     return _spelled_node(node)
 
 
-def exact_dump(node: ast.AST) -> str:
-    """Every present AST field and location, with wide-safe constants and no normalization.
+def exact_dump(node: ast.AST, *, include_positions: bool = True) -> str:
+    """Every present AST field, optionally with positions, without normalizing missing fields.
 
     Missing fields differ from present ``None`` or empty lists. In particular,
     a missing expression context must not share a compiler key with ``Load()``.
     """
-    return _spelled_node(node, exact=True)
+    return _spelled_node(node, exact=True, positions=include_positions)
 
 
-def _spelled(value: object, *, exact: bool = False) -> str:
+def _spelled(value: object, *, exact: bool = False, positions: bool = False) -> str:
     if isinstance(value, ast.AST):
-        return _spelled_node(value, exact=exact)
+        return _spelled_node(value, exact=exact, positions=positions)
     if isinstance(value, list):
-        return "[" + ", ".join(_spelled(item, exact=exact) for item in value) + "]"
+        return (
+            "["
+            + ", ".join(_spelled(item, exact=exact, positions=positions) for item in value)
+            + "]"
+        )
     return _spelled_constant(value)
 
 
-def _spelled_node(node: ast.AST, *, exact: bool = False) -> str:
+def _spelled_node(node: ast.AST, *, exact: bool = False, positions: bool = False) -> str:
     none_is_a_value = isinstance(node, _NONE_IS_A_VALUE)
     fields: List[str] = []
-    for name in (*node._fields, *node._attributes) if exact else node._fields:
+    for name in (*node._fields, *node._attributes) if positions else node._fields:
         value = getattr(node, name, _ABSENT)
         if value is _ABSENT:
             if not exact and name == _CONTEXT_FIELD:
@@ -115,7 +119,7 @@ def _spelled_node(node: ast.AST, *, exact: bool = False) -> str:
                 continue
         elif not exact and isinstance(value, list) and not value:
             continue
-        fields.append(f"{name}={_spelled(value, exact=exact)}")
+        fields.append(f"{name}={_spelled(value, exact=exact, positions=positions)}")
     return f"{type(node).__name__}({', '.join(fields)})"
 
 

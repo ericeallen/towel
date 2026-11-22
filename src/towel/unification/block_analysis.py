@@ -96,6 +96,9 @@ from .static_positions import (
     TypingForms,
     configured_translation_keywords,
 )
+from ..analysis_sources import parser_configuration
+from .run_syntax import run_syntax
+from .literal_windows import CheckedWindow, exceeds_literal_parameter_limit
 from .structural_memo import load_substitution, store_substitution
 from .ast_paths import has_shared_expressions
 from .expression_sites import (
@@ -496,6 +499,13 @@ class BlockAnalysis(EngineState):
         to the typing forms they denote; the same structure calling other
         objects is another pair, so the forms are part of the key.
         """
+        if (
+            len(blocks) == 2
+            and (modules is None or len(modules) == 2)
+            and exceeds_literal_parameter_limit(blocks[0], blocks[1], self.unifier.max_parameters)
+        ):
+            self._check_over_limit_windows(blocks, modules)
+            return None
         if any(has_shared_expressions(block) for block in blocks):
             return None
         keywords = self._translation_keywords()
@@ -536,6 +546,30 @@ class BlockAnalysis(EngineState):
             None if result is None else store_substitution(result, blocks, hygienic_renames)
         )
         return result
+
+    def _check_over_limit_windows(
+        self, blocks: Sequence[Sequence[ast.stmt]], modules: Optional[Sequence[ModuleText]]
+    ) -> None:
+        """Preserve the diagnostic-producing setup of a proven unification failure.
+
+        A shared expression stops both blocks before any typing lookup. Once
+        a live window passed that check and resolved its forms without side
+        effects, later over-limit pairs containing it need neither walk.
+        """
+        facts = run_syntax.get()
+        parser = parser_configuration()
+        windows = (
+            CheckedWindow(tuple(block), None if modules is None else modules[index], parser)
+            for index, block in enumerate(blocks)
+        )
+        unchecked = [w for w in windows if facts is None or w not in facts.checked_literal_windows]
+        if any(has_shared_expressions(window.statements) for window in unchecked):
+            return
+        self._translation_keywords()
+        for window in unchecked:
+            self._typing_forms(window.statements, window.module)
+            if facts is not None and window.reusable():
+                facts.checked_literal_windows[window] = True
 
     def _block_rejected(
         self,

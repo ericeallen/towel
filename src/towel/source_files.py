@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Callable, Concatenate, Iterable, Iterator, Optional, ParamSpec, Protocol, TypeVar
 
 from .diagnostics import LOG
+from .unification.run_syntax import RunSyntaxFacts, run_syntax
+from .parsing_warnings import begin_lexical_run
 
 PROBE_PREFIX = "_towel_probe_"
 
@@ -72,6 +74,8 @@ def source_policy_context(*, strict: bool, include_ignored: bool = False) -> Con
     outer = current_source_policy()
     if outer is None or (outer.strict, outer.include_ignored) != (strict, include_ignored):
         context.run(_SOURCE_POLICY.set, SourcePolicy(strict, include_ignored))
+        context.run(run_syntax.set, RunSyntaxFacts())
+        context.run(begin_lexical_run)
     return context
 
 

@@ -109,6 +109,16 @@ def test_differing_text_round_trips(left: str, right: str) -> None:
         assert parsed.returncode == 0, parsed.stderr
 
 
+@pytest.mark.filterwarnings("error::DeprecationWarning")
+def test_shared_affixes_are_characters_within_path_components() -> None:
+    """Polish 4: differing f-string text retains partial words on Python 3.15."""
+    texts = ["dir/π-low-ä/end", "dir/π-mid-ä/end", "dir/π-ä/end"]
+    blocks = [ast.parse(f'return f"{{x}}{text}"').body for text in texts]
+    substitution = Unifier().unify_blocks(blocks, [{} for _ in blocks])
+    assert substitution is not None
+    assert list(substitution.fstring_affixes.values()) == [("dir/π-", "ä/end")]
+
+
 def test_text_parameter_excludes_shared_affixes() -> None:
     """Audit D1: the argument describes the difference, not the surrounding sentence."""
     blocks = [ast.parse(f'return f"{{x}} {level} records"').body for level in ("ERROR", "WARN")]

@@ -343,7 +343,7 @@ def test_unconfigured_formatter_note_offers_configuration(tmp_path: Path, strict
     result = dry(source, tmp_path / "out.py", strict)
     assert "no formatter configured" in result.stderr
     assert "Configure Ruff or Black" in result.stderr
-    assert "Install the format extra" not in result.stderr
+    assert "code-towel[format]" in result.stderr
 
 
 @pytest.mark.parametrize("strict", [False, True])

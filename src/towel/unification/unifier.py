@@ -26,7 +26,6 @@ for a substitution making two terms equal.
 """
 
 import ast
-from os.path import commonprefix
 from typing import Callable, Dict, Optional, List, Tuple, Any, Sequence, Type, Union, Iterator
 
 from .constant_consistency import constant_identity
@@ -37,7 +36,7 @@ from .compiler_literals import (
     immutable_literal_value,
     is_pooled_expression,
     pooled_expression_positions,
-    pooled_literal_nodes,
+    pooled_literals_in_tree,
     unstable_literal_pool,
 )
 from .parameterization import Parameterization
@@ -83,6 +82,15 @@ def _dotted_chain(expression: ast.AST) -> Optional[Tuple[ast.Name, List[str]]]:
 
 def _yields(node: ast.AST) -> bool:
     return any(isinstance(inner, (ast.Yield, ast.YieldFrom)) for inner in ast.walk(node))
+
+
+def _common_prefix(texts: Sequence[str]) -> str:
+    """Characters shared by all the strings at their start."""
+    first, last = min(texts), max(texts)
+    for index, (left, right) in enumerate(zip(first, last)):
+        if left != right:
+            return first[:index]
+    return first
 
 
 class Unifier(Parameterization, LiteralPromotion):
@@ -1266,10 +1274,10 @@ class Unifier(Parameterization, LiteralPromotion):
                     texts = [str(value) for value in values]
                     # A single chunk is returned by identity, including when
                     # used as a format spec. Never split that pooled object.
-                    prefix = commonprefix(texts) if len(values_lists[0]) > 1 else ""
+                    prefix = _common_prefix(texts) if len(values_lists[0]) > 1 else ""
                     tails = [text[len(prefix) :] for text in texts]
                     suffix = (
-                        commonprefix([tail[::-1] for tail in tails])[::-1]
+                        _common_prefix([tail[::-1] for tail in tails])[::-1]
                         if len(values_lists[0]) > 1
                         else ""
                     )
@@ -1386,7 +1394,7 @@ class Unifier(Parameterization, LiteralPromotion):
         self._pattern_parameters_allowed = False
         self._block_free_variables_cache.clear()
         self.current_blocks = blocks
-        self._pooled_literal_nodes = tuple(pooled_literal_nodes(block) for block in blocks)
+        self._pooled_literal_nodes = tuple(pooled_literals_in_tree(block) for block in blocks)
         self._pooled_literal_parts = tuple(
             frozenset(structural_text(node) for node in nodes)
             for nodes in self._pooled_literal_nodes
