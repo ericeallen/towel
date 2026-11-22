@@ -1011,7 +1011,10 @@ deps = [
     "pytest>=7.2",
     "scipy>=1.13",
 ]
-timeout = 7200
+# Relaxed mode applies far more refactorings here than strict (175 before a
+# 1,500 CPU-second ceiling, against 67 strict), each followed by a re-analysis;
+# Eric chose on 2026-11-22 to give it time rather than cut what it extracts.
+timeout = 14400
 exclude = ["tests"]
 
 [[project]]
@@ -1734,6 +1737,10 @@ deps = [
     "setuptools",
     "tzlocal",
 ]
+# Relaxed mode re-analyzes the 3,617-line test module after each of dozens of
+# refactorings (strict finishes in about 3 CPU minutes); Eric chose on
+# 2026-11-22 to give it time rather than cut what it extracts.
+timeout = 14400
 
 [[project]]
 name = "prettytable"

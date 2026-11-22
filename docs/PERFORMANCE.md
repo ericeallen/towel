@@ -69,6 +69,13 @@ After each change, Towel analyses the changed files again, because one
 extraction can expose another; a project with hundreds of extractions repeats
 that hundreds of times, and in a typed project checks each one.
 
+Relaxed mode, the default, finds more to extract than strict mode, and so
+repeats that analysis more often. On a large, repetitive project the difference
+is large: on networkx, strict mode applied 67 refactorings in about 13 CPU
+minutes, while relaxed mode had applied 175 after 25 and was still going. To
+keep such a run short, use `--max-refactorings N` and run again after review,
+point Towel at one package, or use `--strict`.
+
 ## Earlier measurements
 
 The Sphinx-only rerun at `29454ab` took 5,660 s (about 94 minutes) and changed
