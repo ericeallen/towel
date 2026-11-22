@@ -225,3 +225,43 @@ def test_later_pass_can_first_limit_a_function(tmp_path: Path) -> None:
             "limited its search for repeated blocks inside 1 function" in line
             for line in not_examined_lines(report, relative, nothing_found=False, explain=explain)
         )
+
+
+def _three_edge_builders(tmp_path: Path) -> Path:
+    path = tmp_path / "edges.py"
+    body = "".join(f"    g.edge({i}, {i + 1})\n" for i in range(60))
+    path.write_text("".join(f"def build{i}(g):\n{body}" for i in range(3)))
+    return path
+
+
+def test_pair_budget_excludes_all_capped_windows(tmp_path: Path) -> None:
+    """Cap census 2: a budget that leaves no pairs gives no same-function cap notice."""
+    from towel.cli_reporting import run_outcome
+
+    path = _three_edge_builders(tmp_path)
+    engine = UnificationRefactorEngine(strict=True, max_candidate_pairs=1)
+    engine.refactor_to_fixed_point(str(path), output_path=str(tmp_path / "out.py"), progress="none")
+    report = engine.run_report
+    assert report.candidate_pairs == 0
+    assert not report.not_examined
+    assert run_outcome(report, 0) == "no_repeated_code"
+
+
+def test_partial_pass_does_not_report_an_unchanged_function_limit(tmp_path: Path) -> None:
+    """Cap census 2: unchanged functions do not pair with themselves on a partial pass."""
+    from towel.unification.models import AnalysisCensus
+    from towel.unification.pipeline import run_pipeline
+
+    path = _three_edge_builders(tmp_path)
+    small = tmp_path / "small.py"
+    small.write_text("def tiny(x):\n    return x + 1\n")
+    censuses: list[AnalysisCensus] = []
+    run_pipeline(
+        [str(small), str(path)],
+        engine=UnificationRefactorEngine(strict=True),
+        changed_files=frozenset({str(small)}),
+        census=censuses.append,
+        progress="none",
+    )
+    assert len(censuses) == 1
+    assert not censuses[0].not_examined

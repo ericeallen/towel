@@ -28,6 +28,7 @@ buckets out when the projected pair count exceeds ``max_candidate_pairs``.
 
 import ast
 from bisect import bisect_right
+from collections import Counter
 import dataclasses
 from dataclasses import dataclass
 from functools import lru_cache
@@ -263,7 +264,7 @@ def _body_lines(function: FunctionNode) -> int:
 
 def _limit_same_function(
     bucket: _FunctionBuckets,
-) -> Optional[Tuple[_FunctionBuckets, int]]:
+) -> Optional[Tuple[_FunctionBuckets, Counter[BlockBucketKey]]]:
     """The first eligible statement windows in source order, only when a function exceeds the limit.
 
     A window can pair within its function only if a window in the same
@@ -290,7 +291,9 @@ def _limit_same_function(
     # proposals have the same priority as in the unrestricted search.
     by_source = sorted(eligible, key=lambda index: bucket.blocks[index][0])
     kept = sorted(by_source[:MAX_SAME_FUNCTION_WINDOWS])
-    return _bucketed([bucket.blocks[index] for index in kept]), len(eligible)
+    return _bucketed([bucket.blocks[index] for index in kept]), Counter(
+        bucket.block_keys[index] for index in eligible
+    )
 
 
 def _disjoint_pairs(members: Sequence[_SignedBlock]) -> int:
@@ -1472,15 +1475,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         ]
         buckets = [_bucketed(function_blocks) for function_blocks in blocks]
         limited: Dict[int, _FunctionBuckets] = {}
-        limits_by_file: Dict[str, List[LimitedFunction]] = {}
-        for index, (entry, bucket) in enumerate(zip(all_functions, buckets)):
+        eligible: Dict[int, Counter[BlockBucketKey]] = {}
+        for index, bucket in enumerate(buckets):
             if index in partners.repeats and (result := _limit_same_function(bucket)) is not None:
-                limited[index], total = result
-                limits_by_file.setdefault(entry.file_path, []).append(
-                    LimitedFunction(
-                        entry.node.name, entry.node.lineno, total, MAX_SAME_FUNCTION_WINDOWS
-                    )
-                )
+                limited[index], eligible[index] = result
         excluded = _buckets_over_budget(buckets, limited, self.max_candidate_pairs, partners)
         if excluded:
             buckets = [bucket.without(excluded) for bucket in buckets]
@@ -1491,12 +1489,25 @@ class UnificationRefactorEngine(ParallelEvaluation):
             else quick_filter
         )
         reporter = _PairingProgress(progress, partners.function_pairs)
-        pairs: List[CodeBlockPair] = LimitedSearchPairs(limits_by_file) if limits_by_file else []
         # The changed set holds absolute paths; the analysis spells paths as
         # the caller gave them (a relative output directory stays relative).
         changed = (
             None if changed_files is None else {os.path.abspath(path) for path in changed_files}
         )
+        limits_by_file: Dict[str, List[LimitedFunction]] = {}
+        for index, retained in limited.items():
+            entry = all_functions[index]
+            if changed is not None and os.path.abspath(entry.file_path) not in changed:
+                continue
+            total = sum(n for key, n in eligible[index].items() if key not in excluded)
+            kept = sum(len(members) for members in retained.by_key.values())
+            if kept < total and any(
+                _disjoint_pairs(members) for members in retained.by_key.values()
+            ):
+                limits_by_file.setdefault(entry.file_path, []).append(
+                    LimitedFunction(entry.node.name, entry.node.lineno, total, kept)
+                )
+        pairs: List[CodeBlockPair] = LimitedSearchPairs(limits_by_file) if limits_by_file else []
         requested = self._report_if_covered
         # An omitted pair may spend the relaxed resource allowance. A pair
         # that can redirect to an existing function may also emit a rebinding
