@@ -204,9 +204,7 @@ def test_a_declined_match_is_a_finding_for_the_coverage_summary(tmp_path: Path) 
     assert "Module-level code is not examined:" not in result.stdout
 
 
-@pytest.mark.parametrize("explain", [False, True])
-def test_mixed_coverage_limits_have_their_own_headings(tmp_path: Path, explain: bool) -> None:
-    """Cap census 3: the cap and the unrelated script's code both qualify the search."""
+def _mixed_coverage_project(tmp_path: Path) -> None:
     many = tmp_path / "many.py"
     many.write_text(
         "def f(g, x):\n"
@@ -217,6 +215,12 @@ def test_mixed_coverage_limits_have_their_own_headings(tmp_path: Path, explain: 
         "def guard(x):\n    if x < 0:\n        return None\n"
         "    if x > 10:\n        return None\n    return x\n"
     )
+
+
+@pytest.mark.parametrize("explain", [False, True])
+def test_mixed_coverage_limits_have_their_own_headings(tmp_path: Path, explain: bool) -> None:
+    """Cap census 3: the cap and the unrelated script's code both qualify the search."""
+    _mixed_coverage_project(tmp_path)
     result = invoke(
         [
             "preview",
@@ -245,3 +249,26 @@ def test_mixed_coverage_limits_have_their_own_headings(tmp_path: Path, explain: 
             "Early-return guards are not examined on their own: script.py has 2"
         )
         assert lines[limited + 1].startswith("many.py:1: f has 1,091")
+
+
+@pytest.mark.parametrize("declined", [False, True])
+def test_positive_mixed_run_reserves_structural_detail_for_explain(
+    tmp_path: Path, declined: bool
+) -> None:
+    """Cap census re-review 2: even a capped run with a finding is not an empty search."""
+    _mixed_coverage_project(tmp_path)
+    body = (
+        "    for item in val:\n        yield item + 1\n        yield item * 2\n"
+        if declined
+        else "    v = sink.alpha(val)\n    w = sink.beta(v)\n    x = sink.gamma(w)\n    return sink.omega(x)\n"
+    )
+    (tmp_path / "dup.py").write_text(
+        "".join(f"def {name}(sink, val):\n{body}" for name in ("one", "two"))
+    )
+    result = invoke(_arguments("preview", tmp_path, tmp_path / "out", strict=declined))
+    assert result.status == 0
+    assert (
+        "with similar code and extracted none." if declined else "Would apply 1 refactoring(s)."
+    ) in result.stdout
+    assert "limited its search" in result.stdout
+    assert "module-level code or early-return guards" not in result.stdout

@@ -363,7 +363,7 @@ def not_examined_lines(
     ]
     limited = sum(len(entry.limited_functions) for entry in report.not_examined)
     lines: List[str] = []
-    if structural and (nothing_found or explain or limited):
+    if structural and (nothing_found or explain):
         count = len(structural)
         summary = (
             f"{_plural(count, 'file')} {'holds' if count == 1 else 'hold'} module-level code "
