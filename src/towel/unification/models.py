@@ -20,7 +20,7 @@ proposals, applied changes, and the typed reasons a pair is declined.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import (
     TYPE_CHECKING,
@@ -548,8 +548,18 @@ class SkippedFile:
 
 
 @dataclass(frozen=True)
+class LimitedFunction:
+    """Where same-function search was bounded and how many windows were eligible."""
+
+    function: str
+    line: int
+    windows: int
+    limit: int
+
+
+@dataclass(frozen=True)
 class NotExamined:
-    """Code in one analysed file that is never a candidate, counted (``unexamined``).
+    """Coverage limits in one analyzed file, counted for the input census.
 
     ``module_statements`` counts the module's own executable statements
     (not definitions, imports or docstrings; a ``__main__`` block's body
@@ -560,6 +570,7 @@ class NotExamined:
     path: str
     module_statements: int
     early_return_guards: int
+    limited_functions: Tuple[LimitedFunction, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -575,6 +586,21 @@ class AnalysisCensus:
     functions: int = 0
     skipped: Tuple[SkippedFile, ...] = ()
     not_examined: Tuple[NotExamined, ...] = ()
+
+
+class LimitedSearchPairs(List[CodeBlockPair]):
+    """Pairs from a search that reached a function limit, carrying its census details."""
+
+    def __init__(self, limits: Dict[str, List[LimitedFunction]]) -> None:
+        super().__init__()
+        self._limits = limits
+
+    def census(self, original: AnalysisCensus) -> AnalysisCensus:
+        by_path = {entry.path: entry for entry in original.not_examined}
+        for path, functions in self._limits.items():
+            entry = by_path.get(path, NotExamined(path, 0, 0))
+            by_path[path] = replace(entry, limited_functions=tuple(functions))
+        return replace(original, not_examined=tuple(by_path.values()))
 
 
 @dataclass(frozen=True, slots=True)

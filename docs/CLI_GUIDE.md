@@ -44,7 +44,7 @@ path. Both take the same options:
 | `--max-parameters N` | 5 | Extract only duplicates whose differences need at most `N` parameters. |
 | `--max-refactorings N` | 0, no limit | Stop after `N` changes; 0 means no limit. |
 | `--time-limit SECONDS` | none | Give up after `SECONDS`, a positive number up to 100,000,000; write nothing and exit 124. |
-| `--max-pairs N` | 20,000,000 | Compare at most `N` pairs of similar blocks; 0 means no limit. |
+| `--max-pairs N` | 20,000,000 | Compare at most `N` pairs of similar blocks per analysis. Use 0 to remove this overall pair budget. |
 | `--jobs N` | `TOWEL_WORKERS`, else the smallest of 8, the cores and what fits in memory | Use at most `N` worker processes; `N` must be positive. |
 | `--explain` | off | Show up to 20 distinct places per reason, largest first, including declined matches after an extraction. Each names a similar place and counts the others. For more detail, run on a smaller directory or file. By default Towel shows up to five and omits declined pairs after applying changes. |
 | `--stats` | off | Count what became of each pair of similar blocks. |
@@ -143,7 +143,9 @@ is written and the exit status is 124. Towel notices at its next check, so a run
 can stop a little late, and writing, once started, always finishes. It is not a
 memory limit. `--max-refactorings` stops after that many
 changes, so you can review and commit in steps. `--max-pairs` bounds the pairs
-compared, not time or memory, and 0 means no limit. For memory, use fewer
+compared in one analysis. Set it to 0 to remove the overall budget. The
+search inside each function considers up to 1,024 eligible blocks even then.
+For memory, use fewer
 workers: `--jobs 1` or `TOWEL_WORKERS=1`.
 
 A helper must be smaller than the copies it replaces, counting the helper and

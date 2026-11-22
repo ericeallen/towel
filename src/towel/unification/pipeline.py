@@ -53,6 +53,7 @@ from ..canonical_ast import canonical_dump
 from ..analysis_sources import parse_analysis_source, parser_configuration, parsing_is_pure
 from .models import (
     AnalysisCensus,
+    LimitedSearchPairs,
     SkippedFile,
     RawModule,
     ParsedModule,
@@ -469,19 +470,18 @@ def run_pipeline(
         bar.close()
 
     functions = [function for analysis in analyses for function in analysis.functions]
+    input_census = None
     if census is not None:
-        census(
-            AnalysisCensus(
-                len(analyses),
-                len(functions),
-                tuple(skipped),
-                tuple(
-                    found
-                    for analysis in analyses
-                    if (found := not_examined(analysis.module.file_path, analysis.module.tree))
-                    is not None
-                ),
-            )
+        input_census = AnalysisCensus(
+            len(analyses),
+            len(functions),
+            tuple(skipped),
+            tuple(
+                found
+                for analysis in analyses
+                if (found := not_examined(analysis.module.file_path, analysis.module.tree))
+                is not None
+            ),
         )
     classes = [info for analysis in analyses for info in analysis.module.class_infos]
     with sharing_if_transfer_proofs(
@@ -492,6 +492,17 @@ def run_pipeline(
         ),
         check_ast_immutable=analysis_session.check_ast_immutable,
     ):
-        pairs = pair_blocks(engine, functions, progress=progress, changed_files=changed_files)
+        pairs: List[CodeBlockPair] = []
+        try:
+            pairs = pair_blocks(engine, functions, progress=progress, changed_files=changed_files)
+        finally:
+            # Even a deadline during pairing lets the census report the files
+            # already read. A completed search also knows which windows it omitted.
+            if census is not None and input_census is not None:
+                census(
+                    pairs.census(input_census)
+                    if isinstance(pairs, LimitedSearchPairs)
+                    else input_census
+                )
         proposals = unify_blocks(engine, pairs, functions, classes, progress=progress)
     return filter_overlaps(proposals)

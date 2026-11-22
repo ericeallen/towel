@@ -196,3 +196,45 @@ def test_the_proposal_says_the_code_is_repeated_in_one_function(tmp_path: Path) 
     engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False)
     (proposal,) = engine.analyze_file(str(path))
     assert proposal.description == "Extract code repeated in inner"
+
+
+def test_cap_restricts_only_pairs_inside_one_function(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final-speed lane: bound a repetitive function without losing its matches in other functions."""
+    from towel.unification import refactor_engine
+
+    path = tmp_path / "repeated.py"
+    body = "".join(f"    value = {index} + 1\n" for index in range(8))
+    path.write_text(f"def many():\n{body}\ndef other():\n{body}")
+    functions = collect_functions(analyze_scopes(parse_modules([str(path)])))
+    engine = UnificationRefactorEngine(min_lines=1, expression_candidates=False)
+    all_pairs = engine.find_block_pairs(functions, progress="none")
+    all_within = [p for p in all_pairs if p.function1_node is p.function2_node]
+    limit = 5
+    kept = {
+        f.node: set(
+            sorted(
+                {
+                    span
+                    for p in all_within
+                    if p.function1_node is f.node
+                    for span in (p.block1_range, p.block2_range)
+                }
+            )[:limit]
+        )
+        for f in functions
+    }
+    expected = [
+        p
+        for p in all_pairs
+        if p.function1_node is not p.function2_node
+        or (p.block1_range in kept[p.function1_node] and p.block2_range in kept[p.function1_node])
+    ]
+    assert 0 < len(expected) < len(all_pairs)
+    monkeypatch.setattr(refactor_engine, "MAX_SAME_FUNCTION_WINDOWS", limit, raising=False)
+    assert engine.find_block_pairs(functions, progress="none") == expected
+    # Project the global pair budget after applying the function cap. Otherwise
+    # a capped function could still evict a bucket needed by two other functions.
+    engine.max_candidate_pairs = len(expected)
+    assert engine.find_block_pairs(functions, progress="none") == expected

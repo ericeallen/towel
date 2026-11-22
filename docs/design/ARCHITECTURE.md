@@ -86,7 +86,8 @@ flowchart TD
    declared `global`/`nonlocal`.
 3. **Enumerate candidate blocks.** Establish structural function partners
    before materializing blocks: a function without another function in its
-   module is skipped unless cross-module sharing supplies a partner.
+   module participates if it is long enough to hold two disjoint blocks or
+   cross-module sharing supplies a partner.
    Contiguous runs inside participating function bodies become candidate blocks.
    Blocks known to be inadmissible from the enumeration filters are omitted
    (see *Enumeration filter*). The caller-narrowing filter
@@ -100,8 +101,13 @@ flowchart TD
    and rejects incompatible pairs before the expensive step, and, when the
    projected pair count exceeds `--max-pairs` (20,000,000 by default), leaves
    out the largest buckets of similar blocks with a warning naming them
-   (`_buckets_over_budget`). A function is paired only with the other
-   functions of its own module unless `cross_module_helpers`
+   (`_buckets_over_budget`). Within a function, only windows with a disjoint
+   window of the same statement-type sequence can pair. If there are more
+   than 1,024 such windows, the engine retains the first 1,024 in source
+   order and records the limit in the input census. The pair-budget
+   projection counts only retained pairs inside the function. Between
+   functions, all windows participate. A function pairs with others in
+   its own module unless `cross_module_helpers`
    (`--cross-module`) is set; the loop walks a list per module
    (`_Partners`), so pairs across modules are neither formed nor projected
    against the budget.

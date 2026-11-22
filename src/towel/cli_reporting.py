@@ -60,7 +60,7 @@ from towel.unification.models import RejectReason
 if TYPE_CHECKING:
     from towel.unification.fixed_point import RunReport
     from towel.unification.models import AppliedChange
-    from towel.unification.models import BlockLocation, LeftAlone, ParameterKind
+    from towel.unification.models import BlockLocation, LeftAlone, NotExamined, ParameterKind
 
 Outcome = Literal[
     "no_python_files", "no_repeated_code", "not_fully_examined", "all_left_alone", "applied"
@@ -157,12 +157,20 @@ class SkippedRecord(TypedDict):
     reason: str
 
 
+class LimitedFunctionRecord(TypedDict):
+    function: str
+    line: int
+    windows: int
+    limit: int
+
+
 class NotExaminedRecord(TypedDict):
     """Unsupported code in one file; counts do not establish that the code repeats."""
 
     path: str
     module_statements: int
     early_return_guards: int
+    limited_functions: NotRequired[List[LimitedFunctionRecord]]
 
 
 class AnalysedRecord(TypedDict):
@@ -349,14 +357,22 @@ def not_examined_lines(
 ) -> List[str]:
     """Qualify an empty search once. With --explain, locate every coverage limit."""
     count = len(report.not_examined)
-    if not count or not (nothing_found or explain):
-        return []
-    summary = (
-        f"{_plural(count, 'file')} {'holds' if count == 1 else 'hold'} module-level code "
-        "or early-return guards that Towel does not examine"
-    )
-    if not explain:
-        return [summary + "; --explain lists them."]
+    limited = sum(len(entry.limited_functions) for entry in report.not_examined)
+    if limited:
+        summary = (
+            f"Towel limited its search for repeated blocks inside {_plural(limited, 'function')}"
+        )
+        if not explain:
+            return [summary + ". Use --explain to see what was not examined."]
+    else:
+        if not count or not (nothing_found or explain):
+            return []
+        summary = (
+            f"{_plural(count, 'file')} {'holds' if count == 1 else 'hold'} module-level code "
+            "or early-return guards that Towel does not examine"
+        )
+        if not explain:
+            return [summary + "; --explain lists them."]
     lines = [summary + "."]
     for entry in report.not_examined:
         path = relative(entry.path)
@@ -371,6 +387,12 @@ def not_examined_lines(
                 f"Early-return guards are not examined on their own: {path} has "
                 f"{_plural(entry.early_return_guards, 'guard')}. "
                 "Extract the shared condition into a function, keeping each return in its caller."
+            )
+        for function in entry.limited_functions:
+            lines.append(
+                f"{path}:{function.line}: {function.function} has {function.windows:,} similar "
+                f"blocks of consecutive statements. Towel considered the first {function.limit:,} in source order "
+                "when looking for repetition inside this function."
             )
     return lines
 
@@ -651,6 +673,25 @@ def cross_module_lines(
     ]
 
 
+def _not_examined_record(entry: NotExamined, relative: Callable[[str], str]) -> NotExaminedRecord:
+    record: NotExaminedRecord = {
+        "path": relative(entry.path),
+        "module_statements": entry.module_statements,
+        "early_return_guards": entry.early_return_guards,
+    }
+    if entry.limited_functions:
+        record["limited_functions"] = [
+            {
+                "function": item.function,
+                "line": item.line,
+                "windows": item.windows,
+                "limit": item.limit,
+            }
+            for item in entry.limited_functions
+        ]
+    return record
+
+
 def analysed_record(report: "RunReport", relative: Callable[[str], str]) -> AnalysedRecord:
     """The census as the JSON result reports it."""
     record: AnalysedRecord = {
@@ -660,14 +701,7 @@ def analysed_record(report: "RunReport", relative: Callable[[str], str]) -> Anal
             {"path": relative(skipped.path), "reason": skipped.reason}
             for skipped in report.skipped_files
         ],
-        "not_examined": [
-            {
-                "path": relative(entry.path),
-                "module_statements": entry.module_statements,
-                "early_return_guards": entry.early_return_guards,
-            }
-            for entry in report.not_examined
-        ],
+        "not_examined": [_not_examined_record(entry, relative) for entry in report.not_examined],
     }
     if report.resource_limit_reached:
         record["resource_guard"] = _RESOURCE_LIMIT_NOTE

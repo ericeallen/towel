@@ -27,6 +27,7 @@ buckets out when the projected pair count exceeds ``max_candidate_pairs``.
 """
 
 import ast
+from bisect import bisect_right
 import dataclasses
 from dataclasses import dataclass
 from functools import lru_cache
@@ -42,6 +43,7 @@ from typing import (
     Dict,
     Optional,
     FrozenSet,
+    Final,
     Iterable,
     Mapping,
     MutableMapping,
@@ -109,6 +111,8 @@ from .return_source_uses import sharing_return_source_uses
 from .models import (
     AnalysisCensus,
     LeftAlone,
+    LimitedFunction,
+    LimitedSearchPairs,
     SkippedFile,
     CodeBlockPair,
     FunctionArtifact,
@@ -140,6 +144,11 @@ from ..analysis_sources import (
 )
 from .pipeline import run_pipeline, AnalysisSession
 
+# Input maxima for windows with a disjoint same-bucket partner: tabulate 208,
+# toolz 495, boltons 51, croniter 897. NetworkX's les_miserables_graph alone
+# has 21,041. Keeping the first 1,024 cuts its judged pairs from 1,309,875 to 56.
+MAX_SAME_FUNCTION_WINDOWS: Final = 1024
+
 _SignedBlock = Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]
 
 
@@ -147,6 +156,7 @@ _SignedBlock = Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]
 class _FunctionBuckets:
     """One function's blocks grouped by bucket key, in their original order."""
 
+    blocks: Sequence[_SignedBlock]
     block_keys: List[BlockBucketKey]
     by_key: Dict[BlockBucketKey, List[_SignedBlock]]
 
@@ -157,6 +167,7 @@ class _FunctionBuckets:
     def without(self, keys: FrozenSet[BlockBucketKey]) -> "_FunctionBuckets":
         """These buckets less the given keys; the per-block key list keeps its positions."""
         return _FunctionBuckets(
+            self.blocks,
             self.block_keys,
             {key: members for key, members in self.by_key.items() if key not in keys},
         )
@@ -168,7 +179,7 @@ def _bucketed(blocks: Sequence[_SignedBlock]) -> _FunctionBuckets:
     by_key: Dict[BlockBucketKey, List[_SignedBlock]] = {}
     for key, block in zip(block_keys, blocks):
         by_key.setdefault(key, []).append(block)
-    return _FunctionBuckets(block_keys, by_key)
+    return _FunctionBuckets(blocks, block_keys, by_key)
 
 
 @dataclass(frozen=True)
@@ -250,22 +261,51 @@ def _body_lines(function: FunctionNode) -> int:
     return (last.end_lineno or last.lineno) - first.lineno + 1
 
 
-def _disjoint(first: Tuple[int, int], second: Tuple[int, int]) -> bool:
-    """Whether two blocks of one function share no line, so both may be replaced by a call."""
-    return first[1] < second[0] or second[1] < first[0]
+def _limit_same_function(
+    bucket: _FunctionBuckets,
+) -> Optional[Tuple[_FunctionBuckets, int]]:
+    """The first eligible statement windows in source order, only when a function exceeds the limit.
+
+    A window can pair within its function only if a window in the same
+    bucket ends before it starts or starts after it ends. The two extreme
+    endpoints settle this for every window without forming a single pair.
+    """
+    if len(bucket.blocks) <= MAX_SAME_FUNCTION_WINDOWS:
+        return None
+    bounds = {
+        key: (min(block[0][1] for block in members), max(block[0][0] for block in members))
+        for key, members in bucket.by_key.items()
+        if len(members) > 1 and not is_expression_block(members[0][1])
+    }
+    eligible: List[int] = []
+    for index, ((span, _, _), key) in enumerate(zip(bucket.blocks, bucket.block_keys)):
+        if key in bounds:
+            first_end, last_start = bounds[key]
+            if first_end < span[0] or span[1] < last_start:
+                eligible.append(index)
+    if len(eligible) <= MAX_SAME_FUNCTION_WINDOWS:
+        return None
+    # Break equal line-span ties by deterministic syntax-tree traversal. Keep
+    # the original enumeration order among the selected windows so surviving
+    # proposals have the same priority as in the unrestricted search.
+    by_source = sorted(eligible, key=lambda index: bucket.blocks[index][0])
+    kept = sorted(by_source[:MAX_SAME_FUNCTION_WINDOWS])
+    return _bucketed([bucket.blocks[index] for index in kept]), len(eligible)
 
 
-def _overlapping_pairs(members: Sequence[_SignedBlock]) -> int:
-    """How many pairs among one function's blocks of one bucket share a line, and so never pair."""
-    return sum(
-        not _disjoint(members[i][0], members[j][0])
-        for i in range(len(members))
-        for j in range(i + 1, len(members))
-    )
+def _disjoint_pairs(members: Sequence[_SignedBlock]) -> int:
+    """Pairs with the earlier window ending before the later one starts."""
+    if len(members) < 2:
+        return 0
+    starts = sorted(span[0] for span, _, _ in members)
+    return sum(len(starts) - bisect_right(starts, span[1]) for span, _, _ in members)
 
 
 def _buckets_over_budget(
-    buckets: Sequence[_FunctionBuckets], budget: int, partners: _Partners
+    buckets: Sequence[_FunctionBuckets],
+    limited: Mapping[int, _FunctionBuckets],
+    budget: int,
+    partners: _Partners,
 ) -> FrozenSet[BlockBucketKey]:
     """The bucket keys to leave out so the projected pair count fits the budget.
 
@@ -274,7 +314,7 @@ def _buckets_over_budget(
     key, the pairs among the blocks of functions that may pair (``partners``:
     all of them, or those of one module) less the pairs within one function
     that never form: those whose blocks share a line, and every pair of a
-    function too short to repeat a block.
+    function too short to repeat a block or outside its same-function limit.
     Keys are dropped largest first until the rest fit; each dropped key is
     named in a warning, since its blocks will not be proposed.
     """
@@ -289,11 +329,9 @@ def _buckets_over_budget(
             count = len(members)
             across[key] = across.get(key, 0) + count
             grouped[(group, key)] = grouped.get((group, key), 0) + count
-            never = (
-                _overlapping_pairs(members)
-                if index in partners.repeats
-                else count * (count - 1) // 2
-            )
+            same_function = limited.get(index, bucket).by_key.get(key, ())
+            allowed = _disjoint_pairs(same_function) if index in partners.repeats else 0
+            never = count * (count - 1) // 2 - allowed
             within[key] = within.get(key, 0) + never
     projected = {key: -within[key] for key in across}
     for (_, key), total in grouped.items():
@@ -1352,12 +1390,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
         changed_files: Optional[FrozenSet[str]] = None,
     ) -> List[CodeBlockPair]:
         """
-        Find every pair of similar code blocks, in two functions or twice in one.
+        Find candidate pairs of similar code blocks, in two functions or twice in one.
 
         The two functions share a file unless ``cross_module_helpers`` is
         set, when they may be anywhere in the analysis. Two blocks of one
-        function pair when they share no line, the earlier one first; every
-        guard a pair of two functions meets applies to them unchanged.
+        function pair when they share no line, the earlier one first. Above
+        MAX_SAME_FUNCTION_WINDOWS, only the first eligible windows in source
+        order participate in this search. Each can still pair with any
+        eligible window of another function.
 
         Args:
             all_functions: The analyzed functions with their context
@@ -1391,16 +1431,27 @@ class UnificationRefactorEngine(ParallelEvaluation):
             for index, entry in enumerate(all_functions)
         ]
         buckets = [_bucketed(function_blocks) for function_blocks in blocks]
-        excluded = _buckets_over_budget(buckets, self.max_candidate_pairs, partners)
+        limited: Dict[int, _FunctionBuckets] = {}
+        limits_by_file: Dict[str, List[LimitedFunction]] = {}
+        for index, (entry, bucket) in enumerate(zip(all_functions, buckets)):
+            if index in partners.repeats and (result := _limit_same_function(bucket)) is not None:
+                limited[index], total = result
+                limits_by_file.setdefault(entry.file_path, []).append(
+                    LimitedFunction(
+                        entry.node.name, entry.node.lineno, total, MAX_SAME_FUNCTION_WINDOWS
+                    )
+                )
+        excluded = _buckets_over_budget(buckets, limited, self.max_candidate_pairs, partners)
         if excluded:
             buckets = [bucket.without(excluded) for bucket in buckets]
+            limited = {index: bucket.without(excluded) for index, bucket in limited.items()}
         accepts_signatures = (
             self._signature_filter
             if self._output_origin is not None and memoizing()
             else quick_filter
         )
         reporter = _PairingProgress(progress, partners.function_pairs)
-        pairs: List[CodeBlockPair] = []
+        pairs: List[CodeBlockPair] = LimitedSearchPairs(limits_by_file) if limits_by_file else []
         # The changed set holds absolute paths; the analysis spells paths as
         # the caller gave them (a relative output directory stays relative).
         changed = (
@@ -1419,11 +1470,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
                         continue  # both files unchanged since the last global pass: verdict stands
                     # Only blocks in a bucket the other function also has can pair;
                     # the tolerance check is still the unchanged quick_filter.
-                    if not buckets[i].keys.isdisjoint(buckets[j].keys):
+                    left, right = buckets[i], buckets[j]
+                    if i == j and i in limited:
+                        left = right = limited[i]
+                    if not left.keys.isdisjoint(right.keys):
                         for (block1_range, block1_nodes, sig1), key1 in zip(
-                            blocks[i], buckets[i].block_keys
+                            left.blocks, left.block_keys
                         ):
-                            for block2_range, block2_nodes, sig2 in buckets[j].by_key.get(key1, []):
+                            for block2_range, block2_nodes, sig2 in right.by_key.get(key1, []):
                                 if i == j and not block1_range[1] < block2_range[0]:
                                     continue  # one function: the earlier block first, apart
                                 if not accepts_signatures(sig1, sig2):

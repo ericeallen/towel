@@ -78,6 +78,10 @@ is now a site, and shows every command's output.
   mode also lets a shared helper read builtins and common imports by name and
   take in equal literals, and a run that shares nothing between modules says
   what each pair lacked.
+- When a function has more than 1,024 blocks that could match elsewhere in
+  its own body, Towel searches the first 1,024 in source order. The run
+  reports the limit. `--explain` and JSON locate each affected function.
+  All its blocks still participate in comparisons with other functions.
 - Every run reports what it read (`Analysed 2 Python files (4 functions)`) and
   what it skipped. A run that extracts nothing says why, in a sentence per
   reason, with what you can do; after a run that extracted something,

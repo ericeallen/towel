@@ -28,6 +28,8 @@ import io
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from towel.unification.models import NotExamined
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unexamined import (
@@ -111,3 +113,56 @@ def test_a_run_s_census_and_report_carry_the_counts(tmp_path: Path) -> None:
     report = {Path(found.path).name: found for found in engine.run_report.not_examined}
     assert report["script.py"].module_statements == 5
     assert report["guards.py"].early_return_guards == 2
+
+
+def test_census_locates_the_windows_left_out_of_one_function(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final-speed lane: the census names each limited function and the size of the search."""
+    from towel.cli_reporting import analysed_record, not_examined_lines
+    from towel.unification import refactor_engine
+
+    path = tmp_path / "repeated.py"
+    path.write_text(
+        "flag = True\n\nclass Graph:\n    def build(self):\n"
+        + "".join(f"        value = {i} + 1\n" for i in range(8))
+    )
+    monkeypatch.setattr(refactor_engine, "MAX_SAME_FUNCTION_WINDOWS", 5, raising=False)
+    engine = UnificationRefactorEngine(min_lines=1, expression_candidates=False)
+    engine.refactor_to_fixed_point(str(path), progress="none", output_path=str(tmp_path / "out.py"))
+    report = engine.run_report
+
+    def relative(p: str) -> str:
+        return Path(p).name
+
+    (entry,) = analysed_record(report, relative)["not_examined"]
+    assert entry["path"] == "out.py" and entry["module_statements"] == 1
+    assert entry.get("limited_functions") == [
+        {"function": "build", "line": 4, "windows": 23, "limit": 5}
+    ]
+    assert any(
+        "build" in line and "23" in line and "first 5" in line
+        for line in not_examined_lines(report, relative, nothing_found=False, explain=True)
+    )
+    assert any(
+        "1 function" in line and "--explain" in line
+        for line in not_examined_lines(report, relative, nothing_found=False, explain=False)
+    )
+
+
+def test_pipeline_census_includes_the_pairing_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from towel.unification import refactor_engine
+    from towel.unification.models import AnalysisCensus
+    from towel.unification.pipeline import run_pipeline
+
+    path = tmp_path / "many.py"
+    path.write_text("def run():\n" + "".join(f"    value = {i} + 1\n" for i in range(8)))
+    monkeypatch.setattr(refactor_engine, "MAX_SAME_FUNCTION_WINDOWS", 5)
+    censuses: list[AnalysisCensus] = []
+    engine = UnificationRefactorEngine(min_lines=1, expression_candidates=False)
+    run_pipeline([str(path)], engine=engine, census=censuses.append, progress="none")
+    assert len(censuses) == 1
+    assert len(censuses[-1].not_examined) == 1
+    assert censuses[-1].not_examined[0].limited_functions[0].windows == 23

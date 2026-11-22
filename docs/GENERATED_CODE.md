@@ -284,6 +284,9 @@ helper even when an existing function returns it.
   change (`coroutine_exception_boundary`).
 - **Repetition inside one function.** A block repeated within a single function
   becomes a helper too, as `_restore_dict` does in the [gallery](GALLERY.md).
+  When more than 1,024 blocks could match another block in the same function,
+  Towel searches the first 1,024 in source order. It reports when a function
+  reaches this limit. Use `--explain` to see its name, location and block count.
 - **Repeated expressions.** A multi-line expression repeated in otherwise
   different statements, such as a long condition, becomes a helper that returns
   its value. An expression holding `yield`, `await` or `:=`, one using `super()`,
