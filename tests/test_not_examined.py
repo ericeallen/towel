@@ -265,3 +265,27 @@ def test_partial_pass_does_not_report_an_unchanged_function_limit(tmp_path: Path
     )
     assert len(censuses) == 1
     assert not censuses[0].not_examined
+
+
+def test_cap_omits_an_entire_bucket_that_fits_the_pair_budget(tmp_path: Path) -> None:
+    """Cap census re-review 1: the only affordable pair can be outside the retained windows."""
+    from towel.cli_reporting import run_outcome
+
+    path = tmp_path / "single.py"
+    assignments = "".join(f"    a = g.edge({i}, {i + 1})\n" for i in range(65))
+    other = "".join(f"    b = h.node(x + y + z + w + {i})\n" for i in range(65))
+    repeated = (
+        "    if g.ready(10):\n        g.alpha(10, 20, 30)\n"
+        "        g.beta(40, 50, 60)\n        g.gamma(70, 80, 90)\n"
+    )
+    path.write_text(
+        f"def build0(g):\n{assignments}{repeated}{repeated}def build1(h,x,y,z,w):\n{other}"
+    )
+    engine = UnificationRefactorEngine(strict=True, max_candidate_pairs=1)
+    engine.refactor_to_fixed_point(str(path), output_path=str(tmp_path / "out.py"), progress="none")
+    report = engine.run_report
+    assert report.candidate_pairs == 0
+    assert run_outcome(report, 0) == "not_fully_examined"
+    (entry,) = report.not_examined
+    (limited,) = entry.limited_functions
+    assert limited.function == "build0" and limited.limit == 0 and limited.windows >= 2

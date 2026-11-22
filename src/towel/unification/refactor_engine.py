@@ -1516,9 +1516,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 continue
             total = sum(n for key, n in eligible[index].items() if key not in excluded)
             kept = sum(len(members) for members in retained.by_key.values())
-            if kept < total and any(
-                _disjoint_pairs(members) for members in retained.by_key.values()
-            ):
+            # Every counted window had a disjoint partner in its own surviving
+            # bucket. Omitting even the whole bucket therefore loses a comparison.
+            if kept < total:
                 limits_by_file.setdefault(entry.file_path, []).append(
                     LimitedFunction(entry.node.name, entry.node.lineno, total, kept)
                 )
