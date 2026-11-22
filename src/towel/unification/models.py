@@ -595,6 +595,8 @@ class AnalysisCensus:
         """Keep one observation per definition, from the pass that omitted the most windows."""
         by_path = {entry.path: entry for entry in self.not_examined}
         for path, functions in limits.items():
+            if not functions:
+                continue
             entry = by_path.get(path, NotExamined(path, 0, 0))
             observed = {(f.function, f.line): f for f in entry.limited_functions}
             for function in functions:

@@ -289,3 +289,26 @@ def test_cap_omits_an_entire_bucket_that_fits_the_pair_budget(tmp_path: Path) ->
     (entry,) = report.not_examined
     (limited,) = entry.limited_functions
     assert limited.function == "build0" and limited.limit == 0 and limited.windows >= 2
+
+
+def test_a_new_helper_cannot_be_reported_as_an_input_definition(tmp_path: Path) -> None:
+    """Cap census re-review 3: extracting a long body must not invent a third input function."""
+    body = (
+        "    t = 0\n"
+        + "".join(
+            f"    g.step_{i}(x)\n    v = g.load_{i}(x)\n    t += v\n    assert g.ok(t)\n    pass\n"
+            for i in range(13)
+        )
+        + "    return t\n"
+    )
+    path = tmp_path / "two_funcs.py"
+    path.write_text(f"def f1(g, x):\n{body}def f2(g, x):\n{body}")
+    engine = UnificationRefactorEngine(strict=True)
+    _, applied, _ = engine.refactor_to_fixed_point(
+        str(path), output_path=str(tmp_path / "out.py"), progress="none"
+    )
+    assert applied > 0
+    report = engine.run_report
+    assert report.functions_analysed == 2
+    (entry,) = report.not_examined
+    assert [(f.function, f.line) for f in entry.limited_functions] == [("f1", 1), ("f2", 69)]

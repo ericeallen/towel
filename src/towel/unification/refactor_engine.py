@@ -1048,12 +1048,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
             # Reading has finished even if the deadline interrupts pair evaluation.
             if self._run_census is None:
                 self._run_census = self._census
-
             elif self._output_origin is not None:
                 limits = {
                     entry.path: [
-                        dataclasses.replace(f, line=self._pass_to_input_lines[entry.path, f.line])
+                        dataclasses.replace(f, line=line)
                         for f in entry.limited_functions
+                        if (line := self._pass_to_input_lines.get((entry.path, f.line))) is not None
                     ]
                     for entry in census.not_examined
                     if entry.limited_functions
@@ -1424,7 +1424,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         """Relate shifted definitions to their input lines, even for same-named methods.
 
         Extraction inserts fresh helper names and preserves the order of existing
-        definitions with the same name. For a new helper, use its first observed line.
+        definitions with the same name. Only input definitions have input lines.
         """
         if self._output_origin is None or (self._run_census is not None and not limits):
             return
@@ -1436,9 +1436,13 @@ class UnificationRefactorEngine(ParallelEvaluation):
             name = (f.file_path, f.node.name)
             ordinal = occurrences.get(name, 0)
             occurrences[name] = ordinal + 1
-            line = self._input_function_lines.setdefault((*name, ordinal), f.node.lineno)
-            if f.file_path in limits:
-                self._pass_to_input_lines[f.file_path, f.node.lineno] = line
+            key = (*name, ordinal)
+            if self._run_census is None:
+                self._input_function_lines[key] = f.node.lineno
+            elif f.file_path in limits and key in self._input_function_lines:
+                self._pass_to_input_lines[f.file_path, f.node.lineno] = self._input_function_lines[
+                    key
+                ]
 
     def find_block_pairs(
         self,
