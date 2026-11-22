@@ -150,6 +150,10 @@ TRACERS = frozenset({"_debug_reject", "_reject", "_debug_decline_site"})
 """The calls that trace a decline: of a pair, or of a further site a pair's helper cannot take."""
 
 ACCOUNTED = {
+    ("clustering.py", "_are_structurally_similar", "RecursionError"): (
+        "a cache key could not be built; the ordinary shape comparison decides and its"
+        " caller traces not_structurally_similar if the comparison fails"
+    ),
     ("pair_evaluation.py", "_module_namespace_names", "SyntaxError"): (
         "returns None, which _host_namespace_reads passes on and the pair declines as"
         " bare_name_differs_by_module"

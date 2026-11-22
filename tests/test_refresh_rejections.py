@@ -88,3 +88,16 @@ def test_current_context_decides_before_a_reused_refusal(edits: list[str], stric
                 fresh = UnificationRefactorEngine(max_parameters=1, strict=strict)
                 assert warm.analyze_file(path) == fresh.analyze_file(path) == []
                 assert warm.declined_pairs == fresh.declined_pairs
+
+
+def test_a_shape_without_a_cache_key_still_receives_the_ordinary_judgment(tmp_path: Path) -> None:
+    source = tmp_path / "program.py"
+    source.write_text("pass\n")
+    engine = UnificationRefactorEngine()
+    statements = literal_block([1, 2])
+    with (
+        engine._staged_output(source, source),
+        patch.object(engine, "_sid", side_effect=RecursionError),
+    ):
+        assert engine._are_structurally_similar(statements, literal_block([3, 4]))
+        assert not engine._are_structurally_similar(statements, literal_block([3]))
