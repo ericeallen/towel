@@ -80,6 +80,7 @@ from .models import (
     LeftAlone,
     PairTally,
     RefactoringProposal,
+    RejectReason,
     NotExamined,
     SkippedFile,
     TerminationReason,
@@ -98,7 +99,7 @@ from .progress import (
 )
 from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..consumers import MAXIMUM_FILES
-from ..diagnostics import LOG, REJECTIONS, debugging, public_log_paths
+from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, VALIDATION, debugging, public_log_paths
 from ..formatting import FormattingChangedCode, LintRejected
 from ..filesystem import (
     StagedProject,
@@ -244,6 +245,9 @@ def counted_reasons(counts: Mapping[_Reason, int]) -> str:
     )
 
 
+AppliedPairReport = Literal["all", "module_conditions", "none"]
+
+
 class FixedPointDrivers(Materialization):
     """FixedPointDrivers methods of the engine; see the module docstring."""
 
@@ -261,6 +265,7 @@ class FixedPointDrivers(Materialization):
     _last_analysis = _AnalysisReport()
     _run_census: Optional[AnalysisCensus] = None
     _collect_locations = True
+    _report_if_covered: Optional[AppliedPairReport] = None
     _stage_report_path: Optional[Callable[[str], str]] = None
     _timed_preview = False
     _declined_where: Dict[str, Tuple[BlockLocation, ...]] = {}
@@ -327,10 +332,19 @@ class FixedPointDrivers(Materialization):
             )
 
     @contextmanager
-    def _report_analysis(self, whole: bool = True) -> Iterator[None]:
+    def _report_analysis(
+        self, whole: bool = True, *, requested: Optional[AppliedPairReport] = "all"
+    ) -> Iterator[None]:
         """Only a whole pass supersedes the report. A timed preview can still request its predecessor."""
         if not whole:
-            yield
+            # A changed-file restriction sometimes omits no comparable blocks.
+            # Pairing can establish that before the first verdict is settled.
+            self._report_if_covered = None if self._timed_preview else requested
+            try:
+                yield
+            finally:
+                self._report_if_covered = None
+                self._collect_locations = False
             return
         self._release_report_locations(preserve=self._timed_preview)
         self._pair_left_alone = PairLocations("counts")
@@ -867,6 +881,7 @@ class FixedPointDrivers(Materialization):
         *,
         before_publication: Optional[BeforePublication] = None,
         before_preview: Optional[BeforePreview] = None,
+        applied_pair_report: AppliedPairReport = "all",
     ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
         """
         Apply refactorings across a directory (recursively) until a fixed point.
@@ -877,6 +892,10 @@ class FixedPointDrivers(Materialization):
         project is re-paired, considering rewritten files and proposals
         declined in the previous project context. The run stops when no
         proposal applies or the iteration bound is reached.
+
+        By default the run report accounts for every final pair. A caller
+        displaying only module conditions or no pair diagnostics after a
+        change may request just that portion of the final pair report.
 
         Args:
             input_dir: The directory to analyze.
@@ -930,7 +949,7 @@ class FixedPointDrivers(Materialization):
             try:
                 self._analysis_paths = tuple(self._find_python_files(str(stage.target)))
                 results, termination_reason = self._refactor_directory_in_place(
-                    stage.target, reporter, max_iterations
+                    stage.target, reporter, max_iterations, applied_pair_report
                 )
                 public = {stage.public(path): result for path, result in results.items()}
                 self._publish(
@@ -970,11 +989,15 @@ class FixedPointDrivers(Materialization):
         preview(stage)
 
     def _refactor_directory_in_place(
-        self, directory: Path, reporter: "_ApplyProgress", max_iterations: int
+        self,
+        directory: Path,
+        reporter: "_ApplyProgress",
+        max_iterations: int,
+        applied_pair_report: AppliedPairReport = "all",
     ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
         """The directory loop over ``directory``, then the cold confirmation of what it did."""
 
-        run = _DirectoryRun()
+        run = _DirectoryRun(applied_pair_report=applied_pair_report)
         termination_reason: TerminationReason = "fixed_point"
 
         try:
@@ -1254,16 +1277,32 @@ class FixedPointDrivers(Materialization):
             if self.incremental_global_passes and passes_so_far > 0 and not rehearing
             else None
         )
-        with self._report_analysis(restrict is None):
+        budget = self.import_graph.resource_budget
+        remaining = (budget.remaining, budget.layout_remaining)
+        # A reason shared by a pair and a declined proposal affects even the
+        # CLI's default count of places left alone after an application.
+        requested: Optional[AppliedPairReport] = "all"
+        if run.applied and set(self._declined.values()).isdisjoint(RejectReason):
+            requested = run.applied_pair_report
+        if any(debugging(logger) for logger in (REJECTIONS, VALIDATION, OVERLAP, TYPES)):
+            requested = None
+        with self._report_analysis(restrict is None, requested=requested):
             proposals = self.analyze_directory(
                 str(output_path),
                 recursive=True,
                 progress=reporter.analysis_mode,
                 changed_files=restrict,
             )
-            if restrict is None:
-                self._note_analysis(output_path, len(proposals), reporter)
-                run.report_revision = run.revision
+            if restrict is None or self._collect_locations:
+                self._note_analysis(
+                    output_path, len(proposals), reporter if restrict is None else None
+                )
+                # A second pass could exhaust the relaxed guard's remaining
+                # allowance. Keep it when the discovery pass spent that budget.
+                if restrict is None or (
+                    not proposals and remaining == (budget.remaining, budget.layout_remaining)
+                ):
+                    run.report_revision = run.revision
         run.global_revision = run.revision
         run.changed_since_global.clear()
         if not proposals:
@@ -1459,6 +1498,7 @@ class _RejectedProposals:
 class _DirectoryRun:
     """What one directory run has done so far."""
 
+    applied_pair_report: AppliedPairReport = "all"
     # Per file: how many proposals rewrote it, and their descriptions.
     results: Dict[str, Tuple[int, List[str]]] = field(default_factory=dict)
     # Files changed since the last global pass, by Towel or an external edit.

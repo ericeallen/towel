@@ -953,6 +953,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         stale.update(
             os.path.abspath(path) for path in file_paths if not self.analysis_session.reusable(path)
         )
+        if stale:
+            # Re-reading an uncached or warning-producing source can itself
+            # be observable. Keep the ordinary reporting pass in that case.
+            self._report_if_covered = None
         for path in stale:
             self._evict_cached_analysis(path)
         self._analysis_paths = tuple(file_paths)
@@ -1457,6 +1461,13 @@ class UnificationRefactorEngine(ParallelEvaluation):
         changed = (
             None if changed_files is None else {os.path.abspath(path) for path in changed_files}
         )
+        requested = self._report_if_covered
+        # An omitted pair may spend the relaxed resource allowance. A pair
+        # that can redirect to an existing function may also emit a rebinding
+        # warning. In those cases even a terse CLI report can observe it.
+        if requested is not None and (not self.strict or self.complete_scope):
+            requested = "all"
+        covers_report = requested is not None and not excluded
         try:
             for i, first in enumerate(all_functions):
                 file1_changed = changed is None or os.path.abspath(first.file_path) in changed
@@ -1467,6 +1478,18 @@ class UnificationRefactorEngine(ParallelEvaluation):
                         and not file1_changed
                         and os.path.abspath(second.file_path) not in changed
                     ):
+                        if (
+                            covers_report
+                            and (
+                                requested == "all"
+                                or (
+                                    requested == "module_conditions"
+                                    and first.file_path != second.file_path
+                                )
+                            )
+                            and not buckets[i].keys.isdisjoint(buckets[j].keys)
+                        ):
+                            covers_report = False
                         continue  # both files unchanged since the last global pass: verdict stands
                     # Only blocks in a bucket the other function also has can pair;
                     # the tolerance check is still the unchanged quick_filter.
@@ -1522,6 +1545,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
                     reporter.function_pair_done(len(pairs))
         finally:
             reporter.finish()
+        if covers_report:
+            self._release_report_locations(preserve=False)
+            self._collect_locations = True
         return pairs
 
     def _expression_pair(

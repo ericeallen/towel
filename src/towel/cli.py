@@ -1739,6 +1739,15 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
                 progress=options.progress,
                 before_publication=ask,
                 before_preview=capture if preview else None,
+                applied_pair_report=(
+                    "all"
+                    if options.stats or (options.explain and not (options.json or options.diff))
+                    else (
+                        "module_conditions"
+                        if options.cross_module and not (options.json or options.diff)
+                        else "none"
+                    )
+                ),
             )
             applied = sum(count for count, _ in results.values())
             termination = termination_reason
