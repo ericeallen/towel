@@ -166,3 +166,62 @@ def test_pipeline_census_includes_the_pairing_limit(
     assert len(censuses) == 1
     assert len(censuses[-1].not_examined) == 1
     assert censuses[-1].not_examined[0].limited_functions[0].windows == 23
+
+
+def test_later_pass_can_first_limit_a_function(tmp_path: Path) -> None:
+    """Cap census 1: extracting the if blocks joins two runs of expression statements."""
+    from towel.cli_reporting import analysed_record, not_examined_lines
+
+    def steps(start: int, stop: int) -> str:
+        return "".join(
+            f"    g.step({', '.join(str(i * 100 + j) for j in range(7))})\n"
+            for i in range(start, stop)
+        )
+
+    def prepare(value: int) -> str:
+        return (
+            f"    if g.ready({value}):\n"
+            f"        g.prepare_stage_one({value}, 20, 30)\n"
+            f"        g.prepare_stage_two({value}, 40, 50)\n"
+            f"        g.prepare_stage_three({value}, 60, 70)\n"
+        )
+
+    def marked(value: int) -> str:
+        return (
+            "    g.mark_alpha(999, 998, 997, 996)\n"
+            + prepare(value)
+            + ("    g.finish_omega(999, 998, 997, 996)\n")
+        )
+
+    path = tmp_path / "mod.py"
+    path.write_text(
+        "def build(g):\n"
+        + steps(0, 36)
+        + marked(10)
+        + steps(36, 42)
+        + marked(20)
+        + steps(42, 56)
+        + "".join(f"def seed_{i}(g):\n" + prepare(i) for i in (30, 40, 50))
+    )
+    engine = UnificationRefactorEngine(strict=True)
+    engine.analyze_files([str(path)], progress="none")
+    assert engine.last_census.not_examined == ()
+    _, applied, _ = engine.refactor_to_fixed_point(
+        str(path), output_path=str(tmp_path / "out.py"), progress="none"
+    )
+    report = engine.run_report
+    assert applied >= 1
+    assert report.functions_analysed == 4
+
+    def relative(path: str) -> str:
+        return Path(path).name
+
+    (entry,) = analysed_record(report, relative)["not_examined"]
+    assert entry["limited_functions"] == [
+        {"function": "build", "line": 1, "windows": 1169, "limit": 1024}
+    ]
+    for explain in (False, True):
+        assert any(
+            "limited its search for repeated blocks inside 1 function" in line
+            for line in not_examined_lines(report, relative, nothing_found=False, explain=explain)
+        )

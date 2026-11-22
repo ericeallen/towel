@@ -731,6 +731,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
     def _forget_run_lookups(self) -> None:
         super()._forget_run_lookups()
+        self._input_function_lines: Dict[Tuple[str, str, int], int] = {}
+        self._pass_to_input_lines: Dict[Tuple[str, int], int] = {}
         self._signature_filter = lru_cache(maxsize=16_384)(quick_filter)
 
     # --- Debug helpers ---
@@ -1028,6 +1030,18 @@ class UnificationRefactorEngine(ParallelEvaluation):
             # Reading has finished even if the deadline interrupts pair evaluation.
             if self._run_census is None:
                 self._run_census = self._census
+
+            elif self._output_origin is not None:
+                limits = {
+                    entry.path: [
+                        dataclasses.replace(f, line=self._pass_to_input_lines[entry.path, f.line])
+                        for f in entry.limited_functions
+                    ]
+                    for entry in census.not_examined
+                    if entry.limited_functions
+                }
+                if limits:
+                    self._run_census = self._run_census.with_function_limits(limits)
 
         return run_pipeline(
             file_paths,
@@ -1386,6 +1400,28 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 max_seen = idx
         return max_seen + 1
 
+    def _locate_run_limits(
+        self, functions: Sequence[FunctionArtifact], limits: Dict[str, List[LimitedFunction]]
+    ) -> None:
+        """Relate shifted definitions to their input lines, even for same-named methods.
+
+        Extraction inserts fresh helper names and preserves the order of existing
+        definitions with the same name. For a new helper, use its first observed line.
+        """
+        if self._output_origin is None or (self._run_census is not None and not limits):
+            return
+        self._pass_to_input_lines = {}
+        occurrences: Dict[Tuple[str, str], int] = {}
+        for f in functions:
+            if self._run_census is not None and f.file_path not in limits:
+                continue
+            name = (f.file_path, f.node.name)
+            ordinal = occurrences.get(name, 0)
+            occurrences[name] = ordinal + 1
+            line = self._input_function_lines.setdefault((*name, ordinal), f.node.lineno)
+            if f.file_path in limits:
+                self._pass_to_input_lines[f.file_path, f.node.lineno] = line
+
     def find_block_pairs(
         self,
         all_functions: Sequence[FunctionArtifact],
@@ -1548,6 +1584,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         if covers_report:
             self._release_report_locations(preserve=False)
             self._collect_locations = True
+        self._locate_run_limits(all_functions, limits_by_file)
         return pairs
 
     def _expression_pair(

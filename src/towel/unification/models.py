@@ -27,7 +27,9 @@ from typing import (
     Dict,
     List,
     Literal,
+    Mapping,
     NamedTuple,
+    Sequence,
     Optional,
     Set,
     Tuple,
@@ -587,6 +589,25 @@ class AnalysisCensus:
     skipped: Tuple[SkippedFile, ...] = ()
     not_examined: Tuple[NotExamined, ...] = ()
 
+    def with_function_limits(
+        self, limits: Mapping[str, Sequence[LimitedFunction]]
+    ) -> AnalysisCensus:
+        """Keep one observation per definition, from the pass that omitted the most windows."""
+        by_path = {entry.path: entry for entry in self.not_examined}
+        for path, functions in limits.items():
+            entry = by_path.get(path, NotExamined(path, 0, 0))
+            observed = {(f.function, f.line): f for f in entry.limited_functions}
+            for function in functions:
+                key = (function.function, function.line)
+                previous = observed.get(key)
+                if (
+                    previous is None
+                    or function.windows - function.limit > previous.windows - previous.limit
+                ):
+                    observed[key] = function
+            by_path[path] = replace(entry, limited_functions=tuple(observed.values()))
+        return replace(self, not_examined=tuple(by_path.values()))
+
 
 class LimitedSearchPairs(List[CodeBlockPair]):
     """Pairs from a search that reached a function limit, carrying its census details."""
@@ -596,11 +617,7 @@ class LimitedSearchPairs(List[CodeBlockPair]):
         self._limits = limits
 
     def census(self, original: AnalysisCensus) -> AnalysisCensus:
-        by_path = {entry.path: entry for entry in original.not_examined}
-        for path, functions in self._limits.items():
-            entry = by_path.get(path, NotExamined(path, 0, 0))
-            by_path[path] = replace(entry, limited_functions=tuple(functions))
-        return replace(original, not_examined=tuple(by_path.values()))
+        return original.with_function_limits(self._limits)
 
 
 @dataclass(frozen=True, slots=True)
