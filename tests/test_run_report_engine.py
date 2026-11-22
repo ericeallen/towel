@@ -23,13 +23,26 @@ uses to ask once it knows.
 
 from __future__ import annotations
 
+import gc
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from tests.test_cli_integration import invoke
 from tests.test_helpers import lifetime_order_certified
-from towel.unification.fixed_point import Publication
+from towel.unification.fixed_point import Publication, RunReport
+from towel.unification.models import (
+    BlockLocation,
+    ClassInfo,
+    CodeBlockPair,
+    FunctionArtifact,
+    LeftAlone,
+    PairVerdict,
+    RefactoringProposal,
+)
+from towel.unification.progress import ProgressMode
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 BODY = (
@@ -165,3 +178,223 @@ def test_the_engine_hears_what_it_would_publish_before_it_does(tmp_path: Path) -
         before_publication=heard.append,
     )
     assert applied == 1 and heard[0].files == (str(tmp_path / "one.py"),)
+
+
+def _live_location_records() -> tuple[int, int]:
+    objects = gc.get_objects()
+    return (
+        sum(type(o) is LeftAlone for o in objects),
+        sum(type(o) is BlockLocation for o in objects),
+    )
+
+
+@pytest.mark.strict_mode
+def test_repeated_declines_share_their_report_locations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settlement keeps multiplicity without retaining a fresh record for every verdict."""
+    target = _many_left_alone(tmp_path / "project", 1)
+    engine = UnificationRefactorEngine()
+    settle = engine._settle
+    repeats = 256
+
+    def repeated(pair: CodeBlockPair, verdict: PairVerdict) -> RefactoringProposal | None:
+        if verdict.counted is not None:
+            verdict = replace(verdict, identity=None)
+            for _ in range(repeats - 1):
+                settle(pair, verdict)
+        return settle(pair, verdict)
+
+    monkeypatch.setattr(engine, "_settle", repeated)
+    before_sites, before_blocks = _live_location_records()
+    engine.analyze_directory(str(target), progress="none")
+    after_sites, after_blocks = _live_location_records()
+    count = sum(engine.declined_pairs.values())
+    assert count == 3 * repeats
+    retained = after_sites - before_sites, after_blocks - before_blocks
+    assert retained[0] <= 3 and retained[1] <= 6, retained
+    assert len(engine.last_left_alone) == count
+
+
+@pytest.mark.parametrize(("flags", "limit"), [([], 5), (["--json"], 0)])
+def test_summary_holds_only_the_locations_it_can_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: list[str], limit: int
+) -> None:
+    """Every synthetic pair has a different right block; even deduplicating whole pairs is unbounded."""
+    target = _many_left_alone(tmp_path / "project", 1)
+    original = UnificationRefactorEngine._settle
+    recorded = []
+
+    def many_places(
+        engine: UnificationRefactorEngine, pair: CodeBlockPair, verdict: PairVerdict
+    ) -> RefactoringProposal | None:
+        decline = replace(verdict, counted="unprofitable_helper", identity=None, proposal=None)
+        for line in range(100, 356):
+            original(engine, replace(pair, block2_range=(line, line)), decline)
+        recorded.append(_live_location_records())
+        return None
+
+    monkeypatch.setattr(UnificationRefactorEngine, "_settle", many_places)
+    before_sites, before_blocks = _live_location_records()
+    result = invoke(
+        ["preview", str(target), "--no-types", "--no-format", "--progress", "none", *flags]
+    )
+    assert result.status == 0, result
+    retained = (
+        max(s for s, _ in recorded) - before_sites,
+        max(b for _, b in recorded) - before_blocks,
+    )
+    assert retained[0] <= limit and retained[1] <= 2 * limit, retained
+    assert str(256 * len(recorded)) in result.stdout
+
+
+def test_timed_preview_releases_the_previous_analysis_and_can_still_explain_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deadline during the next whole pass reports the last completed one, including ties."""
+    from towel.cli_reporting import reason_lines
+    from towel.unification.pair_locations import ReasonPlaces
+    from towel.execution_budget import BudgetExpired
+
+    target = tmp_path / "sample.py"
+    target.write_text(DUPLICATES + "\n" + PRICING)
+    original = UnificationRefactorEngine.process_block_pairs
+    previous_sites: set[int] = set()
+    expected: list[str] = []
+    retained: list[int] = []
+
+    def interrupt_second(
+        engine: UnificationRefactorEngine,
+        pairs: list[CodeBlockPair],
+        functions: list[FunctionArtifact],
+        classes: list[ClassInfo],
+        *,
+        progress: ProgressMode,
+    ) -> list[RefactoringProposal]:
+        if previous_sites:
+            retained.extend(
+                id(o)
+                for o in gc.get_objects()
+                if type(o) is ReasonPlaces and id(o) in previous_sites
+            )
+            raise BudgetExpired()
+        proposals = original(engine, pairs, functions, classes, progress=progress)
+        groups = engine.last_explained_places
+        assert proposals and groups
+        previous_sites.update(map(id, groups.values()))
+        report = RunReport(declined_pairs=engine.declined_pairs, explained_pairs=groups)
+        expected.extend(
+            line
+            for line in reason_lines(report, locate=lambda _: target.name)
+            if ": similar to " in line
+        )
+        return proposals
+
+    monkeypatch.setattr(UnificationRefactorEngine, "process_block_pairs", interrupt_second)
+    result = invoke(
+        [
+            "preview",
+            str(target),
+            "--explain",
+            "--time-limit",
+            "300",
+            "--no-types",
+            "--no-format",
+            "--progress",
+            "none",
+        ]
+    )
+    assert result.status == 124, result
+    assert expected and all(line in result.stdout.splitlines() for line in expected), result.stdout
+    assert not retained, f"{len(retained)} records from the previous analysis remain live"
+
+
+@pytest.mark.strict_mode
+def test_a_standalone_analysis_can_follow_a_run_without_keeping_two_sets_of_sites(
+    tmp_path: Path,
+) -> None:
+    first = _many_left_alone(tmp_path / "first", 1)
+    second = _many_left_alone(tmp_path / "second", 1)
+    engine = UnificationRefactorEngine()
+    engine.refactor_directory_to_fixed_point(str(first), str(tmp_path / "out"), progress="none")
+    previous = len(engine.run_report.left_alone)
+    assert previous
+    engine.analyze_directory(str(second), progress="none")
+    assert engine.last_left_alone
+    assert not any(
+        type(obj) is BlockLocation and Path(obj.path).parent == tmp_path / "out"
+        for obj in gc.get_objects()
+    )
+    assert all(
+        Path(block.path).parent == tmp_path / "out"
+        for site in engine.run_report.left_alone
+        for block in site.blocks
+    )
+    assert len(engine.run_report.left_alone) == previous
+
+
+def test_explain_counts_repetitions_separated_by_a_different_rank(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repeated verdicts still count, but a peer appears only once across different ranks."""
+    source = tmp_path / "sample.py"
+    source.write_text(PRICING)
+    original = UnificationRefactorEngine._settle
+    retained = []
+    pairs = []
+
+    def alternate(
+        engine: UnificationRefactorEngine, pair: CodeBlockPair, verdict: PairVerdict
+    ) -> None:
+        decline = replace(verdict, counted="unprofitable_helper", identity=None, proposal=None)
+        for index in range(100):
+            right = (10, 12) if index % 2 else (10, 11)
+            original(engine, replace(pair, block1_range=(1, 2), block2_range=right), decline)
+        (group,) = engine.last_explained_places.values()
+        retained.append(sum(len(peers) for peers in group.shown.values()))
+        pairs.append(100)
+
+    monkeypatch.setattr(UnificationRefactorEngine, "_settle", alternate)
+    result = invoke(
+        [
+            "preview",
+            str(source),
+            "--quick",
+            "--explain",
+            "--no-types",
+            "--no-format",
+            "--progress",
+            "none",
+        ]
+    )
+    assert result.status == 0, result
+    assert sum(pairs) > 0
+    assert f"Found {sum(pairs)} places with similar code" in result.stdout
+    assert [line.strip() for line in result.stdout.splitlines() if ": similar to " in line] == [
+        "sample.py:10-12: similar to sample.py:1-2",
+        "sample.py:1-2: similar to sample.py:10-11 and 1 other place",
+        "sample.py:10-11: similar to sample.py:1-2",
+    ]
+    assert max(retained) == 4
+
+
+def test_quick_preview_does_not_keep_conditions_for_every_pair_of_modules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the fixed-point report can list the missing import for every module pair."""
+    from towel import cli
+
+    project = _many_left_alone(tmp_path / "project", 6)
+    original = cli._quick_report
+    counts = []
+
+    def observe(engine: UnificationRefactorEngine) -> RunReport:
+        assert len(engine.last_left_alone) <= 5
+        counts.append(len(engine._pair_left_alone.conditions))
+        return original(engine)
+
+    monkeypatch.setattr(cli, "_quick_report", observe)
+    result = invoke(["preview", str(project), "--quick", "--cross-module", "--progress", "none"])
+    assert result.status == 0, result
+    assert "Analysed 6 Python files" in result.stdout
+    assert counts == [0]

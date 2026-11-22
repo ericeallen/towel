@@ -577,7 +577,7 @@ class AnalysisCensus:
     not_examined: Tuple[NotExamined, ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BlockLocation:
     """Where one block stands: its file and first and last lines."""
 
@@ -590,7 +590,7 @@ class BlockLocation:
         return self.last_line - self.first_line + 1
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LeftAlone:
     """Similar code a run did not extract: where it is, and the reason it is counted under.
 
@@ -602,6 +602,8 @@ class LeftAlone:
 
     blocks: Tuple[BlockLocation, ...]
     reason: str
+    occurrences: int = field(default=1, repr=False)
+    """How many declined sites this record represents in a report."""
 
     @property
     def lines(self) -> int:

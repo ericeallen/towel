@@ -36,12 +36,37 @@ Places left alone, largest first:
 Input files were not changed.
 ```
 
-Each reason line gives how many places it applied to, its sentence and its
-name. When there is something you can do, the next line says what. Below the
-reasons, each place is named by file and lines, largest first; the run shows
-the five largest, and `--explain` lists them all. A run that extracted something
-leaves out the pairs it declined, because most are the calls it has just written;
-`--explain` shows those too.
+The default report shows the five largest sets of matching blocks. A run that
+extracted something omits the pairs it declined, because many are calls it just
+wrote. Add `--explain` to include those pairs and group the locations by reason.
+
+```bash
+towel preview feed.py --explain
+```
+
+```text
+Would apply 0 refactoring(s).
+Analysed 1 Python file (2 functions).
+Found 2 places with similar code and extracted none.
+
+Why code was left alone, most frequent reason first (largest places shown):
+  2  The block holds yield or yield from: as a helper of its own it would be a separate generator, and Towel does not share code that yields. [generator_block]
+    feed.py:2-5: similar to feed.py:9-12
+    feed.py:9-12: similar to feed.py:2-5
+    feed.py:3-5: similar to feed.py:10-12
+    feed.py:10-12: similar to feed.py:3-5
+Input files were not changed.
+```
+
+The reason count includes each declined pair or proposal. In this example,
+two declined pairs involve four distinct places. Each place appears once under
+that reason. Towel shows up to 20 places per reason, longest first. Beside each
+one it names the most structurally similar peer and counts the other distinct
+peers. Towel compares the types of syntax nodes in corresponding statements.
+Sites that would share the same proposed helper count as a full match. For
+equal matches it prefers the closest line count, then file and line.
+If more places qualify, the final line gives the omitted count. Run Towel on
+the directory or file you care about to see more.
 
 ## When Towel finds nothing to do
 
@@ -73,9 +98,6 @@ telling you there is nothing worth extracting, and you are done. Do not
 rewrite code only so that Towel can extract it. Act on a reason when its
 place is code you would have extracted by hand; the sentence's "What you can
 do" line, where there is one, says how.
-
-`--explain` lists every place the final analysis left alone, with its reason,
-which helps you find the one you meant; on a large project it is long.
 
 ## The reasons you will meet most
 

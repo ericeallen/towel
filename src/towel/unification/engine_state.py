@@ -59,9 +59,9 @@ from .bounded_cache import BoundedCache, memoizing
 from .argument_ownership import ArgumentHandoffMemo
 from .extractor import HygienicExtractor
 from .function_index import FunctionIndex
+from .pair_locations import PairLocations
 from .models import (
     AnalysisCensus,
-    LeftAlone,
     AppliedChange,
     ClassInfo,
     ClusterContext,
@@ -233,7 +233,7 @@ class EngineState:
     """What that reason names, counted with it (``builtin_may_differ_by_module[len]``)."""
     _pair_rejections: Dict[str, int]
     """How many candidate pairs the latest analysis declined, by reason."""
-    _pair_left_alone: List[LeftAlone]
+    _pair_left_alone: PairLocations
     """Where each candidate pair the latest analysis declined stands, in pair order."""
     _census: AnalysisCensus
     """What the latest analysis read: its files, their functions, and the files it skipped."""

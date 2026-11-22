@@ -31,6 +31,7 @@ from towel.execution_budget import (
     BudgetExpired,
     abandon_budget,
     check_budget,
+    has_time_limit,
     recording_application,
 )
 
@@ -83,6 +84,7 @@ from .models import (
     SkippedFile,
     TerminationReason,
 )
+from .pair_locations import ModuleCondition, PairLocations, ReasonPlaces, SavedPairLocations
 from .overlap import filter_overlapping_proposals
 from .progress import (
     write_note,
@@ -184,6 +186,25 @@ class RunReport:
     not_examined: Tuple[NotExamined, ...] = ()
     """Per file the first analysis read, the code no candidate is drawn from (``NotExamined``)."""
     resource_limit_reached: bool = False
+    unlisted_pairs: int = 0
+    """Declined pairs counted but outside the requested location detail."""
+    module_conditions: Optional[Tuple[ModuleCondition, ...]] = None
+
+    explained_pairs: Mapping[str, ReasonPlaces] = field(default_factory=dict)
+
+    @property
+    def left_alone_total(self) -> int:
+        return self.unlisted_pairs + sum(site.occurrences for site in self.left_alone)
+
+
+@dataclass(frozen=True, slots=True)
+class _AnalysisReport:
+    """Publish the tally and its locations together, even when a deadline interrupts the pass."""
+
+    reasons: Mapping[str, int] = field(default_factory=dict)
+    tally: PairTally = PairTally()
+    emitted: int = 0
+    locations: PairLocations | SavedPairLocations | None = None
 
 
 @dataclass(frozen=True)
@@ -237,14 +258,11 @@ class FixedPointDrivers(Materialization):
     # the latest reason; and what its last whole analysis declined.
     _declined: Dict[str, DeclineReason] = {}
     _unverifiable_details: Dict[str, str] = {}
-    _last_declined_pairs: Dict[str, int] = {}
-    # How the last whole analysis's pairs ended, and how many proposals it emitted.
-    _last_pair_tally: PairTally = PairTally()
-    _last_emitted: int = 0
-    # What the run's first analysis read; where the last whole analysis's
-    # declined pairs, and the proposals not applied, stand.
+    _last_analysis = _AnalysisReport()
     _run_census: Optional[AnalysisCensus] = None
-    _last_left_alone: Tuple[LeftAlone, ...] = ()
+    _collect_locations = True
+    _stage_report_path: Optional[Callable[[str], str]] = None
+    _timed_preview = False
     _declined_where: Dict[str, Tuple[BlockLocation, ...]] = {}
     # The stage copies of the files an in-place run must not write, since
     # the project holds them under more than one link.
@@ -256,19 +274,24 @@ class FixedPointDrivers(Materialization):
         proposals: Dict[DeclineReason, int] = {}
         for reason in self._declined.values():
             proposals[reason] = proposals.get(reason, 0) + 1
-        tally = self._last_pair_tally
+        analysis = self._last_analysis
+        tally = analysis.tally
         census = self._run_census or AnalysisCensus()
         not_applied = tuple(
             LeftAlone(self._declined_where.get(identity, ()), str(reason))
             for identity, reason in self._declined.items()
         )
+        locations = analysis.locations
+        if isinstance(locations, SavedPairLocations):
+            locations = locations.read()
+        pairs = tuple(locations.locations()) if locations else ()
         return RunReport(
-            dict(self._last_declined_pairs),
+            dict(analysis.reasons),
             proposals,
             candidate_pairs=tally.candidate_pairs,
             duplicate_pairs=tally.duplicate_pairs,
-            overlapping_proposals=tally.distinct_proposals - self._last_emitted,
-            emitted_proposals=self._last_emitted,
+            overlapping_proposals=tally.distinct_proposals - analysis.emitted,
+            emitted_proposals=analysis.emitted,
             signatures_verified=self._signatures_verified,
             signatures_refused=self._signatures_refused,
             first_unverifiable_reason=next(
@@ -286,22 +309,53 @@ class FixedPointDrivers(Materialization):
             functions_analysed=census.functions,
             skipped_files=census.skipped,
             not_examined=census.not_examined,
-            left_alone=self._last_left_alone + not_applied,
+            left_alone=pairs + not_applied,
+            explained_pairs=locations.explained if locations else {},
+            unlisted_pairs=sum(analysis.reasons.values()) - sum(site.occurrences for site in pairs),
+            module_conditions=(
+                tuple(locations.conditions) if locations and locations.cross_module else None
+            ),
         )
+
+    def _release_report_locations(self, *, preserve: bool) -> None:
+        """Keep the previous result available off heap only if a caller can still request it."""
+        locations = self._last_analysis.locations
+        if isinstance(locations, PairLocations):
+            self._last_analysis = dataclasses.replace(
+                self._last_analysis,
+                locations=SavedPairLocations(locations) if preserve and locations else None,
+            )
+
+    @contextmanager
+    def _report_analysis(self, whole: bool = True) -> Iterator[None]:
+        """Only a whole pass supersedes the report. A timed preview can still request its predecessor."""
+        if not whole:
+            yield
+            return
+        self._release_report_locations(preserve=self._timed_preview)
+        self._pair_left_alone = PairLocations("counts")
+        self._collect_locations = True
+        try:
+            yield
+        finally:
+            if self._last_analysis.locations is not self._pair_left_alone:
+                self._pair_left_alone = PairLocations("counts")
+            self._collect_locations = False
 
     def _note_analysis(
         self, analyzed: Path, emitted: int, reporter: Optional["_ApplyProgress"] = None
     ) -> None:
         """Keep what a whole analysis of ``analyzed`` declined and emitted, for the run's report."""
-        self._last_declined_pairs = dict(self._pair_rejections)
-        self._last_pair_tally, self._last_emitted = self._pair_tally, emitted
-        self._last_left_alone = tuple(self._pair_left_alone)
+        self._pair_left_alone.finish()
+        self._last_analysis = _AnalysisReport(
+            self._pair_rejections, self._pair_tally, emitted, self._pair_left_alone
+        )
         if self._run_census is None:
             self._run_census = self._census
-        if reporter is not None and self._last_declined_pairs:
+        if reporter is not None and self._pair_rejections:
             reporter.detail(
-                f"Declined {sum(self._last_declined_pairs.values())} candidate pair(s): "
-                f"{counted_reasons(self._last_declined_pairs)}"
+                f"Declined {sum(self._pair_rejections.values())} candidate pair(s): "
+                f"{counted_reasons(self._pair_rejections)}"
             )
 
     def _decline(self, proposal: RefactoringProposal, reason: DeclineReason) -> None:
@@ -321,9 +375,6 @@ class FixedPointDrivers(Materialization):
         def located(blocks: Tuple[BlockLocation, ...]) -> Tuple[BlockLocation, ...]:
             return tuple(dataclasses.replace(block, path=public(block.path)) for block in blocks)
 
-        self._last_left_alone = tuple(
-            dataclasses.replace(site, blocks=located(site.blocks)) for site in self._last_left_alone
-        )
         self._declined_where = {
             identity: located(blocks) for identity, blocks in self._declined_where.items()
         }
@@ -362,12 +413,13 @@ class FixedPointDrivers(Materialization):
         self.preview_incomplete = False
         self._run_applied = ()
         self._unchecked, self._unchecked_reason = frozenset(), ""
-        self._declined, self._last_declined_pairs = {}, {}
+        self._declined = {}
+        self._last_analysis = _AnalysisReport()
         self._unverifiable_details = {}
-        self._run_census, self._last_left_alone, self._declined_where = None, (), {}
+        self._run_census, self._declined_where = None, {}
         self._skips_reported = set()
-        self._pair_tally = self._last_pair_tally = PairTally()
-        self._last_emitted = self._signatures_verified = self._signatures_refused = 0
+        self._pair_tally = PairTally()
+        self._signatures_verified = self._signatures_refused = 0
 
     def _refuse_a_run_the_checker_emptied(self, applied: int) -> None:
         """Raise when nothing was applied and the checker failed on some proposal.
@@ -578,10 +630,11 @@ class FixedPointDrivers(Materialization):
             check_budget()
             # Analyze for refactoring opportunities
             # Important: invalidate cached analysis for this path so we see latest edits
-            proposals = self.analyze_files(
-                [file_path], invalidate_paths=[file_path], progress=analysis_progress
-            )
-            self._note_analysis(Path(file_path), len(proposals), reporter)
+            with self._report_analysis():
+                proposals = self.analyze_files(
+                    [file_path], invalidate_paths=[file_path], progress=analysis_progress
+                )
+                self._note_analysis(Path(file_path), len(proposals), reporter)
 
             if not proposals:
                 # Fixed point reached - no more refactorings found
@@ -943,10 +996,14 @@ class FixedPointDrivers(Materialization):
             # Incremental passes omit pairs in untouched files. Keep their
             # speed while applying, then account for the whole final project
             # once, including any helper merges that moved source locations.
-            proposals = self.analyze_directory(
-                str(directory), recursive=True, progress=reporter.analysis_mode, changed_files=None
-            )
-            self._note_analysis(directory, len(proposals))
+            with self._report_analysis():
+                proposals = self.analyze_directory(
+                    str(directory),
+                    recursive=True,
+                    progress=reporter.analysis_mode,
+                    changed_files=None,
+                )
+                self._note_analysis(directory, len(proposals))
         if run.applied:
             self.confirm_run_with_a_cold_checker(paths)
         self._refuse_a_run_the_checker_emptied(run.applied)
@@ -1029,6 +1086,9 @@ class FixedPointDrivers(Materialization):
                         original,
                         links,
                     )
+                self._collect_locations = False
+                self._stage_report_path = stage.public
+                self._timed_preview = preview and has_time_limit()
                 yield stage
                 self._change_log = [
                     dataclasses.replace(change, path=stage.public(change.path))
@@ -1040,6 +1100,9 @@ class FixedPointDrivers(Materialization):
                 raise
             finally:
                 # The stage is about to go; nothing may keep checking against it.
+                self._collect_locations = True
+                self._stage_report_path = None
+                self._timed_preview = False
                 self._type_run_oracle = inner_oracle
                 self._output_origin = None
                 self._unwritable_in_place = frozenset()
@@ -1191,15 +1254,16 @@ class FixedPointDrivers(Materialization):
             if self.incremental_global_passes and passes_so_far > 0 and not rehearing
             else None
         )
-        proposals = self.analyze_directory(
-            str(output_path),
-            recursive=True,
-            progress=reporter.analysis_mode,
-            changed_files=restrict,
-        )
-        if restrict is None:
-            self._note_analysis(output_path, len(proposals), reporter)
-            run.report_revision = run.revision
+        with self._report_analysis(restrict is None):
+            proposals = self.analyze_directory(
+                str(output_path),
+                recursive=True,
+                progress=reporter.analysis_mode,
+                changed_files=restrict,
+            )
+            if restrict is None:
+                self._note_analysis(output_path, len(proposals), reporter)
+                run.report_revision = run.revision
         run.global_revision = run.revision
         run.changed_since_global.clear()
         if not proposals:

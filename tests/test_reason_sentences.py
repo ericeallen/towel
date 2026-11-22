@@ -39,7 +39,7 @@ from towel.reason_sentences import (
 )
 from towel.unification.exceptions import Untypeable
 from towel.unification.fixed_point import RunReport
-from towel.unification.models import RejectReason
+from towel.unification.models import BlockLocation, LeftAlone, RejectReason
 
 _ALL = (
     [str(reason) for reason in RejectReason]
@@ -114,3 +114,33 @@ def test_the_ecosystem_harness_reads_the_counts_it_needs() -> None:
     text = "\n".join(reason_lines(report))
     assert ecosystem_check._count_of(ecosystem_check.UNVERIFIABLE.search(text)) == 4
     assert ecosystem_check._count_of(ecosystem_check.UNLOOKED_DECLINED.search(text)) == 2
+
+
+def test_explanation_merges_overlapping_pair_and_proposal_places() -> None:
+    from towel.unification.pair_locations import ReasonPlaces
+
+    a, b, c, singleton = [BlockLocation("a.py", n, n + 1) for n in (1, 4, 7, 10)]
+    pairs = ReasonPlaces()
+    for place, peer in [(a, b), (b, a)]:
+        neighbors = pairs.record_place(place)
+        assert neighbors is not None
+        neighbors[peer] = 1.0
+    reason = "unprofitable_helper"
+    report = RunReport(
+        declined_pairs={reason: 7},
+        declined_proposals={"unprofitable helper": 2},
+        explained_pairs={explain(reason).sentence: pairs},
+        left_alone=(
+            LeftAlone((b, a, c, c), "unprofitable helper"),
+            LeftAlone((singleton,), "unprofitable helper"),
+        ),
+    )
+    lines = reason_lines(report, locate=str)
+    assert len([line for line in lines if explain(reason).sentence in line]) == 1
+    assert any(line.startswith("  9  ") for line in lines)
+    assert lines[-4:] == [
+        "    a.py:1-2: similar to a.py:4-5 and 1 other place",
+        "    a.py:4-5: similar to a.py:1-2 and 1 other place",
+        "    a.py:7-8: similar to a.py:1-2 and 1 other place",
+        "    a.py:10-11",
+    ]

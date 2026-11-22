@@ -27,8 +27,8 @@ A report that lets someone run what you ran gets an answer fastest. Include:
   operating system. For a typed run, also the version of mypy or Pyright.
 - **The exact command** you ran, with every option.
 - **What Towel printed,** in full. For a block Towel left alone, add the output of
-  the same command as `towel preview PATH --explain`, which names the reason for
-  each pair.
+  the same command as `towel preview PATH --explain`, which groups places by reason.
+  Use the file or directory containing the block you want to show.
 - **The smallest code that shows it:** two functions with the duplicated block is
   usually enough. Remove anything confidential; never paste credentials.
 - **What you expected,** and, if Towel changed your program's behavior, the test

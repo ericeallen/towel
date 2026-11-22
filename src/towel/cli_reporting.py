@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from difflib import unified_diff
+from heapq import nsmallest
+from itertools import repeat
 import json
 from pathlib import Path
 from typing import (
@@ -37,22 +39,32 @@ from typing import (
 
 from towel.diagnostics import LOG
 from towel.relaxed_suitability import FindingJSON
-from towel.reason_sentences import Explanation, explain, reason_code, without_subject
+from towel.reason_sentences import (
+    Explanation,
+    cross_module_condition,
+    explain,
+    reason_code,
+    without_subject,
+)
 from towel.source_files import python_sources
 from towel.source_text import decode_source
+from towel.unification.pair_locations import (
+    EXPLAIN_PLACES_PER_REASON as EXPLAIN_PLACES_PER_REASON,
+    LARGEST_SHOWN as LARGEST_SHOWN,
+    ReasonPlaces,
+    location_rank,
+    place_rank,
+)
 
 if TYPE_CHECKING:
     from towel.unification.fixed_point import RunReport
     from towel.unification.models import AppliedChange
-    from towel.unification.models import LeftAlone, ParameterKind
+    from towel.unification.models import BlockLocation, LeftAlone, ParameterKind
 
 Outcome = Literal[
     "no_python_files", "no_repeated_code", "not_fully_examined", "all_left_alone", "applied"
 ]
 """How a run ended, including whether unexamined code limits a negative result."""
-
-LARGEST_SHOWN = 5
-"""How many of the largest places left alone a run lists without ``--explain``."""
 
 
 class ChangeRecord(TypedDict):
@@ -324,7 +336,7 @@ def outcome_line(report: "RunReport", applied: int, target: str) -> Optional[str
     if outcome == "no_repeated_code":
         return f"No repeated code found in {_plural(report.files_analysed, 'file')}."
     if outcome == "all_left_alone":
-        places = len(report.left_alone) or sum(report.declined_pairs.values()) + sum(
+        places = report.left_alone_total or sum(report.declined_pairs.values()) + sum(
             report.declined_proposals.values()
         )
         return f"Found {_plural(places, 'place')} with similar code and extracted none."
@@ -391,9 +403,9 @@ def shows_pairs(applied: int, every: bool) -> bool:
 def left_alone_count(report: "RunReport", applied: int) -> int:
     """How many places the report lists as left alone by default (``shows_pairs``)."""
     if shows_pairs(applied, False):
-        return len(report.left_alone)
+        return report.left_alone_total
     pair_reasons = set(report.declined_pairs)
-    return sum(1 for site in report.left_alone if site.reason not in pair_reasons)
+    return sum(site.occurrences for site in report.left_alone if site.reason not in pair_reasons)
 
 
 UNRESOLVED_NAMES_REASON = "not verifiable: its file holds a name the type checker cannot type"
@@ -401,13 +413,18 @@ UNRESOLVED_NAMES_REASON = "not verifiable: its file holds a name the type checke
 
 
 def reason_lines(
-    report: "RunReport", *, pairs: bool = True, first_unverifiable: Optional[str] = None
+    report: "RunReport",
+    *,
+    pairs: bool = True,
+    first_unverifiable: Optional[str] = None,
+    locate: Callable[[str], str] | None = None,
 ) -> List[str]:
     """Each reason once, with how often it applied and its sentence, most frequent first.
 
     Pairs and proposals counted under reasons with the same sentence are one
-    line. Each line ends with the reason's code in brackets, the name the
-    documentation and the developer trace use. ``pairs`` leaves out the
+    line. The bracketed codes are the names the documentation and developer
+    trace use. When given a path formatter, locate the largest distinct blocks
+    below each reason. ``pairs`` leaves out the
     declined pairs when false (``shows_pairs``). The line for proposals the
     type checker could not verify names ``first_unverifiable``, the first
     unresolved name's diagnostic, when the run has one.
@@ -424,6 +441,9 @@ def reason_lines(
         explanation = explain(kind)
         previous = tallies.get(explanation.sentence)
         subject = counted[len(kind) + 1 : -1] if counted != kind else None
+        if locate and previous and previous.subjects:
+            # One subject illustrates the reason even when each module pair names its own.
+            subject = None
         tallies[explanation.sentence] = _ReasonTally(
             explanation,
             {**(previous.codes if previous else {}), code: None},
@@ -435,7 +455,14 @@ def reason_lines(
         )
     if not tallies:
         return []
-    lines = ["", "Why code was left alone (most frequent first; --explain locates each place):"]
+    heading = (
+        "Why code was left alone, most frequent reason first (largest places shown):"
+        if locate
+        else "Why code was left alone (most frequent first; --explain locates each place):"
+    )
+    lines = ["", heading]
+    proposals = _proposal_places(report.left_alone) if locate else {}
+    omitted = False
     width = len(str(max(tally.count for tally in tallies.values())))
     for tally in sorted(tallies.values(), key=lambda t: (-t.count, next(iter(t.codes)))):
         subjects = f" (Here: {', '.join(tally.subjects)}.)" if tally.subjects else ""
@@ -449,8 +476,22 @@ def reason_lines(
             f"  {tally.count:>{width}}  {tally.explanation.sentence}{subjects}"
             f" [{', '.join(tally.codes)}]"
         )
-        if tally.explanation.remedy:
+        if locate:
+            pair_group = report.explained_pairs.get(tally.explanation.sentence)
+            proposal_group = proposals.get(tally.explanation.sentence)
+            places, more = _explained_place_lines(pair_group, proposal_group, locate)
+            if tally.explanation.remedy:
+                lines[-1] += f" What you can do: {tally.explanation.remedy}"
+            lines.extend(places)
+            if more:
+                omitted = True
+                lines.append(
+                    f"    ... and {_plural(more, 'more place')} left alone for this reason"
+                )
+        elif tally.explanation.remedy:
             lines.append(f"  {'':>{width}}  What you can do: {tally.explanation.remedy}")
+    if omitted:
+        lines.append("To see more, run Towel on the directory or file you care about.")
     return lines
 
 
@@ -458,10 +499,61 @@ def _span(path: str, first: int, last: int, relative: Callable[[str], str]) -> s
     return f"{relative(path)}:{first}-{last}"
 
 
+def _proposal_places(sites: Iterable[LeftAlone]) -> dict[str, ReasonPlaces]:
+    groups: dict[str, ReasonPlaces] = {}
+    for site in sites:
+        sentence = explain(without_subject(site.reason)).sentence
+        if sentence not in groups:
+            groups[sentence] = ReasonPlaces()
+        group = groups[sentence]
+        blocks = set(site.blocks)
+        for place in blocks:
+            group.record_place(place)
+        # These occurrences all instantiated the same proposed helper.
+        for place in group.shown.keys() & blocks:
+            group.shown[place].update((other, 1.0) for other in blocks if other != place)
+    return groups
+
+
+def _explained_place_lines(
+    pairs: ReasonPlaces | None, proposals: ReasonPlaces | None, relative: Callable[[str], str]
+) -> tuple[list[str], int]:
+    groups = [group for group in (pairs, proposals) if group is not None]
+    total = sum(len(group.seen) for group in groups)
+    if pairs and proposals:
+        total -= len(pairs.seen & proposals.seen)
+    # A place outside a group's largest twenty cannot enter the combined top twenty.
+    candidates = {place for group in groups for place in group.shown}
+    shown = nsmallest(EXPLAIN_PLACES_PER_REASON, candidates, key=place_rank)
+    lines = []
+    for place in shown:
+        peers: dict[BlockLocation, float] = {}
+        for group in groups:
+            for other, score in group.shown.get(place, {}).items():
+                peers[other] = max(score, peers.get(other, 0.0))
+        where = _span(place.path, place.first_line, place.last_line, relative)
+        if peers:
+            best = min(
+                peers,
+                key=lambda b: (
+                    -peers[b],
+                    abs(b.lines - place.lines),
+                    b.path,
+                    b.first_line,
+                    b.last_line,
+                ),
+            )
+            where += ": similar to " + _span(best.path, best.first_line, best.last_line, relative)
+            if len(peers) > 1:
+                where += f" and {_plural(len(peers) - 1, 'other place')}"
+        lines.append(f"    {where}")
+    return lines, total - len(shown)
+
+
 def left_alone_lines(
-    report: "RunReport", relative: Callable[[str], str], *, every: bool, pairs: bool = True
+    report: "RunReport", relative: Callable[[str], str], *, pairs: bool = True
 ) -> List[str]:
-    """The places left alone, largest first, one line each: the five largest, or ``every`` one.
+    """The five largest places in the default report.
 
     ``pairs`` leaves out the declined pairs when false (``shows_pairs``).
     """
@@ -472,30 +564,30 @@ def left_alone_lines(
             for site in report.left_alone
             if site.blocks and (pairs or site.reason not in pair_reasons)
         ),
-        key=lambda site: (
-            -site.lines,
-            tuple((block.path, block.first_line) for block in site.blocks),
-        ),
+        key=location_rank,
     )
     if not located:
         return []
-    shown = located if every else located[:LARGEST_SHOWN]
+    shown = located[:LARGEST_SHOWN]
+    total = sum(site.occurrences for site in located) + (report.unlisted_pairs if pairs else 0)
     heading = (
         "Places left alone, largest first:"
-        if every or len(located) <= LARGEST_SHOWN
-        else f"The {LARGEST_SHOWN} largest of {len(located)} places left alone"
+        if total <= LARGEST_SHOWN
+        else f"The {LARGEST_SHOWN} largest of {total} places left alone"
         " (--explain lists them all):"
     )
     lines = ["", heading]
+    remaining = LARGEST_SHOWN
     for site in shown:
+        if not remaining:
+            break
         spans = [_span(b.path, b.first_line, b.last_line, relative) for b in site.blocks]
         where = spans[0] if len(spans) == 1 else ", ".join(spans[:-1]) + " and " + spans[-1]
-        lines.append(f"  {where}: {explain(site.reason).sentence}")
+        count = min(remaining, site.occurrences)
+        lines.extend(repeat(f"  {where}: {explain(site.reason).sentence}", count))
+        remaining -= count
     return lines
 
-
-CROSS_MODULE_PREFIX = "Only with --cross-module: "
-"""How the sentence of every reason that only a cross-module pair can meet begins."""
 
 CROSS_MODULE_REMEDY = (
     "A module can share a helper with another only if one of them already imports the other,"
@@ -512,7 +604,9 @@ def shared_across_modules(changes: Iterable["AppliedChange"]) -> bool:
     return any(len(where) > 1 for where in paths.values())
 
 
-def cross_module_lines(report: "RunReport", relative: Callable[[str], str]) -> List[str]:
+def cross_module_lines(
+    report: "RunReport", relative: Callable[[str], str], *, explaining: bool = False
+) -> List[str]:
     """When ``--cross-module`` shared nothing: what each pair of modules lacked, and the remedy.
 
     One line per pair of modules and condition, however many pairs of
@@ -520,19 +614,26 @@ def cross_module_lines(report: "RunReport", relative: Callable[[str], str]) -> L
     reason only such a pair can meet.
     """
     found: Dict[Tuple[str, str, str], None] = {}
-    for site in report.left_alone:
+    sites = report.left_alone
+    if report.module_conditions is not None:
+        for a, b, why in report.module_conditions:
+            first, second = sorted((relative(a), relative(b)))
+            if first != second:
+                found[first, second, why] = None
+        # Pair conditions were collected in settlement order, independently
+        # of which pairs the list of largest places can show.
+        proposals = sum(report.declined_proposals.values())
+        sites = sites[-proposals:] if proposals else ()
+    for site in sites:
         paths = sorted({relative(block.path) for block in site.blocks})
-        code = reason_code(site.reason)
-        sentence = explain(code).sentence
-        if len(paths) < 2 or not sentence.startswith(CROSS_MODULE_PREFIX):
+        condition = cross_module_condition(site.reason)
+        if len(paths) < 2 or condition is None:
             continue
-        # The reason's subject names the modules and what failed; without
-        # one, the reason's own sentence says what failed.
-        subject = site.reason[len(code) + 1 : -1] if site.reason != code else ""
-        condition = subject or sentence[len(CROSS_MODULE_PREFIX) :].rstrip(".")
         found[(paths[0], " and ".join(paths[1:]), condition)] = None
     if not found:
         return []
+    if explaining:
+        return ["--cross-module shared nothing between modules. " + CROSS_MODULE_REMEDY]
     return [
         "",
         "--cross-module shared nothing between modules. What each pair of modules lacked:",

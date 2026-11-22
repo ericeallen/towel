@@ -36,8 +36,8 @@ Left alone, or declined
 :   Towel found duplicate blocks but did not extract them, because it could not
     show that the change keeps the program's behavior or because the helper
     would cost more to read than the code it replaces. A run that extracts
-    nothing gives the reasons; `--explain` lists every place the final analysis
-    left alone ([reasons](WHY_LEFT_ALONE.md)).
+    nothing gives the reasons. With `--explain`, each reason lists up to 20
+    distinct places from the final analysis ([reasons](WHY_LEFT_ALONE.md)).
 
 Refused
 :   A run, or a request such as a rename, that stops before writing anything,

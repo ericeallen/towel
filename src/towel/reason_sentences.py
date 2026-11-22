@@ -573,6 +573,16 @@ def without_subject(counted: str) -> str:
     return counted.split("[", 1)[0]
 
 
+def cross_module_condition(counted: str) -> str | None:
+    """The condition named in the cross-module report, including its original subject."""
+    code = reason_code(counted)
+    sentence = explain(code).sentence
+    if not sentence.startswith(_CROSS_MODULE):
+        return None
+    subject = counted[len(code) + 1 : -1] if counted != code else ""
+    return subject or sentence[len(_CROSS_MODULE) :].rstrip(".")
+
+
 def explain(counted: str) -> Explanation:
     """The sentence for a reason as a run counts it, with what it names, if anything, after it.
 

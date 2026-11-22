@@ -46,7 +46,7 @@ path. Both take the same options:
 | `--time-limit SECONDS` | none | Give up after `SECONDS`, a positive number up to 100,000,000; write nothing and exit 124. |
 | `--max-pairs N` | 20,000,000 | Compare at most `N` pairs of similar blocks; 0 means no limit. |
 | `--jobs N` | `TOWEL_WORKERS`, else the smallest of 8, the cores and what fits in memory | Use at most `N` worker processes; `N` must be positive. |
-| `--explain` | off | List every place left alone, not only the five largest, and the pairs a run that extracted something otherwise omits. |
+| `--explain` | off | Show up to 20 distinct places per reason, largest first, including declined matches after an extraction. Each names a similar place and counts the others. For more detail, run on a smaller directory or file. |
 | `--stats` | off | Count what became of each pair of similar blocks. |
 | `--json` | off | Print one JSON result on stdout ([automation](COMPATIBILITY.md)). |
 | `--progress MODE` | `auto` | On stderr. `auto` draws a bar on a terminal and nothing in a pipe; `tqdm` uses tqdm, and warns if it is missing; `detail` logs each pass; `none` shows nothing. |
@@ -199,7 +199,7 @@ towel preview shop/ --summary                # counts only
 towel preview shop/ --diff > changes.diff    # the diff alone, for a file or a pipe
 towel preview shop/ --inventory              # also list the helpers it would write
 towel preview shop/ --json > result.json     # one JSON object, for scripts
-towel preview shop/ --explain                # every place left alone, with its reason
+towel preview shop/ --explain                # largest places left alone for each reason
 towel preview shop/ --stats                  # what became of each pair compared
 ```
 

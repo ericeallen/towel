@@ -76,6 +76,7 @@ from towel.cli_reporting import (
     HelperScopeKind as HelperScopeKind,
     ParameterRecord as ParameterRecord,
     TypesStatus,
+    EXPLAIN_PLACES_PER_REASON,
     LARGEST_SHOWN,
     analysed_record,
     census_line,
@@ -774,8 +775,8 @@ def _add_report_flags(options: argparse._ActionsContainer) -> None:
     options.add_argument(
         "--explain",
         action="store_true",
-        help="After the run, list every place with similar code that was left alone, largest "
-        "first, with its files, lines and the reason in a sentence (default: off, which lists "
+        help=f"Show up to {EXPLAIN_PLACES_PER_REASON} places left alone per reason, largest first, "
+        "with their files, lines and similar places (default: off, which lists "
         f"the {LARGEST_SHOWN} largest).",
     )
     options.add_argument(
@@ -1677,6 +1678,11 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
             strict=options.strict,
             complete_scope=options.complete_scope,
             max_candidate_pairs=options.max_pairs,
+            location_detail=(
+                "counts"
+                if options.json or options.diff
+                else "explain" if options.explain else "largest"
+            ),
             settings=_execution_settings(options.jobs),
             include_ignored=options.include_ignored,
             parameterize_constants=True,
@@ -1740,7 +1746,9 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
         report = engine.run_report
         relative = _relative_to_run(options)
         if preview:
-            _print_complete_preview(engine, options, applied, results, termination, content=content)
+            _print_complete_preview(
+                engine, report, options, applied, results, termination, content=content
+            )
         else:
             _print_dry_summary(report, options, applied, results, termination, relative)
         if engine.checker_failures:
@@ -1770,6 +1778,7 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
                 )
         return _command_result(
             engine,
+            report,
             options,
             applied,
             termination,
@@ -1946,7 +1955,7 @@ def _left_alone_report(
     shared: bool = False,
     complete: bool = True,
 ) -> List[str]:
-    """Why code was left alone, then where: the largest places, or with --explain all of them.
+    """Why code was left alone, then where: the five largest pairs, or bounded examples of each reason.
 
     With ``--cross-module``, when no helper is called from two modules
     (``shared`` is false), one message closes it: what each pair of modules
@@ -1960,9 +1969,18 @@ def _left_alone_report(
         root = target if target.is_dir() else target.parent
         problem = problem.removeprefix(str(root) + os.sep)
     return (
-        reason_lines(report, pairs=pairs, first_unverifiable=problem)
-        + left_alone_lines(report, relative, every=options.explain, pairs=pairs)
-        + (cross_module_lines(report, relative) if options.cross_module and not shared else [])
+        reason_lines(
+            report,
+            pairs=pairs,
+            first_unverifiable=problem,
+            locate=relative if options.explain else None,
+        )
+        + ([] if options.explain else left_alone_lines(report, relative, pairs=pairs))
+        + (
+            cross_module_lines(report, relative, explaining=options.explain)
+            if options.cross_module and not shared
+            else []
+        )
         + not_examined_lines(
             report,
             relative,
@@ -2379,6 +2397,7 @@ def _preview_content(
 
 def _print_complete_preview(
     engine: "UnificationRefactorEngine",
+    report: "RunReport",
     options: DryOptions,
     applied: int,
     results: Mapping[str, Tuple[int, List[str]]],
@@ -2394,7 +2413,6 @@ def _print_complete_preview(
     """
     if options.json or options.diff:
         return
-    report = engine.run_report
     relative = _relative_to_run(options)
     headline = [census_line(report)]
     if engine.preview_incomplete:
@@ -2446,6 +2464,7 @@ def _preview_inventory(engine: "UnificationRefactorEngine", options: DryOptions)
 
 def _command_result(
     engine: "UnificationRefactorEngine",
+    report: "RunReport",
     options: DryOptions,
     applied: int,
     termination: str,
@@ -2488,9 +2507,9 @@ def _command_result(
         ),
         "helpers": inventory,
         "error": None,
-        "outcome": None if engine.preview_incomplete else run_outcome(engine.run_report, applied),
-        "analysed": analysed_record(engine.run_report, _relative_to_run(options)),
-        "left_alone": left_alone_count(engine.run_report, applied),
+        "outcome": None if engine.preview_incomplete else run_outcome(report, applied),
+        "analysed": analysed_record(report, _relative_to_run(options)),
+        "left_alone": left_alone_count(report, applied),
         "relaxed_findings": [finding.to_json() for finding in findings],
     }
     if engine.preview_incomplete:
@@ -2543,6 +2562,7 @@ def _quick_report(engine: "UnificationRefactorEngine") -> "RunReport":
     from towel.unification.fixed_point import RunReport
 
     census = engine.last_census
+    locations = engine.last_left_alone
     return RunReport(
         resource_limit_reached=engine.import_graph.resource_budget.exhausted,
         declined_pairs=engine.declined_pairs,
@@ -2550,7 +2570,10 @@ def _quick_report(engine: "UnificationRefactorEngine") -> "RunReport":
         files_analysed=census.files,
         functions_analysed=census.functions,
         skipped_files=census.skipped,
-        left_alone=engine.last_left_alone,
+        left_alone=locations,
+        explained_pairs=engine.last_explained_places,
+        unlisted_pairs=sum(engine.declined_pairs.values())
+        - sum(site.occurrences for site in locations),
         not_examined=census.not_examined,
     )
 
@@ -2583,6 +2606,7 @@ def _run_quick_preview(options: PreviewOptions) -> None:
         strict=options.strict,
         complete_scope=options.complete_scope,
         max_candidate_pairs=options.max_pairs,
+        location_detail="explain" if options.explain else "largest",
         settings=_execution_settings(options.jobs),
         include_ignored=options.include_ignored,
         parameterize_constants=True,
@@ -2628,8 +2652,8 @@ def _run_quick_preview(options: PreviewOptions) -> None:
     outcome = outcome_line(report, 0, target) if not all_proposals else None
     if outcome is not None:
         print(outcome)
-        for line in reason_lines(report) + left_alone_lines(
-            report, relative, every=options.explain
+        for line in reason_lines(report, locate=relative if options.explain else None) + (
+            [] if options.explain else left_alone_lines(report, relative)
         ):
             print(line)
         return
