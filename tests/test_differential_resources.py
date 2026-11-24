@@ -20,6 +20,9 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
+import sys
 from unittest.mock import Mock
 
 import pytest
@@ -211,3 +214,26 @@ def test_watchdog_failure_reaps_observer(tmp_path: Path, monkeypatch: pytest.Mon
     assert len(pids) == 1
     with pytest.raises(ProcessLookupError):
         os.kill(pids[0], 0)
+
+
+def test_reaping_an_observer_that_exited_after_its_last_sample() -> None:
+    """An observer can exit between the sample that stops it and the kill.
+
+    Darwin refuses to signal a process group whose only member has exited
+    and not been reaped (EPERM where Linux succeeds), and the harness raised
+    that ``PermissionError`` instead of reaping the observer.
+    """
+    # SIGCHLD arrives once the child has exited; blocked, it waits to be taken
+    # without reaping the child, which stays a zombie. Darwin discards a
+    # blocked signal whose action is the default one, ignore, so it gets a
+    # handler that does nothing.
+    handler = signal.signal(signal.SIGCHLD, lambda number, frame: None)
+    unblocked = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGCHLD})
+    try:
+        process = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        signal.sigwait({signal.SIGCHLD})
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, unblocked)
+        signal.signal(signal.SIGCHLD, handler)
+    runner._kill_observer(process)
+    assert process.returncode == 0

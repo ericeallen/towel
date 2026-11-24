@@ -244,6 +244,11 @@ def _kill_observer(process: subprocess.Popen[bytes]) -> None:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # Darwin refuses to signal a group whose only member is the observer
+        # that has exited and not yet been reaped; there is nothing to kill.
+        if process.poll() is None:
+            raise
     process.wait()
 
 
