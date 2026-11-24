@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import errno
 import json
 import os
 from pathlib import Path
@@ -237,3 +238,40 @@ def test_reaping_an_observer_that_exited_after_its_last_sample() -> None:
         signal.signal(signal.SIGCHLD, handler)
     runner._kill_observer(process)
     assert process.returncode == 0
+
+
+def _refused_signal(pgid: int, number: int) -> None:
+    raise PermissionError(errno.EPERM, "Operation not permitted")
+
+
+def test_reaping_an_observer_that_is_still_exiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Darwin also refuses to signal an observer that is exiting but not yet waitable.
+
+    The harness then saw a running process and raised the refusal (once in
+    about 450 over-budget observations on macOS); it waits for it instead.
+    """
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(0.3)"], start_new_session=True
+    )
+    monkeypatch.setattr(os, "killpg", _refused_signal)
+    runner._kill_observer(process)
+    assert process.returncode == 0
+
+
+def test_a_refusal_to_signal_a_running_observer_still_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An observer that stays alive after a refused kill is a harness error, not waited for forever."""
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
+    kill = os.killpg
+    try:
+        monkeypatch.setattr(os, "killpg", _refused_signal)
+        monkeypatch.setattr(runner, "OBSERVER_EXIT_SECONDS", 0.2)
+        with pytest.raises(PermissionError):
+            runner._kill_observer(process)
+        assert process.poll() is None
+    finally:
+        kill(process.pid, signal.SIGKILL)
+        process.wait()

@@ -80,6 +80,8 @@ budget. CPython's own takes about 35 MiB; the cap leaves room for large
 untouched reservations while bounding what a runaway can touch.
 """
 OBSERVER_FILE_BYTES = 16 * 1024 * 1024
+OBSERVER_EXIT_SECONDS = 5.0
+"""How long an observer that the kernel says is past signalling may take to finish exiting."""
 
 Record = Dict[str, Any]
 
@@ -248,11 +250,13 @@ def _kill_observer(process: subprocess.Popen[bytes]) -> None:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    except PermissionError:
+    except PermissionError as refused:
         # Darwin refuses to signal a group whose only member is the observer
-        # that has exited and not yet been reaped; there is nothing to kill.
-        if process.poll() is None:
-            raise
+        # exiting, or exited and not yet reaped; it needs reaping, not killing.
+        try:
+            process.wait(timeout=OBSERVER_EXIT_SECONDS)
+        except subprocess.TimeoutExpired:
+            raise refused from None
     process.wait()
 
 
