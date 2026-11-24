@@ -14,7 +14,7 @@
 
 """Observe what a program does: import its modules, describe them, run probes, write JSON.
 
-Usage: ``python -P observer.py PROJECT_ROOT SPEC_JSON OUT_JSON``
+Usage: ``python -P observer.py PROJECT_ROOT SPEC_JSON OUT_JSON PEAK_OUT``
 
 The runner starts this script in a fresh interpreter, the one under test,
 once for the original project and once for the refactored copy. It imports
@@ -47,10 +47,13 @@ Captured streams stop at 20,000 characters each. Memory exhaustion and output
 overflow escape observation helpers and become resource records. Full repr and
 pickle construction run within the runner's memory and wall-time budgets;
 truncating the resulting text alone would not bound their allocations.
+As the interpreter exits, the observer writes its peak resident memory, in
+bytes, to ``PEAK_OUT``; the runner decides the memory budget from it.
 """
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import copy
 import importlib
@@ -457,11 +460,13 @@ def _observe_into(descriptor: int, root: str, spec: Mapping[str, Any]) -> Option
     writes the fallback, so the traceback cannot hold the observed program's
     allocations alive while the fallback is written.
     """
-    # The memory budget is resident memory, which the parent samples. Address
-    # space is only a safety cap, set well above the budget, for a runaway that
-    # outpaces the sampler: an interpreter or a program may reserve address
-    # space it never touches. Darwin's existing virtual mappings can already
-    # exceed a useful absolute RLIMIT_AS, so the cap applies on Linux only.
+    # The memory budget is resident memory: the parent samples it to stop a
+    # runaway early, and judges the peak this process reports as it exits.
+    # Address space is only a safety cap, set well above the budget, that
+    # bounds a runaway the sampler misses or a parent too stalled to sample:
+    # an interpreter or a program may reserve address space it never touches.
+    # Darwin's existing virtual mappings can already exceed a useful absolute
+    # RLIMIT_AS, so the cap applies on Linux only.
     if sys.platform == "linux":
         cap = int(spec.get("address_space_bytes", 1024 * 1024 * 1024))
         resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
@@ -478,6 +483,32 @@ def _observe_into(descriptor: int, root: str, spec: Mapping[str, Any]) -> Option
     return exhausted
 
 
+def _peak_resident_bytes() -> int:
+    """The most resident memory this interpreter has held, in bytes.
+
+    Linux's ``ru_maxrss`` also counts the image ``exec`` replaced, a copy of
+    the runner's memory, so Linux reads ``VmHWM``, which counts this image
+    only. Darwin's ``ru_maxrss`` counts this image only, in bytes.
+    """
+    if sys.platform == "linux":
+        with open("/proc/self/status", "rb") as status:
+            for line in status:
+                if line.startswith(b"VmHWM:"):
+                    return int(line.split()[1]) * 1024
+        raise OSError("/proc/self/status has no VmHWM")
+    if sys.platform == "darwin":
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    raise RuntimeError(f"Cannot measure peak resident memory on {sys.platform}")
+
+
+def _report_peak(descriptor: int) -> None:
+    """Write the peak resident memory to ``descriptor``: registered first, so it runs last at exit."""
+    try:
+        _write_all(descriptor, str(_peak_resident_bytes()).encode("ascii"))
+    finally:
+        os.close(descriptor)
+
+
 def _write_all(descriptor: int, data: bytes) -> None:
     view = memoryview(data)
     while view:
@@ -485,7 +516,12 @@ def _write_all(descriptor: int, data: bytes) -> None:
 
 
 def main(argv: Sequence[str]) -> int:
-    root, spec_path, out_path = argv
+    root, spec_path, out_path, peak_path = argv
+    # Report the peak after the program's own exit handlers, which may also
+    # allocate. A failure here leaves the report empty, which the runner
+    # treats as the observer failing.
+    peak = os.open(peak_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    atexit.register(_report_peak, peak)
     with open(spec_path, encoding="utf-8") as handle:
         spec = json.load(handle)
     # Open the output before the budget applies, so that recording an

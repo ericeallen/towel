@@ -12,7 +12,8 @@
 macOS exposes the same task RSS through libproc that ps reads. Reading one PID
 requires no executable path or command-line inspection. This is sampled current
 RSS, not peak memory, physical footprint, or the sum of a process tree. A child
-can exceed the budget between samples; the harness documents that limitation.
+can exceed the budget between samples; the observer reports its own peak
+as it exits, which the runner judges.
 """
 
 from __future__ import annotations

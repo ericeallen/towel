@@ -67,7 +67,11 @@ OBSERVER_SECONDS = 60
 """How long an observation may take in all; each probe call has its own, shorter limit."""
 
 OBSERVER_MEMORY_BYTES = 256 * 1024 * 1024
-"""The observer's memory budget: resident memory, sampled by the parent."""
+"""The observer's memory budget: its peak resident memory.
+
+The parent samples resident memory every 10 ms to stop a runaway early, and
+judges the peak the observer reports as it exits, which no sample can miss.
+"""
 OBSERVER_ADDRESS_SPACE_BYTES = 4 * OBSERVER_MEMORY_BYTES
 """Linux's safety cap on the observer's address space, for a runaway the sampler misses.
 
@@ -253,7 +257,14 @@ def _kill_observer(process: subprocess.Popen[bytes]) -> None:
 
 
 def _memory_record(stopped_by: str, budget: int, resident: int) -> Record:
-    """The record of an exhausted memory budget: which check stopped the observer, and its sample."""
+    """The record of an exhausted memory budget: which check found it, and the most memory measured.
+
+    ``stopped_by`` is ``resident memory`` when a sample stopped the observer
+    early, ``peak resident memory at exit`` when the peak the observer
+    reported was over budget, and ``MemoryError in the observer`` when the
+    program raised it or Linux's address-space cap refused an allocation.
+    ``resident`` is the highest of the samples and the reported peak.
+    """
     return {
         "observer_resource": "memory",
         "observer_memory": {
@@ -264,13 +275,22 @@ def _memory_record(stopped_by: str, budget: int, resident: int) -> Record:
     }
 
 
+def _observer_failure(
+    root: Path, returncode: Optional[int], stderr: Path, why: str
+) -> RuntimeError:
+    with stderr.open("rb") as errors:
+        detail = errors.read(4000).decode("utf-8", errors="replace")
+    return RuntimeError(f"the observer failed on {root} (exit {returncode}{why}):\n{detail}")
+
+
 def _observe_one(root: Path, spec: Path, work: Path, memory_bytes: int) -> Record:
     out = work / f"{root.name}.observed.json"
+    peak_report = work / f"{root.name}.observer.peak"
     stdout = work / f"{root.name}.observer.stdout"
     stderr = work / f"{root.name}.observer.stderr"
     with stdout.open("wb") as output, stderr.open("wb") as errors:
         process = subprocess.Popen(
-            [sys.executable, "-P", str(OBSERVER), str(root), str(spec), str(out)],
+            [sys.executable, "-P", str(OBSERVER), str(root), str(spec), str(out), str(peak_report)],
             cwd=root,
             stdout=output,
             stderr=errors,
@@ -300,17 +320,23 @@ def _observe_one(root: Path, spec: Path, work: Path, memory_bytes: int) -> Recor
         finally:
             _kill_observer(process)
     if process.returncode != 0 or not out.exists():
-        with stderr.open("rb") as errors:
-            detail = errors.read(4000).decode("utf-8", errors="replace")
-        raise RuntimeError(f"the observer failed on {root} (exit {process.returncode}):\n{detail}")
+        raise _observer_failure(root, process.returncode, stderr, "")
     # Check again after exit: a final write may have occurred between samples.
     if any(path.stat().st_size > OBSERVER_FILE_BYTES for path in (stdout, stderr, out)):
         return {"observer_resource": "output"}
+    reported = peak_report.read_text("ascii") if peak_report.exists() else ""
+    if not reported.isdigit():
+        raise _observer_failure(root, process.returncode, stderr, ", no peak memory reported")
+    # Memory can rise over budget and fall back between two samples, or a
+    # stalled parent may sample too late; the peak the observer reports as it
+    # exits cannot miss it.
+    peak = max(highest, int(reported))
     record = cast(Record, json.loads(out.read_text("utf-8")))
     if record.get("observer_resource") == "memory":
-        # The program raised MemoryError, or the address-space cap refused an
-        # allocation; ``highest`` is the most resident memory sampled before.
-        return _memory_record("MemoryError in the observer", memory_bytes, highest)
+        # The program raised MemoryError, or the address-space cap refused an allocation.
+        return _memory_record("MemoryError in the observer", memory_bytes, peak)
+    if peak > memory_bytes:
+        return _memory_record("peak resident memory at exit", memory_bytes, peak)
     return record
 
 
@@ -324,9 +350,13 @@ def _observe(
 ) -> List[Record]:
     """Observe serially with bounded memory/output, stopping if the original is inconclusive.
 
-    ``memory_bytes`` bounds resident memory, checked by sampling, so it can be
-    exceeded between samples. On Linux the child also caps its address space
-    at ``OBSERVER_ADDRESS_SPACE_BYTES``, which bounds that overshoot.
+    ``memory_bytes`` bounds peak resident memory. A sample over it stops the
+    observer early; a peak over it that the samples missed, reported as the
+    observer exits, still makes the observation incomplete. On Linux the
+    child also caps its address space at ``OBSERVER_ADDRESS_SPACE_BYTES``,
+    which bounds what it can touch between samples, or while the parent is
+    too stalled to sample. Darwin has no such cap: there the per-call alarm
+    and ``OBSERVER_SECONDS`` bound it in time only.
     Arbitrary process failures remain harness errors, never resource exemptions.
     """
     spec = work / "probes.json"

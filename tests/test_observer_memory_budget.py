@@ -28,10 +28,11 @@ from dataclasses import replace
 import json
 from pathlib import Path
 import sys
+from unittest.mock import Mock
 
 import pytest
 
-from tests.differential import runner
+from tests.differential import export, runner
 from tests.differential.cases import Calls, Case
 from tests.differential.grammar import generate_case
 
@@ -161,7 +162,8 @@ def test_address_space_cap_contains_a_runaway_the_sampler_misses(
     """With the RSS sampler blind, the address-space safety cap still stops a runaway.
 
     The observer then writes its fallback record itself (the path the 2.0
-    strict campaign once crashed in), and the parent says which check fired.
+    strict campaign once crashed in), and the parent says which check fired,
+    with the peak the observer reported rather than the blind sampler's zero.
     """
     assert runner.OBSERVER_ADDRESS_SPACE_BYTES >= 4 * runner.OBSERVER_MEMORY_BYTES
     monkeypatch.setattr(runner, "_resident_bytes", lambda pid: 0)
@@ -175,10 +177,124 @@ def test_address_space_cap_contains_a_runaway_the_sampler_misses(
     assert observed == {"observer_resource": "memory"}
     detail = json.loads(outcome.detail.split(": ", 1)[1])
     assert detail["observer_memory"]["stopped_by"] == "MemoryError in the observer"
-    assert detail["observer_memory"]["resident_bytes"] == 0
+    assert detail["observer_memory"]["resident_bytes"] > runner.OBSERVER_MEMORY_BYTES
 
+
+# Round 2: the budget is decided from the observer's true peak, read when it
+# exits (the review of c7c7304f, findings D1 and D2). The live sample only
+# stops a runaway early; a sampler that misses the peak, or stalls, must not
+# let an observation over budget pass as complete.
 
 MIB = 1024 * 1024
+TRIALS = 20
+"""The review missed the transient spike in 13 of 20 runs; every run must flag it."""
+
+_TRIVIAL = "def f(arg):\n    return 1\n"
+
+_OVER_BUDGET_BEFORE_EXIT = {
+    # About 300 MiB resident, over budget for a millisecond or two.
+    "transient-spike": (
+        "def f(arg):\n"
+        f"    hold = bytearray({200 * MIB})\n"
+        f"    spike = bytearray({80 * MIB})\n"
+        "    total = hold[0] + spike[-1]\n"
+        "    del spike, hold\n"
+        "    return 1 + total\n"
+    ),
+    # About 320 MiB resident from the call until the observer exits. A view,
+    # so that describing the module does not represent 300 MiB of bytes.
+    "retained-to-exit": (
+        "_retained = []\n"
+        "def f(arg):\n"
+        f"    _retained.append(memoryview(bytearray({300 * MIB})))\n"
+        "    return 1\n"
+    ),
+    # About 320 MiB resident only in the program's own exit handler.
+    "allocated-at-exit": (
+        "import atexit\n"
+        f"atexit.register(lambda: bytearray({300 * MIB}))\n"
+        "def f(arg):\n"
+        "    return 1\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("program", sorted(_OVER_BUDGET_BEFORE_EXIT))
+def test_peak_over_budget_between_samples_is_flagged_every_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, program: str
+) -> None:
+    """Review of c7c7304f, D1: memory over budget that the 10 ms sample misses is still flagged.
+
+    The refactored program returns what the original does, but touches more
+    than the budget on the way. Its observation is over budget, so it may not
+    pass as an equivalent, complete one.
+    """
+    _rewrite(monkeypatch, _OVER_BUDGET_BEFORE_EXIT[program])
+    missed = [
+        trial
+        for trial in range(TRIALS)
+        if not (
+            outcome := runner.run_case(_case(_TRIVIAL), runner.DEFAULT, tmp_path / str(trial))
+        ).observation_limited
+        or outcome.status == "equivalent"
+    ]
+    assert missed == [], f"over budget unflagged in {len(missed)} of {TRIALS} runs"
+
+
+def _blind_sampler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Simulate a parent whose live sampling stalls for the whole observation: it never sees memory."""
+    monkeypatch.setattr(runner, "_resident_bytes", lambda pid: 0)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        f"def f(arg):\n    values = bytearray({RESERVATION})\n    return len(values)\n",
+        "_retained = []\ndef f(arg):\n"
+        f"    _retained.append(memoryview(bytearray({RESERVATION})))\n",
+    ],
+    ids=["freed-at-return", "retained-to-exit"],
+)
+def test_stalled_sampler_still_flags_the_original_and_records_its_peak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    """Review of c7c7304f, D1: with the live sample stalled, the peak read at exit decides.
+
+    Touching twice the budget makes the original inconclusive, whether it is
+    freed or kept until exit, and the record carries the peak, not a sample
+    that saw nothing.
+    """
+    _blind_sampler(monkeypatch)
+    _rewrite(monkeypatch, source + "\n# changed\n")
+    outcome = runner.run_case(_case(source), runner.DEFAULT, tmp_path)
+    assert outcome.status == "inconclusive", outcome.report()
+    measured = json.loads(outcome.detail.split(": ", 1)[1])["observer_memory"]
+    assert measured["stopped_by"] == "peak resident memory at exit"
+    assert measured["resident_bytes"] >= RESERVATION
+
+
+def test_stalled_sampler_keeps_export_from_replaying_without_a_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of c7c7304f, D1: a stalled sample must not clear ``observation_limited``.
+
+    Battery replay (``export.observe``) has no memory budget; it may run only
+    when the observer's run stayed within its own.
+    """
+    _blind_sampler(monkeypatch)
+    _rewrite(
+        monkeypatch,
+        "class Result:\n    def __repr__(self):\n"
+        f"        return 'x' * {RESERVATION}\n"
+        "def f(arg):\n    return Result()\n",
+    )
+    outcome = runner.run_case(_case(_TRIVIAL), runner.DEFAULT, tmp_path)
+    assert outcome.status == "different"
+    assert outcome.observation_limited
+    unsafe_replay = Mock(side_effect=AssertionError("unbounded replay"))
+    monkeypatch.setattr(export, "observe", unsafe_replay)
+    export.write_fixture(outcome, tmp_path / "export")
+    unsafe_replay.assert_not_called()
 
 
 def test_memory_record_keeps_the_highest_sample(
