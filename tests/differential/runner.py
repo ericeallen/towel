@@ -273,12 +273,14 @@ def _observe_one(root: Path, spec: Path, work: Path, memory_bytes: int) -> Recor
             start_new_session=True,
         )
         deadline = time.monotonic() + OBSERVER_SECONDS
-        resident = 0
+        # A sample taken while memory is released, or after exit (zero), is
+        # lower than an earlier one; the record keeps the highest.
+        highest = 0
         try:
             while process.poll() is None:
-                resident = _resident_bytes(process.pid)
-                if resident > memory_bytes:
-                    return _memory_record("resident memory", memory_bytes, resident)
+                highest = max(highest, _resident_bytes(process.pid))
+                if highest > memory_bytes:
+                    return _memory_record("resident memory", memory_bytes, highest)
                 if any(
                     path.exists() and path.stat().st_size > OBSERVER_FILE_BYTES
                     for path in (stdout, stderr, out)
@@ -302,8 +304,8 @@ def _observe_one(root: Path, spec: Path, work: Path, memory_bytes: int) -> Recor
     record = cast(Record, json.loads(out.read_text("utf-8")))
     if record.get("observer_resource") == "memory":
         # The program raised MemoryError, or the address-space cap refused an
-        # allocation; ``resident`` is the last resident memory sampled before.
-        return _memory_record("MemoryError in the observer", memory_bytes, resident)
+        # allocation; ``highest`` is the most resident memory sampled before.
+        return _memory_record("MemoryError in the observer", memory_bytes, highest)
     return record
 
 

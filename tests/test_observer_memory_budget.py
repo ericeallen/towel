@@ -176,3 +176,25 @@ def test_address_space_cap_contains_a_runaway_the_sampler_misses(
     detail = json.loads(outcome.detail.split(": ", 1)[1])
     assert detail["observer_memory"]["stopped_by"] == "MemoryError in the observer"
     assert detail["observer_memory"]["resident_bytes"] == 0
+
+
+MIB = 1024 * 1024
+
+
+def test_memory_record_keeps_the_highest_sample(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of c7c7304f, D2: a later, smaller sample never replaces the highest one.
+
+    Samples taken while ``MemoryError`` unwinds, or after the observer has
+    exited (zero), used to overwrite an earlier, higher one.
+    """
+    samples = iter([220 * MIB, 20 * MIB])
+    monkeypatch.setattr(runner, "_resident_bytes", lambda pid: next(samples, 0))
+    source = "import time\ndef f(arg):\n    time.sleep(0.2)\n    raise MemoryError('budget')\n"
+    _rewrite(monkeypatch, source + "\n# changed\n")
+    outcome = runner.run_case(_case(source), runner.DEFAULT, tmp_path)
+    assert outcome.status == "inconclusive"
+    measured = json.loads(outcome.detail.split(": ", 1)[1])["observer_memory"]
+    assert measured["stopped_by"] == "MemoryError in the observer"
+    assert measured["resident_bytes"] == 220 * MIB
