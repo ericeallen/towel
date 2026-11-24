@@ -496,9 +496,10 @@ def _peak_resident_bytes() -> int:
                 if line.startswith(b"VmHWM:"):
                     return int(line.split()[1]) * 1024
         raise OSError("/proc/self/status has no VmHWM")
-    if sys.platform == "darwin":
+    elif sys.platform == "darwin":
         return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    raise RuntimeError(f"Cannot measure peak resident memory on {sys.platform}")
+    else:
+        raise RuntimeError(f"Cannot measure peak resident memory on {sys.platform}")
 
 
 def _report_peak(descriptor: int) -> None:
