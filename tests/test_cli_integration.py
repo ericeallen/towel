@@ -112,7 +112,10 @@ def test_dash_capital_v_shows_the_version() -> None:
     assert (result.status, result.stdout.strip()) == (0, f"towel {version('code-towel')}")
 
 
-SOURCE_ROOT = Path(cli.__file__).resolve().parents[1]
+# The checkout's src directory, found from this test file rather than from the imported
+# package: CI also runs this module against an installed wheel, where towel lives in
+# site-packages and the project file is not beside it.
+SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
 """The ``src`` directory this ``towel`` package is imported from."""
 
 
