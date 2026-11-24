@@ -158,17 +158,21 @@ def test_runaway_seed_is_contained_and_says_how(tmp_path: Path) -> None:
 def test_address_space_cap_contains_a_runaway_the_sampler_misses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With the RSS sampler blind, the address-space safety cap still stops the runaway seed.
+    """With the RSS sampler blind, the address-space safety cap still stops a runaway.
 
     The observer then writes its fallback record itself (the path the 2.0
-    strict campaign once crashed in), and the parent adds what it sampled.
+    strict campaign once crashed in), and the parent says which check fired.
     """
+    assert runner.OBSERVER_ADDRESS_SPACE_BYTES >= 4 * runner.OBSERVER_MEMORY_BYTES
     monkeypatch.setattr(runner, "_resident_bytes", lambda pid: 0)
-    case = generate_case(58534072798479847871598822171, bindings=True)
-    outcome = runner.run_case(case, replace(runner.DEFAULT, strict=True), tmp_path)
+    source = (
+        "def f(arg):\n    values = [0]\n    for value in values:\n        values.extend(values)\n"
+    )
+    _rewrite(monkeypatch, source + "\n# changed\n")
+    outcome = runner.run_case(_case(source), runner.DEFAULT, tmp_path)
     assert outcome.status == "inconclusive"
     observed = json.loads((tmp_path / "before.observed.json").read_text())
     assert observed == {"observer_resource": "memory"}
     detail = json.loads(outcome.detail.split(": ", 1)[1])
     assert detail["observer_memory"]["stopped_by"] == "MemoryError in the observer"
-    assert runner.OBSERVER_ADDRESS_SPACE_BYTES >= 4 * runner.OBSERVER_MEMORY_BYTES
+    assert detail["observer_memory"]["resident_bytes"] == 0
