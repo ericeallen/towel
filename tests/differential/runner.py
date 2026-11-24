@@ -67,6 +67,14 @@ OBSERVER_SECONDS = 60
 """How long an observation may take in all; each probe call has its own, shorter limit."""
 
 OBSERVER_MEMORY_BYTES = 256 * 1024 * 1024
+"""The observer's memory budget: resident memory, sampled by the parent."""
+OBSERVER_ADDRESS_SPACE_BYTES = 4 * OBSERVER_MEMORY_BYTES
+"""Linux's safety cap on the observer's address space, for a runaway the sampler misses.
+
+Reserved but untouched address space is not memory used, so it is not the
+budget. CPython's own takes about 35 MiB; the cap leaves room for large
+untouched reservations while bounding what a runaway can touch.
+"""
 OBSERVER_FILE_BYTES = 16 * 1024 * 1024
 
 Record = Dict[str, Any]
@@ -239,6 +247,18 @@ def _kill_observer(process: subprocess.Popen[bytes]) -> None:
     process.wait()
 
 
+def _memory_record(stopped_by: str, budget: int, resident: int) -> Record:
+    """The record of an exhausted memory budget: which check stopped the observer, and its sample."""
+    return {
+        "observer_resource": "memory",
+        "observer_memory": {
+            "stopped_by": stopped_by,
+            "budget_bytes": budget,
+            "resident_bytes": resident,
+        },
+    }
+
+
 def _observe_one(root: Path, spec: Path, work: Path, memory_bytes: int) -> Record:
     out = work / f"{root.name}.observed.json"
     stdout = work / f"{root.name}.observer.stdout"
@@ -253,10 +273,12 @@ def _observe_one(root: Path, spec: Path, work: Path, memory_bytes: int) -> Recor
             start_new_session=True,
         )
         deadline = time.monotonic() + OBSERVER_SECONDS
+        resident = 0
         try:
             while process.poll() is None:
-                if _resident_bytes(process.pid) > memory_bytes:
-                    return {"observer_resource": "memory"}
+                resident = _resident_bytes(process.pid)
+                if resident > memory_bytes:
+                    return _memory_record("resident memory", memory_bytes, resident)
                 if any(
                     path.exists() and path.stat().st_size > OBSERVER_FILE_BYTES
                     for path in (stdout, stderr, out)
@@ -277,7 +299,12 @@ def _observe_one(root: Path, spec: Path, work: Path, memory_bytes: int) -> Recor
     # Check again after exit: a final write may have occurred between samples.
     if any(path.stat().st_size > OBSERVER_FILE_BYTES for path in (stdout, stderr, out)):
         return {"observer_resource": "output"}
-    return cast(Record, json.loads(out.read_text("utf-8")))
+    record = cast(Record, json.loads(out.read_text("utf-8")))
+    if record.get("observer_resource") == "memory":
+        # The program raised MemoryError, or the address-space cap refused an
+        # allocation; ``resident`` is the last resident memory sampled before.
+        return _memory_record("MemoryError in the observer", memory_bytes, resident)
+    return record
 
 
 def _observe(
@@ -290,14 +317,19 @@ def _observe(
 ) -> List[Record]:
     """Observe serially with bounded memory/output, stopping if the original is inconclusive.
 
-    Linux also enforces RLIMIT_AS in the child. The portable parent RSS check
-    is sampled, so its threshold can be exceeded between observations.
+    ``memory_bytes`` bounds resident memory, checked by sampling, so it can be
+    exceeded between samples. On Linux the child also caps its address space
+    at ``OBSERVER_ADDRESS_SPACE_BYTES``, which bounds that overshoot.
     Arbitrary process failures remain harness errors, never resource exemptions.
     """
     spec = work / "probes.json"
     spec.write_text(
         json.dumps(
-            {**case.probe_spec(), "call_seconds": call_seconds, "memory_bytes": memory_bytes}
+            {
+                **case.probe_spec(),
+                "call_seconds": call_seconds,
+                "address_space_bytes": OBSERVER_ADDRESS_SPACE_BYTES,
+            }
         ),
         "utf-8",
     )
@@ -377,7 +409,7 @@ def run_case(case: Case, mode: Mode, workspace: Path, *, call_seconds: float = 2
             {
                 key: value
                 for key, value in observed_before.items()
-                if key in {"observer_timeout", "timed_out", "observer_resource"}
+                if key in {"observer_timeout", "timed_out", "observer_resource", "observer_memory"}
             }
         )
         return Outcome(

@@ -457,11 +457,14 @@ def _observe_into(descriptor: int, root: str, spec: Mapping[str, Any]) -> Option
     writes the fallback, so the traceback cannot hold the observed program's
     allocations alive while the fallback is written.
     """
-    # Darwin's existing virtual mappings can already exceed a useful absolute
-    # RLIMIT_AS. The parent watches RSS there; Linux also caps allocations here.
+    # The memory budget is resident memory, which the parent samples. Address
+    # space is only a safety cap, set well above the budget, for a runaway that
+    # outpaces the sampler: an interpreter or a program may reserve address
+    # space it never touches. Darwin's existing virtual mappings can already
+    # exceed a useful absolute RLIMIT_AS, so the cap applies on Linux only.
     if sys.platform == "linux":
-        budget = int(spec.get("memory_bytes", 256 * 1024 * 1024))
-        resource.setrlimit(resource.RLIMIT_AS, (budget, budget))
+        cap = int(spec.get("address_space_bytes", 1024 * 1024 * 1024))
+        resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
     reserve = bytearray(1024 * 1024)
     try:
         record = observe(os.path.realpath(root), spec)

@@ -20,7 +20,6 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
-import sys
 from unittest.mock import Mock
 
 import pytest
@@ -63,11 +62,13 @@ def test_growing_input_seed_is_inconclusive_without_launching_after(tmp_path: Pa
 def test_original_exhausting_memory_reaches_the_observer_fallback(tmp_path: Path) -> None:
     """Strict seed 58534072798479847871598822171 grows the list it iterates until memory runs out.
 
-    On Linux ``RLIMIT_AS`` raises ``MemoryError`` inside the observer, whose
+    Once ``RLIMIT_AS`` raised ``MemoryError`` inside the observer, whose
     traceback kept the grown list alive; the fallback's own allocations then
     failed and the observer exited 1, a harness error that aborted the 2.0
-    strict grammar campaign. On macOS the parent's RSS sampler stops the
-    observer first, so only Linux exercises the fallback itself.
+    strict grammar campaign. The parent's RSS sampler now usually stops the
+    observer first on every platform; the fallback written at Linux's
+    address-space cap is pinned by
+    ``test_observer_memory_budget.test_address_space_cap_contains_a_runaway_the_sampler_misses``.
     """
     case = generate_case(58534072798479847871598822171, bindings=True)
     outcome = runner.run_case(case, replace(runner.DEFAULT, strict=True), tmp_path)
@@ -75,9 +76,6 @@ def test_original_exhausting_memory_reaches_the_observer_fallback(tmp_path: Path
     assert outcome.applied > 0
     assert '"observer_resource": "memory"' in outcome.detail
     assert not (tmp_path / "after.observer.stdout").exists()
-    if sys.platform == "linux":
-        observed = json.loads((tmp_path / "before.observed.json").read_text())
-        assert observed == {"observer_resource": "memory"}
 
 
 @pytest.mark.parametrize(
