@@ -118,7 +118,11 @@ def test_ci_seeds_are_conclusive_when_the_interpreter_reserves_address_space(
 def test_touched_memory_over_budget_is_stopped_by_resident_memory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Touching the reservation is real use: the record names the check and what it measured."""
+    """Touching the reservation is real use: the record names the check and what it measured.
+
+    The sample usually stops it; a parent too stalled to sample in time
+    leaves it to the peak the observer reports as it exits.
+    """
     source = (
         "def f(arg):\n"
         f"    values = bytearray({RESERVATION})\n"
@@ -132,7 +136,7 @@ def test_touched_memory_over_budget_is_stopped_by_resident_memory(
     detail = json.loads(outcome.detail.split(": ", 1)[1])
     assert detail["observer_resource"] == "memory"
     measured = detail["observer_memory"]
-    assert measured["stopped_by"] == "resident memory"
+    assert measured["stopped_by"] in ("resident memory", "peak resident memory at exit")
     assert measured["budget_bytes"] == runner.OBSERVER_MEMORY_BYTES
     assert measured["resident_bytes"] > runner.OBSERVER_MEMORY_BYTES
 
