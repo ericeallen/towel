@@ -10,6 +10,23 @@ release numbers; see the
 
 ## [Unreleased]
 
+## [2.0.1]
+
+### Fixed
+
+- `rename-helpers DIR --list --json` reads the before/after records beside
+  individual output files. Each helper gets the records from its own file.
+- A cross-module refactoring counts once toward `--max-refactorings`, the
+  console total and JSON `applied`. JSON `applied_by_file` gives the count
+  for each changed file.
+- When a preview would change code, `--explain` identifies the staged source
+  used for refusal line numbers. When the list reaches its limit, it shows
+  how to trace declined pairs even for a single file.
+- `# towel: no-extract` accepts a reason after whitespace. Both modes warn
+  about an unrecognized or misplaced `# towel:` directive.
+- With redirected stdin, bare `rename-helpers` prints the assistant prompt
+  and exits successfully. On a terminal it explains how to submit or cancel.
+
 ## [2.0]
 
 Towel 2.0: a relaxed default that extracts far more, and plain calls in place

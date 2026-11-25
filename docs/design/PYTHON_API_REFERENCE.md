@@ -449,8 +449,9 @@ def frame_sensitive(value):  # towel: no-extract
     return inspect_caller(value)
 ```
 
-The exact comment belongs immediately after the signature's final colon,
-including on the closing line of a multiline signature. The protected
+The directive belongs immediately after the signature's final colon,
+including on the closing line of a multiline signature. A space and a reason
+may follow `no-extract`. The protected
 definition and nested bodies stay intact across discovery, clustering,
 reuse, helper insertion and later passes. Other code remains eligible.
 See [Protect a function](../CLI_GUIDE.md#protect-a-function) for syntax and limits;

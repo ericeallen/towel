@@ -1476,9 +1476,9 @@ callees. Users must protect whichever frames their code observes; a warning
 or factory callee can depend on its caller's frame. Existing file/directory
 exclusions provide the broader escape hatch.
 
-Only the exact post-colon comment is a directive. Strings, parameter-line or
-preceding comments, inline-suite trailing comments and explanatory suffixes
-do not silently change the analysis scope. The [scope guide](../CLI_GUIDE.md#protect-a-function)
+In 2.0.1, a space and a reason may follow the directive. Strings remain ordinary
+strings. A directive on a parameter line, above the definition or after an
+inline suite produces a warning and leaves the function eligible. The [scope guide](../CLI_GUIDE.md#protect-a-function)
 shows the syntax.
 
 *Status: implemented with focused checks. Independent consumer validation and
