@@ -48,6 +48,7 @@ import hashlib
 from dataclasses import dataclass
 import os
 
+from .extraction_policy import protected_definitions
 from .unexamined import not_examined
 from ..canonical_ast import canonical_dump
 from ..analysis_sources import parse_analysis_source, parser_configuration, parsing_is_pure
@@ -397,6 +398,7 @@ class AnalysisSession:
         except SyntaxError as error:
             raise SourceFileError(describe_source_failure(error)) from error
         try:
+            protected_definitions(source, tree, diagnostic_path=path)
             module = analyze_scopes([RawModule(file_path=path, source=source, tree=tree)])[0]
             module.class_infos = collect_classes([module])
             analysis = ModuleAnalysis(module, tuple(collect_functions([module])))

@@ -364,7 +364,7 @@ must not depend on the identity of equal literals from different modules.
 `--strict` removes these relaxed-mode assumptions. A change that breaks a
 program meeting these conditions is a bug.
 
-Protect a function by ending its `def` line with `# towel: no-extract`:
+Protect a function by writing `# towel: no-extract` after the signature colon, optionally followed by a space and a reason:
 
 ```python
 def frame_sensitive(value):  # towel: no-extract

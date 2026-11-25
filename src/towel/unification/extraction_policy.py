@@ -22,10 +22,12 @@ nested bodies, is opaque; its line number and surrounding module may change.
 from __future__ import annotations
 
 import ast
+import re
 import tokenize
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from ..diagnostics import LOG
 from ..source_text import definition_start_line, logical_line_tokens, source_lines
 from .exceptions import RefactoringError
 
@@ -41,8 +43,13 @@ class ProtectedDefinition:
     text: str
 
 
-def _header_lines(source: str) -> Tuple[frozenset[int], Tuple[int, ...]]:
+_DIRECTIVE_PREFIX = re.compile(r"#\s*towel\s*:")
+_NO_EXTRACT = re.compile(r"# towel: no-extract(?:\s|$)")
+
+
+def _header_lines(source: str) -> Tuple[frozenset[int], Tuple[int, ...], frozenset[int]]:
     """Collect exact markers and logical decorator headers in one token pass."""
+    directives: set[int] = set()
     marked: set[int] = set()
     decorators: List[int] = []
     depth = 0
@@ -50,9 +57,11 @@ def _header_lines(source: str) -> Tuple[frozenset[int], Tuple[int, ...]]:
     for token, logical_start in logical_line_tokens(source):
         if token.type == tokenize.OP and token.string == "@" and logical_start:
             decorators.append(token.start[0])
+        if token.type == tokenize.COMMENT and _DIRECTIVE_PREFIX.match(token.string):
+            directives.add(token.start[0])
         if (
             token.type == tokenize.COMMENT
-            and token.string.strip() == "# towel: no-extract"
+            and _NO_EXTRACT.match(token.string)
             and depth == 0
             and previous is not None
             and previous.type == tokenize.OP
@@ -66,7 +75,7 @@ def _header_lines(source: str) -> Tuple[frozenset[int], Tuple[int, ...]]:
             elif token.string in ")]}":
                 depth -= 1
         previous = token
-    return frozenset(marked), tuple(decorators)
+    return frozenset(marked), tuple(decorators), frozenset(directives)
 
 
 def _definition_end(node: ast.FunctionDef | ast.AsyncFunctionDef, lines: List[str]) -> int:
@@ -88,26 +97,32 @@ def _definition_end(node: ast.FunctionDef | ast.AsyncFunctionDef, lines: List[st
     return end
 
 
-def protected_definitions(source: str, tree: ast.AST) -> Tuple[ProtectedDefinition, ...]:
+def protected_definitions(
+    source: str, tree: ast.AST, *, diagnostic_path: Optional[str] = None
+) -> Tuple[ProtectedDefinition, ...]:
     """Marked functions, preserving discovery order, without mutating the tree.
 
     A marker in a multiline signature belongs on its closing colon line.
     Strings, standalone comments, decorators and inline-suite comments do not
     mark functions. All functions remain available to binding analysis.
     """
-    if "# towel: no-extract" not in source:
+    if "towel" not in source or not _DIRECTIVE_PREFIX.search(source):
         return ()
-    marked, decorators = _header_lines(source)
-    if not marked:
+    marked, decorators, directives = _header_lines(source)
+    if not directives:
         return ()
     lines = source_lines(source)
     found: List[ProtectedDefinition] = []
     ancestry: List[str] = []
+    claimed: set[int] = set()
 
     class Collector(ast.NodeVisitor):
         def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
             ancestry.append(node.name)
-            if any(node.lineno <= line < node.body[0].lineno for line in marked):
+            for line in marked:
+                if not node.lineno <= line < node.body[0].lineno:
+                    continue
+                claimed.add(line)
                 start = definition_start_line(node, decorators)
                 end = _definition_end(node, lines)
                 found.append(
@@ -125,7 +140,16 @@ def protected_definitions(source: str, tree: ast.AST) -> Tuple[ProtectedDefiniti
             self.generic_visit(node)
             ancestry.pop()
 
-    Collector().visit(tree)
+    if marked:
+        Collector().visit(tree)
+    if diagnostic_path is not None:
+        for line in sorted(directives - claimed):
+            LOG.warning(
+                "%s:%d: ignored Towel directive. Put # towel: no-extract after the colon "
+                "ending the function signature, optionally followed by a space and a reason.",
+                diagnostic_path,
+                line,
+            )
     return tuple(found)
 
 

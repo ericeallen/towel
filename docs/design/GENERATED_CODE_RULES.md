@@ -111,7 +111,7 @@ its existing signature.
 
 ## Protect a definition
 
-An exact `# towel: no-extract` comment immediately after a function signature's
+A `# towel: no-extract` directive (optionally followed by whitespace and a reason) immediately after a function signature's
 final colon makes that definition opaque to refactoring:
 
 ```python

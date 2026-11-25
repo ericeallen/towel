@@ -1463,7 +1463,7 @@ reflection-sensitive code. The October 2 preservation contract remains:
 reflection and self-instrumentation are not automatically detected or
 protected. This adds explicit user control.
 
-An exact `# towel: no-extract` comment immediately after the final signature
+A `# towel: no-extract` directive (optionally followed by whitespace and a reason) immediately after the final signature
 colon protects a `def` or `async def`, including a method. The complete
 definition and nested bodies remain intact. No extraction, clustered
 replacement, helper reuse or insertion may bypass that protection, and

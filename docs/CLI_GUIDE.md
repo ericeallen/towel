@@ -110,7 +110,7 @@ whole project and the tree is larger, the run stops: give the code its own
 
 ### Protect a function
 
-End a function's `def` line with the exact comment `# towel: no-extract`:
+Mark a function’s signature with `# towel: no-extract`:
 
 ```python
 def make_record(fields):  # towel: no-extract
@@ -124,8 +124,9 @@ def make_other_record(
     return build_record(fields, defaults)
 ```
 
-The comment goes after the colon that ends the signature, on that line, with
-nothing after it. Towel then leaves the definition, its decorators and its
+The comment goes after the colon that ends the signature, on that line. You can add a space and
+a reason, as in `# towel: no-extract — uses stacklevel=2`. Towel warns about
+a malformed or misplaced `# towel:` directive. Towel then leaves the definition, its decorators and its
 body exactly as they are: it extracts nothing from it, inserts no helper into
 it and never calls it in place of other code. Its line number can still
 change. Mark each function whose own frame matters, including one whose

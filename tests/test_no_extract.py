@@ -108,7 +108,7 @@ def _protected(source: str) -> tuple[tuple[tuple[str, ...], str], ...]:
         ("def f(\n    x: int,  # towel: no-extract\n):\n    return x\n", False),
         ("def f(): return 1  # towel: no-extract\n", False),
         ("def f(x):  # towel: no-extraction\n    return x\n", False),
-        ("def f(x):  # towel: no-extract because reflection\n    return x\n", False),
+        ("def f(x):  # towel: no-extract because reflection\n    return x\n", True),
         ('def f(x="# towel: no-extract"):\n    return x\n', False),
         ('def f(x) -> "# towel: no-extract":\n    return x\n', False),
         ('def f():\n    return "# towel: no-extract"\n', False),
@@ -116,7 +116,7 @@ def _protected(source: str) -> tuple[tuple[tuple[str, ...], str], ...]:
         ("def f():\n    # towel: no-extract\n    return 1\n", False),
     ],
 )
-def test_only_an_exact_comment_on_the_final_header_colon_marks_a_function(
+def test_only_a_directive_on_the_final_header_colon_marks_a_function(
     source: str, expected: bool
 ) -> None:
     tree = ast.parse(source)
@@ -559,3 +559,21 @@ def test_introduced_generated_helper_can_be_reused_only_until_explicitly_protect
         assert callable(caller)
         assert caller() == 15
     assert path.read_text() == source
+
+
+@pytest.mark.parametrize("mode", ["--strict", "--no-strict"])
+def test_directive_with_reason_protects_twins_and_a_typo_warns(tmp_path: Path, mode: str) -> None:
+    """Cold read 5: a rationale must not silently disable a function's exclusion."""
+    from tests.test_cli_integration import invoke
+
+    source = _function("first", "  # towel: no-extract — uses stacklevel=2") + _function("second")
+    path = _write(tmp_path, source)
+    args = ["preview", str(path), "--summary", "--no-types", "--no-format", mode]
+    protected = invoke(args)
+    assert protected.status == 0, protected.stderr
+    assert "Would apply 0 refactoring(s)" in protected.stdout
+    path.write_text(source.replace("no-extract —", "no-extrac —"))
+    typo = invoke(args)
+    assert typo.status == 0, typo.stderr
+    assert "Would apply 1 refactoring(s)" in typo.stdout
+    assert "example.py:1" in typo.stderr and "# towel: no-extract" in typo.stderr
