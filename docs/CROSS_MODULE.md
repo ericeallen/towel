@@ -12,7 +12,7 @@ towel preview shop/ --cross-module
 
 ```diff
 Note: formatting generated code with Black (project configuration).
-Would apply 2 refactoring(s).
+Would apply 1 refactoring(s).
 Analysed 3 Python files (3 functions).
 Would change 2 file(s):
   invoices.py: 1 refactoring(s)
@@ -53,8 +53,7 @@ Input files were not changed.
 ```
 
 The helper went into `shop/orders.py`, which `invoices.py` already imports, so
-the new import loads nothing that was not loaded before. The run counts one
-refactoring for each file it changes, so one shared helper is two here.
+the new import loads nothing that was not loaded before. This counts as one refactoring. Each of the two files lists its part in that change.
 
 ## When modules share nothing
 

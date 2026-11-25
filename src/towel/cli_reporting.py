@@ -209,6 +209,7 @@ class CommandResult(TypedDict):
     output: str | None
     published: bool | None
     applied: int
+    applied_by_file: dict[str, int]
     termination: str
     diff: str
     helpers: HelperInventory | None

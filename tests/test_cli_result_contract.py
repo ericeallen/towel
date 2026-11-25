@@ -556,3 +556,31 @@ def test_cancellation_on_a_terminal(
             output = read_terminal(master)
             for diagnostic in ("raw cleanup", "saved stream cleanup", "current stream cleanup"):
                 assert diagnostic in output
+
+
+def test_cross_module_limit_counts_one_shared_extraction(tmp_path: Path) -> None:
+    """Cold read 2: the console and JSON must use the same unit as the limit."""
+    shop = tmp_path / "shop"
+    shop.mkdir()
+    for template in (Path(__file__).parent / "documentation_projects/crossmodule/shop").glob(
+        "*.txt"
+    ):
+        (shop / template.stem).write_bytes(template.read_bytes())
+    args = [
+        "preview",
+        str(shop),
+        "--cross-module",
+        "--max-refactorings",
+        "1",
+        "--no-strict",
+        *FLAGS,
+    ]
+    result = invoke([*args, "--json"])
+    assert result.status == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["termination"] == "iteration_cap"
+    assert data["applied"] == 1
+    assert data["applied_by_file"] == {"invoices.py": 1, "orders.py": 1}
+    summary = invoke([*args, "--summary"])
+    assert "Would apply 1 refactoring(s)." in summary.stdout
+    assert "Would change 2 file(s)" in summary.stdout

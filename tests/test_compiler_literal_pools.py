@@ -542,7 +542,7 @@ print(a.f(1)[0] is b.g(1)[0], events)
     output = tmp_path / "output"
     report = _dry(project, output, cross_module=True, typed=True)
     if lifetime_order_certified():
-        assert "Applied 2 refactoring(s) across 2 file(s)" in report
+        assert "Applied 1 refactoring(s) across 2 file(s)" in report
     else:
         _assert_lifetime_refusal(report, project, output)
     assert observe(output) == before
@@ -629,7 +629,7 @@ print(tuple(left is right for left,right in zip(a.f(1)[:5],b.g(1)[:5])))
     output = tmp_path / "output"
     report = _dry(project, output, cross_module=True, typed=True)
     if lifetime_order_certified():
-        assert "Applied 2 refactoring(s) across 2 file(s)" in report
+        assert "Applied 1 refactoring(s) across 2 file(s)" in report
     else:
         _assert_lifetime_refusal(report, project, output)
     assert observe(output) == before

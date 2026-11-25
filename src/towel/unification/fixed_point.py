@@ -254,6 +254,8 @@ class FixedPointDrivers(Materialization):
     # Proposals the last run dropped because the checker could not run, by
     # identity, and the last reason it gave.
     _resource_limit_reached: bool = False
+    applied_refactorings: int = 0
+    """Accepted refactorings in the last run, counted once across all participating files."""
     preview_incomplete: bool = False
     _run_applied: Tuple[RefactoringProposal, ...] = ()
     _unchecked: FrozenSet[str] = frozenset()
@@ -424,6 +426,7 @@ class FixedPointDrivers(Materialization):
 
     def _begin_counting_checker_failures(self) -> None:
         self._resource_limit_reached = False
+        self.applied_refactorings = 0
         self.preview_incomplete = False
         self._run_applied = ()
         self._unchecked, self._unchecked_reason = frozenset(), ""
@@ -577,6 +580,7 @@ class FixedPointDrivers(Materialization):
                 )
             finally:
                 reporter.close()
+            self.applied_refactorings = refactored[1]
             return refactored
 
     def _refuse_an_unreadable_program(self, target: Path) -> None:
@@ -958,7 +962,7 @@ class FixedPointDrivers(Materialization):
                     before=before_publication,
                     preview=before_preview,
                     publication=Publication(
-                        sum(count for count, _ in public.values()),
+                        self.applied_refactorings,
                         tuple(sorted(public)),
                         destination,
                         stage.in_place,
@@ -966,6 +970,7 @@ class FixedPointDrivers(Materialization):
                 )
             except BudgetExpired:
                 self._capture_incomplete_preview(stage, before_preview)
+                self.applied_refactorings = len(self._run_applied)
                 public = {}
                 for proposal in self._run_applied:
                     paths = {
@@ -1030,6 +1035,7 @@ class FixedPointDrivers(Materialization):
         if run.applied:
             self.confirm_run_with_a_cold_checker(paths)
         self._refuse_a_run_the_checker_emptied(run.applied)
+        self.applied_refactorings = run.applied
         if max_iterations > 0 and run.applied >= max_iterations:
             return run.results, "iteration_cap"
         return outcome

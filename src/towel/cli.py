@@ -1749,7 +1749,7 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
                     )
                 ),
             )
-            applied = sum(count for count, _ in results.values())
+            applied = engine.applied_refactorings
             termination = termination_reason
 
         report = engine.run_report
@@ -1792,6 +1792,7 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
             applied,
             termination,
             preview=preview,
+            results=results,
             types_status=types_status,
             content=content,
             findings=findings,
@@ -2479,6 +2480,7 @@ def _command_result(
     termination: str,
     *,
     preview: bool,
+    results: Mapping[str, Tuple[int, List[str]]],
     types_status: TypesStatus,
     content: Optional[_PreviewContent] = None,
     findings: Sequence[RelaxedFinding] = (),
@@ -2496,6 +2498,7 @@ def _command_result(
             # A naming aid is optional; a failed read after dry has committed
             # must not turn published output into a reported failed operation.
             LOG.warning("Helper inventory unavailable: %s", error)
+    relative = _relative_to_run(options)
     result: CommandResult = {
         "schema_version": 1,
         "config_path": options.config_path,
@@ -2506,6 +2509,7 @@ def _command_result(
         "output": None if preview else str(Path(options.output).resolve()),
         "published": not preview,
         "applied": applied,
+        "applied_by_file": {relative(path): count for path, (count, _) in results.items()},
         "termination": termination,
         "diff": (
             content.diff
@@ -2517,7 +2521,7 @@ def _command_result(
         "helpers": inventory,
         "error": None,
         "outcome": None if engine.preview_incomplete else run_outcome(report, applied),
-        "analysed": analysed_record(report, _relative_to_run(options)),
+        "analysed": analysed_record(report, relative),
         "left_alone": left_alone_count(report, applied),
         "relaxed_findings": [finding.to_json() for finding in findings],
     }
@@ -2550,6 +2554,7 @@ def _write_failure_result(
         "output": os.path.abspath(args.output) if args.command == "dry" else None,
         "published": False if args.command == "preview" or termination == "time_limit" else None,
         "applied": 0,
+        "applied_by_file": {},
         "termination": termination,
         "diff": "",
         "helpers": None,

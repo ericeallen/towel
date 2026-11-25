@@ -109,6 +109,7 @@ The preview/dry result schema is version 1:
 | `output` | Absolute destination path for `dry`; `null` for preview. |
 | `published` | `true` after successful `dry` publication; `false` for preview or an expired time budget; `null` when a failed or interrupted `dry` cannot confirm the publication state. |
 | `applied` | Number of accepted extractions; preview counts the changes it would apply. |
+| `applied_by_file` | Number of accepted refactorings touching each changed file, keyed by relative path. One cross-module refactoring counts once in `applied` and once under each file it changes. Empty on failure. Added in 2.0.1. |
 | `termination` | `"fixed_point"`, `"iteration_cap"`, `"time_limit"`, `"interrupted"` or `"error"`. |
 | `diff` | Unified diff for a completed preview; otherwise an empty string. |
 | `helpers` | Helper inventory object, or `null` if unavailable. An optional inventory-read failure does not undo successful publication. |

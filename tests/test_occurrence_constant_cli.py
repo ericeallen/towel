@@ -391,7 +391,7 @@ def test_retained_operand_keeps_its_caller_pool_identity(
     if strict_lifetime_refusal():
         assert applied == 0
     else:
-        assert applied >= (2 if cross_module else 1)
+        assert applied >= 1
     _assert_moved_and_bounded(output, ("f0", "f1"))
     assert _observe(output, tmp_path / "observed-after", program) == before
     assert before[0] == 0
