@@ -1007,7 +1007,8 @@ meaningful names, updating every call.
 
 Without --rename-file, rename-helpers prints a prompt, showing each helper's
 code, for you to give an AI assistant such as Claude or ChatGPT; paste the
-assistant's JSON answer back and the names are applied. With --rename-file,
+assistant's JSON answer back on a terminal and the names are applied.
+With redirected stdin, it prints the prompt and exits. With --rename-file,
 it applies a JSON file that maps old names to new ones, such as
   {"__extracted_func_0": "order_total"}
 
@@ -2753,6 +2754,10 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
             print()
         return
 
+    if options.rename_file is None and (sys.stdin is None or not sys.stdin.isatty()):
+        print(_generate_llm_prompt(target, helpers, options.llm or "generic"))
+        return
+
     from towel.renaming import inferred_rename_root
 
     if not options.complete_scope and inferred_rename_root(target) is None:
@@ -3504,8 +3509,11 @@ def _run_interactive_llm_mode(
     print('  {"src/utils.py:__extracted_func_2.__param_0": "raw_value"}')
     print('  {"src/box.py:Box.__extracted_func_3": "__scaled_width"}')
     print()
-    print("Paste the JSON response below, then press ENTER followed by Ctrl+D:")
-    print()
+    finish = "Ctrl-Z then Enter" if os.name == "nt" else "Ctrl-D"
+    print(
+        f"Waiting for JSON. Paste the answer, press Enter, then {finish}. Press Ctrl-C to cancel.",
+        flush=True,
+    )
 
     llm_response = sys.stdin.read().strip()
     if not llm_response:

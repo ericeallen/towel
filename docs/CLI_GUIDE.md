@@ -234,7 +234,9 @@ These are read once, when Towel starts.
 ## rename-helpers and recover
 
 `towel rename-helpers TARGET` renames the helpers Towel wrote and their
-parameters, updating every call. `--list` shows them, `--rename-file FILE`
+parameters, updating every call. With redirected stdin, the bare command prints
+the assistant prompt and exits. On a terminal it waits for the JSON answer and
+shows how to submit it or cancel. `--list` shows them, `--rename-file FILE`
 applies a JSON mapping, `--preview` shows the diff without writing, and
 `--format` formats the files it changes, and exits 2 if the project's formatter
 is not installed where Towel runs. A mapping file that is not valid JSON exits 1.

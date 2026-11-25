@@ -54,14 +54,20 @@ class CliResult(NamedTuple):
 
 
 def invoke(
-    arguments: Sequence[str], stdin: str = "", entry: Callable[[], None] = cli.main
+    arguments: Sequence[str],
+    stdin: str = "",
+    entry: Callable[[], None] = cli.main,
+    *,
+    terminal_input: bool = False,
 ) -> CliResult:
     """Replace only process I/O boundaries; parser, handlers and engine run normally."""
     stdout, stderr = io.StringIO(), io.StringIO()
     status = 0
+    input_stream = io.StringIO(stdin)
     with (
+        patch.object(input_stream, "isatty", return_value=terminal_input),
         patch.object(sys, "argv", ["towel", *arguments]),
-        patch.object(sys, "stdin", io.StringIO(stdin)),
+        patch.object(sys, "stdin", input_stream),
         redirect_stdout(stdout),
         redirect_stderr(stderr),
     ):
@@ -304,8 +310,9 @@ def test_interactive_helper_prompt_accepts_manual_markdown_json(
     if dry_run:
         arguments.append("--preview")
     response = '```json\n{"helpers.py:__extracted_func_0": "double_value"}\n```\n'
-    result = invoke(arguments, stdin=response)
+    result = invoke(arguments, stdin=response, terminal_input=True)
     assert result.status == 0
+    assert "Ctrl-C" in result.stdout and "Ctrl-D" in result.stdout
     assert "Copy the following prompt" in result.stdout
     assert "return x * 2" in result.stdout
     assert "double_value" in result.stdout
@@ -349,7 +356,9 @@ def test_invalid_interactive_json_reports_problem_without_writing(
 ) -> None:
     source = tmp_path / "helpers.py"
     source.write_text(HELPER)
-    result = invoke(["rename-helpers", str(tmp_path), "--complete-scope"], stdin=response)
+    result = invoke(
+        ["rename-helpers", str(tmp_path), "--complete-scope"], stdin=response, terminal_input=True
+    )
     assert diagnostic in result.stderr
     assert result.status == 1
     assert source.read_text() == HELPER
@@ -430,3 +439,24 @@ def test_boolean_options_take_both_spellings() -> None:
     assert parser.parse_args(["dry", "in", "out", "--no-format"]).format is False
     assert parser.parse_args(["dry", "in", "out"]).prefer_absolute_imports is None
     assert parser.parse_args(["dry", "in", "out", "--no-pep420"]).pep420 is False
+
+
+def test_bare_rename_with_an_open_pipe_prints_the_prompt_without_reading(tmp_path: Path) -> None:
+    """Cold read 6: a caller collecting the prompt may keep the pipe open."""
+
+    source = tmp_path / "helpers.py"
+    source.write_text(HELPER)
+    with subprocess.Popen(
+        [sys.executable, "-m", "towel.cli", "rename-helpers", str(tmp_path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as child:
+        try:
+            assert child.wait(timeout=5) == 0
+        except subprocess.TimeoutExpired:
+            child.kill()
+            raise
+        assert child.stdout is not None and "return x * 2" in child.stdout.read()
+    assert source.read_text() == HELPER

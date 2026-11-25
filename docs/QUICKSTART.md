@@ -254,7 +254,8 @@ OK
 Add `--preview` to see a rename's diff before applying it. Without
 `--rename-file`, `rename-helpers` prints a prompt you can give an AI assistant,
 which answers with a mapping like this one; Towel itself calls no AI service.
-The [naming guide](NAMING.md) has the details.
+On a terminal it waits for the answer. Press Ctrl-C to cancel. With redirected
+input it prints the prompt and exits. The [naming guide](NAMING.md) has the details.
 
 ## 5. Keep the result
 

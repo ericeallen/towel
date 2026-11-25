@@ -154,7 +154,10 @@ Applied 6 change(s)
 Without `--rename-file`, `rename-helpers` prints a prompt that shows each
 helper, its rename keys and a call, and asks for a JSON mapping. Give it to an
 AI assistant such as Claude or ChatGPT, paste the answer back, then press
-Enter and Ctrl-D; Towel checks and applies it as above. Towel itself sends
+Enter and Ctrl-D (Ctrl-Z then Enter on Windows). Towel checks and applies the
+mapping. Ctrl-C cancels. To save just the prompt, redirect stdin and stdout,
+for example `towel rename-helpers . < /dev/null > prompt.txt`. The command
+exits after printing the prompt. Apply a saved reply with `--rename-file`. Towel itself sends
 nothing anywhere. The prompt is the same for every assistant, so leave out the
 deprecated `--llm` option. Review the names before you keep them: a name is a
 claim about what the code means.
