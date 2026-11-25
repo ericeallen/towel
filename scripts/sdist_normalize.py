@@ -25,6 +25,8 @@ import re
 import tarfile
 from typing import Mapping, Optional
 
+COMPRESSION = 9
+"""Named because the interpreters Towel supports do not share one gzip default."""
 LATEST_EPOCH = 2**32 - 1
 """The gzip header holds its modification time in four bytes."""
 
@@ -54,7 +56,9 @@ def normalize_sdist(archive: Path, epoch: int) -> None:
     """Replace ``archive``, a ``.tar.gz``, with the same files in the same order, dated ``epoch``."""
     output = io.BytesIO()
     with tarfile.open(archive, "r:gz") as source:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=epoch) as compressed:
+        with gzip.GzipFile(
+            filename="", mode="wb", fileobj=output, mtime=epoch, compresslevel=COMPRESSION
+        ) as compressed:
             with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as target:
                 for member in source:
                     content = source.extractfile(member) if member.isfile() else None

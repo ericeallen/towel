@@ -59,6 +59,7 @@ def test_normalizing_removes_everything_the_building_machine_put_there(tmp_path:
     normalize_sdist(second, EPOCH)
     assert first.read_bytes() == second.read_bytes()
     assert int.from_bytes(first.read_bytes()[4:8], "little") == EPOCH
+    assert first.read_bytes()[8] == 2  # gzip's mark for level 9, whatever Python's default
     with tarfile.open(first) as archive:
         directory, file = archive.getmembers()
         assert (directory.mtime, directory.mode, directory.uid) == (EPOCH, 0o755, 0)
