@@ -67,8 +67,8 @@ one it names the most structurally similar peer and counts the other distinct
 peers. Towel compares the types of syntax nodes in corresponding statements.
 Sites that would share the same proposed helper count as a full match. For
 equal matches it prefers the closest line count, then file and line.
-If more places qualify, the final line gives the omitted count. Run Towel on
-the directory or file you care about to see more.
+If more places qualify, the final line gives the omitted count. To trace declined pairs on stderr,
+rerun with `DEBUG_PROPOSAL_REJECTIONS=1` and omit `--quiet`.
 
 ## When Towel finds nothing to do
 

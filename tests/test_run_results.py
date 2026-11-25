@@ -455,7 +455,7 @@ def test_explain_is_bounded_on_a_dense_group_of_generators(tmp_path: Path) -> No
     assert rows[-1].startswith("many.py:97-99: similar to many.py:2-4")
     assert "... and 200 more places left alone for this reason" in result.stdout
     assert result.stdout.count("Towel does not share code that yields.") == 1
-    assert "directory or file" in result.stdout
+    assert "DEBUG_PROPOSAL_REJECTIONS=1" in result.stdout  # Cold read 4: works on a single file.
 
 
 def test_explain_prefers_the_closest_syntax_at_equal_length(tmp_path: Path) -> None:

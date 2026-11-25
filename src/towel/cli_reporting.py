@@ -520,7 +520,9 @@ def reason_lines(
         elif tally.explanation.remedy:
             lines.append(f"  {'':>{width}}  What you can do: {tally.explanation.remedy}")
     if omitted:
-        lines.append("To see more, run Towel on the directory or file you care about.")
+        lines.append(
+            "To trace declined pairs on stderr, rerun with DEBUG_PROPOSAL_REJECTIONS=1 and without --quiet."
+        )
     return lines
 
 
