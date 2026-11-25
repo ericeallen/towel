@@ -57,6 +57,7 @@ REQUIRED_RECORDS = (
     "source.json",
     "run-matrix.sh",
     "artifacts.json",
+    "sdist-rebuild.json",
     "build-results.json",
     "quality-313.log",
     "twine-313.log",
@@ -113,6 +114,7 @@ REQUIRED_RECORDS = (
 # final package checks below need new observations, using the same record shapes.
 DOCUMENTATION_REBUILD_RECORDS = (
     "artifacts.json",
+    "sdist-rebuild.json",
     "build-results.json",
     "twine-313.log",
     "dependencies-audit-command.json",
@@ -574,12 +576,47 @@ def sdist_sources(source: Mapping[str, bytes]) -> set[str]:
     return included
 
 
+def commit_time(repo: Path, commit: str) -> int:
+    return int(git(repo, "show", "-s", "--format=%ct", commit))
+
+
+def verify_sdist_rebuild(records: Records, ref: FileRef, commit: str, epoch: int) -> None:
+    """The shipped sdist is dated by its commit and a second build gave the same bytes."""
+    observed = records.table("sdist-rebuild.json")
+    require(
+        observed.get("commit") == commit and integer(observed.get("source_date_epoch")) == epoch,
+        "Sdist rebuild is of another commit or build time",
+    )
+    completed(table(observed.get("build")))
+    second = FileRef.read(observed.get("rebuild"))
+    # The rebuild's path is relative to the record that names it.
+    directory = (records.root / records.files["sdist-rebuild.json"].path).parent
+    first_path, second_path = records.root / ref.path, directory / second.path
+    require(
+        second_path.resolve() != first_path.resolve(),
+        "Sdist rebuild names the shipped archive itself",
+    )
+    data = ref.bytes(records.root)
+    require(second.bytes(directory) == data, "Sdist did not rebuild byte for byte")
+    # Read the dates from the archive: two copies of one unpinned build would also match.
+    require(
+        data[:2] == b"\x1f\x8b" and int.from_bytes(data[4:8], "little") == epoch,
+        "Sdist gzip header is not dated by the commit",
+    )
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+        require(
+            all(m.mtime == epoch and "mtime" not in m.pax_headers for m in archive),
+            "Sdist member is not dated by the commit",
+        )
+
+
 def verify_artifacts(
     records: Records,
     references: Mapping[str, object],
     source: Mapping[str, bytes],
     commit: str,
     version: str,
+    epoch: int,
 ) -> tuple[str, str, set[str]]:
     require(set(references) == {"wheel", "sdist"}, "Exactly one wheel and sdist are required")
     refs = {name: FileRef.read(value) for name, value in references.items()}
@@ -700,6 +737,7 @@ def verify_artifacts(
                 else:
                     require(files[name] == source[name], f"Sdist source mismatch: {name}")
             shipped.update(set(files) & set(source))
+    verify_sdist_rebuild(records, refs["sdist"], commit, epoch)
     return refs["wheel"].sha256, refs["sdist"].sha256, shipped
 
 
@@ -1265,6 +1303,7 @@ def verify_documentation_rebuild(
     new: Mapping[str, bytes],
     head: str,
     version: str,
+    epoch: int,
 ) -> Mapping[str, object]:
     """Inspect rebuilt packages while retaining the unchanged runtime's original evidence."""
     changed = {name for name in set(old) | set(new) if old.get(name) != new.get(name)}
@@ -1305,7 +1344,7 @@ def verify_documentation_rebuild(
         "Rebuilt artifacts explicitly marked not for publication",
     )
     artifacts = table(rebuilt.get("artifacts"))
-    wheel, archive, _ = verify_artifacts(final, artifacts, new, head, version)
+    wheel, archive, _ = verify_artifacts(final, artifacts, new, head, version, epoch)
     # Git parity alone cannot detect a changed build backend or injected wheel
     # metadata. The final wheel may differ only in its README and RECORD hashes.
     before = archive_files(records.root / FileRef.read(original_artifacts["wheel"]).path)
@@ -1480,7 +1519,12 @@ def verify(
                 "Artifacts explicitly marked not for publication",
             )
     wheel, archive, shipped = verify_artifacts(
-        records, table(bundle.get("artifacts")), source, commit, version
+        records,
+        table(bundle.get("artifacts")),
+        source,
+        commit,
+        version,
+        commit_time(repo, commit),
     )
     amendment = bundle.get("amendments")
     rebuild = table(amendment).get("rebuilt") if amendment is not None else None
@@ -1510,7 +1554,7 @@ def verify(
     artifacts: Mapping[str, object] = table(bundle["artifacts"])
     if rebuild is not None:
         artifacts = verify_documentation_rebuild(
-            records, artifacts, rebuild, source, current, head, version
+            records, artifacts, rebuild, source, current, head, version, commit_time(repo, head)
         )
     return (
         records.root / FileRef.read(artifacts["wheel"]).path,

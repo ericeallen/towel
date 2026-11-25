@@ -10,6 +10,12 @@ release numbers; see the
 
 ## [Unreleased]
 
+### Packaging
+
+- With `SOURCE_DATE_EPOCH` set, two builds of one commit by the same tool
+  versions now give byte-identical sdists, as they already gave identical
+  wheels. The release evidence check requires it.
+
 ## [2.0]
 
 Towel 2.0: a relaxed default that extracts far more, and plain calls in place

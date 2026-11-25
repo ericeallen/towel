@@ -182,7 +182,7 @@ bump-version VERSION:
 
 # Build local wheel and sdist (publication and tagging are separate maintainer actions)
 build:
-    uv run --frozen python -m build
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}" uv run --frozen python -m build
 
 # Check completed local validation without declaring the artifacts publishable
 verify-release-evidence VERSION EVIDENCE:
