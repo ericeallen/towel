@@ -2981,8 +2981,19 @@ def helper_inventory(
     something only there: the class stores it as ``_Class__helper``.
     """
 
+    file_changes: Dict[Path, Dict[str, List[ChangeRecord]]] = {}
     if changes_by_helper is None:
         changes_by_helper = _read_change_sidecar(_change_sidecar_path(target))
+        for path in {path for path, _, _, _ in helpers}:
+            relative = str(path.relative_to(target))
+            file_changes[path] = {
+                name: [
+                    {**record, "file": relative}
+                    for record in records
+                    if record["file"] == path.name
+                ]
+                for name, records in _read_change_sidecar(_change_sidecar_path(path)).items()
+            }
 
     wanted = {name for _, name, _, _ in helpers}
     modules = _load_modules(target)
@@ -3066,7 +3077,7 @@ def helper_inventory(
                         "bindings": bindings,
                     }
                 )
-            changes = changes_by_helper.get(name, [])
+            changes = file_changes.get(path, {}).get(name, changes_by_helper.get(name, []))
             entries.append(
                 {
                     "file": relative,

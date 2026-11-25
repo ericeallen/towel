@@ -58,7 +58,7 @@ path. Both take the same options:
 | Option | Default | What it does |
 | --- | --- | --- |
 | `--interactive` | on | Ask before writing. `--no-interactive` writes without asking, as scripts need. |
-| `--helper-metadata` | on | Write the call sites `rename-helpers` shows: `.towel-helpers.json` in an output directory, or `OUTPUT.towel-helpers.json` beside an output file. |
+| `--helper-metadata` | on | Write the call sites `rename-helpers` shows: `.towel-helpers.json` in an output directory, or `OUTPUT.towel-helpers.json` beside an output file. Give `rename-helpers` the containing directory to read a file’s record. |
 
 `preview` only: `--summary` (counts, no diff), `--diff` (the diff alone),
 `--inventory` (also list the helpers), `--quick` (a fast, partial listing of

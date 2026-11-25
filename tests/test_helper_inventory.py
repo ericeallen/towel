@@ -257,3 +257,33 @@ def test_the_sidecar_spells_each_file_relative_to_an_output_reached_through_a_li
     recorded = json.loads(_change_sidecar_path(real / "src").read_text())["helpers"]
     files = {change["file"] for changes in recorded.values() for change in changes}
     assert files == {"m.py"}, files
+
+
+def test_directory_inventory_reads_single_file_runs_separately(tmp_path: Path) -> None:
+    """Cold read 1: two file runs can assign the same helper name independently."""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    for name in ("first", "second"):
+        module = package / f"{name}.py"
+        module.write_text("def __extracted_func_0(x):\n    return x\n")
+        record = {
+            "file": module.name,
+            "line": 7,
+            "before": name,
+            "after": "return __extracted_func_0(x)",
+        }
+        module.with_suffix(".py.towel-helpers.json").write_text(
+            json.dumps({"helpers": {"__extracted_func_0": [record]}})
+        )
+    result = subprocess.run(
+        [sys.executable, "-m", "towel.cli", "rename-helpers", str(tmp_path), "--list", "--json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    entries = json.loads(result.stdout)["helpers"]
+    assert len(entries) == 2
+    for entry in entries:
+        (change,) = entry["changes"]
+        assert change["file"] == entry["file"]
+        assert change["before"] == Path(entry["file"]).stem

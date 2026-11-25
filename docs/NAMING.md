@@ -206,7 +206,10 @@ stdout. Applying a mapping a second time is safe: each name is reported as
 `.towel-helpers.json`, which `dry` writes into its output directory, gives the
 inventory each call's code before and after the change. After `dry` writes a
 single file, the same data is beside it as `OUTPUT.towel-helpers.json`.
-`rename-helpers` reads `.towel-helpers.json` only from the directory you give it, so give the directory `dry` wrote:
+For example, after `towel dry charges.py charges.py`, run
+`towel rename-helpers . --file charges.py --list --json`. The inventory reads
+each selected file’s own record when one exists.
+For a directory run, `rename-helpers` reads `.towel-helpers.json` only from the directory you give it, so give the directory `dry` wrote:
 after `towel dry src/pkg src/pkg`, that is `src/pkg`, not the project root.
 Delete the file once the helpers are named; without it, renaming still works,
 but the inventory shows no call-site changes. `--format` formats the files a
