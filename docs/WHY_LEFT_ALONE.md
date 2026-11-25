@@ -38,7 +38,9 @@ Input files were not changed.
 
 The default report shows the five largest sets of matching blocks. A run that
 extracted something omits the pairs it declined, because many are calls it just
-wrote. Add `--explain` to include those pairs and group the locations by reason.
+wrote. Add `--explain` to include those pairs and group the locations by reason. When preview would change code,
+refusal line numbers refer to the staged source when Towel declined that match.
+Locations of code outside the search use the original input.
 
 ```bash
 towel preview feed.py --explain

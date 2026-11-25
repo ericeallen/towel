@@ -209,7 +209,9 @@ Results go to stdout; warnings, notes, questions and progress go to stderr, so
 redirecting stdout keeps only the result. `--summary`, `--diff` and `--json`
 exclude one another. By default a run names the five largest places it left
 alone; after a run that extracted something, it omits the pairs it declined, and
-`--explain` shows them. A changed file that cannot be decoded is left out of the
+`--explain` shows them. When preview would change code,
+refusal line numbers refer to the staged source when Towel declined that match.
+Locations of code outside the search use the original input. A changed file that cannot be decoded is left out of the
 diff, with a warning naming it. Human-readable wording can change between releases; scripts should read `--json` and the exit
 statuses in the [compatibility contract](COMPATIBILITY.md).
 

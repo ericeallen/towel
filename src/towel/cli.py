@@ -2442,20 +2442,27 @@ def _print_complete_preview(
         for file_path, (count, descriptions) in sorted(results.items()):
             headline.append(f"  {relative(file_path)}: {count} refactoring(s)")
             headline.extend(f"    - {description}" for description in descriptions)
+    explanations = _left_alone_report(
+        report,
+        options,
+        applied,
+        relative,
+        shared=shared_across_modules(engine.change_log),
+        complete=not engine.preview_incomplete,
+    )
+    if applied and options.explain and explanations:
+        explanations = [
+            "Refusal line numbers refer to the staged source at the time of each refusal.",
+            "Locations of code outside the search refer to the original input.",
+            *explanations,
+        ]
     print(
         render_preview(
             applied,
             headline,
             ("" if options.summary else content.diff if content is not None else ""),
             content.inventory if content is not None and options.inventory else None,
-            _left_alone_report(
-                report,
-                options,
-                applied,
-                relative,
-                shared=shared_across_modules(engine.change_log),
-                complete=not engine.preview_incomplete,
-            ),
+            explanations,
         ),
         end="",
     )

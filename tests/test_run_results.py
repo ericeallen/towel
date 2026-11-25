@@ -469,3 +469,19 @@ def test_explain_prefers_the_closest_syntax_at_equal_length(tmp_path: Path) -> N
     result = invoke(["preview", str(source), "--explain", *FLAGS])
     assert result.status == 0, result.stderr
     assert "shape.py:2-4: similar to shape.py:12-14 and 1 other place" in result.stdout
+
+
+def test_preview_explains_which_source_its_shifted_lines_describe(tmp_path: Path) -> None:
+    """Cold read 3: a new helper shifts the generator lines only in the preview."""
+    module = tmp_path / "mixed.py"
+    generators = "".join(
+        f"def gen_{i}(items):\n    for item in items:\n        if item > {i}:\n            yield item\n\n"
+        for i in (1, 2)
+    )
+    original = generators + DUPLICATES
+    module.write_text(original)
+    result = invoke(["preview", str(module), "--summary", "--explain", *FLAGS])
+    assert result.status == 0, result.stderr
+    assert "Would apply 1 refactoring" in result.stdout and "[generator_block]" in result.stdout
+    assert module.read_text() == original
+    assert "staged source at the time of each refusal" in result.stdout
