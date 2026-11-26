@@ -948,6 +948,17 @@ KNOWN_LIMITATIONS says so.
 
 *Status: decided; documented in 1.772.*
 
+## 2026-11-25: Member configuration and consumer verification have different roots
+
+A member’s nearest packaging file bounds discovery of the settings governing
+its code, including the checker settings used to infer helper annotations.
+The Git or Mercurial root bounds discovery in a checkout without a packaging
+file. Each enclosing configured Pyright root still checks the candidate in
+its own copy of the project. The same candidate can pass in the member and
+break an operator in an application that imports the member’s return type.
+The application’s check must see the changed source even on a member-only run.
+Enclosing mypy checks likewise use their own settings and applicable CI targets.
+
 ## 2026-09-25: Round-4 refinements to the import model and the typed check
 
 These came out of the fourth audit's fixes. Each makes Towel decline or

@@ -130,7 +130,7 @@ from ..type_inference import (
     RevealRequest,
     TypeDiagnostic,
     TypeOracle,
-    _configured_root,
+    _member_config_root,
     _checker_root,
     _module_name_and_root,
     _mypy_config,
@@ -228,7 +228,7 @@ def _ini_option(path: Path, section: str, option: str) -> Optional[str]:
 def _checker_targets(path: Path) -> List[PythonVersion]:
     """The Python versions the project's mypy and pyright configurations target."""
     targets: List[Optional[PythonVersion]] = []
-    mypy_root = _configured_root(path, "mypy")
+    mypy_root = _member_config_root(path, "mypy")
     config = _mypy_config(mypy_root) if mypy_root is not None else None
     if config is not None and mypy_root is not None:
         if config.endswith("pyproject.toml"):
@@ -236,7 +236,7 @@ def _checker_targets(path: Path) -> List[PythonVersion]:
             targets.append(_checker_python(mypy.get("python_version", "")))
         else:
             targets.append(_checker_python(_ini_option(Path(config), "mypy", "python_version")))
-    pyright_root = _configured_root(path, "pyright")
+    pyright_root = _member_config_root(path, "pyright")
     if pyright_root is not None:
         settings: Mapping[str, object]
         try:
@@ -403,7 +403,7 @@ def mypy_ladder_flags(path: Path) -> Dict[str, bool]:
     native specificity order. Literal CI --strict overrides global options,
     while per-module sections retain their precedence over CLI flags.
     """
-    root = _configured_root(path, "mypy")
+    root = _member_config_root(path, "mypy")
     config = _mypy_config(root) if root is not None else None
     ci_strict = "--strict" in mypy_policy(root or _checker_root(path), [path]).flags
     options, overrides = _mypy_sections(Path(config)) if config else ({}, [])
@@ -466,7 +466,7 @@ def _builtin_oracle(oracle: Optional[TypeOracle]) -> bool:
 
 def _mypy_config_identity(path: Path) -> Optional[Tuple[str, str]]:
     """The explicit configuration's path and exact bytes, or no reusable evidence."""
-    root = _configured_root(path, "mypy")
+    root = _member_config_root(path, "mypy")
     filename = _mypy_config(root) if root is not None else None
     if filename is None:
         return None
@@ -482,7 +482,7 @@ def _mypy_without_plugins(path: Path) -> bool:
     A plugin can refine even a declared ``Any`` result using parameter types,
     so unreadable, absent or malformed configuration leaves every rung intact.
     """
-    root = _configured_root(path, "mypy")
+    root = _member_config_root(path, "mypy")
     filename = _mypy_config(root) if root is not None else None
     if filename is None:
         return False

@@ -65,6 +65,7 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 
+from ..project_layout import is_configuration_boundary
 from .module_bindings import dotted_name
 
 
@@ -396,7 +397,6 @@ def is_statically_read(expression: ast.AST, pins: Mapping[int, Pin]) -> bool:
     return how is Pin.LITERALS and holds_string_literal(expression)
 
 
-_PROJECT_MARKERS = ("pyproject.toml", "setup.cfg", "setup.py")
 _MAPPING_FILES = ("babel.cfg", "babel.ini")
 
 
@@ -485,7 +485,7 @@ def _specs_up_to_root(directory: str, read: Dict[str, Tuple[str, ...]]) -> Tuple
         return cached
     path = Path(directory)
     specs = tuple(_directory_keywords(path))
-    if not any((path / marker).is_file() for marker in _PROJECT_MARKERS):
+    if not is_configuration_boundary(path):
         parent = os.path.dirname(directory)
         if parent != directory:
             specs += _specs_up_to_root(parent, read)

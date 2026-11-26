@@ -142,9 +142,15 @@ status or output, so automation that must not inherit them passes `--no-config`.
 ## A repository with several projects
 
 Run Towel on each project. In this example, `packages/billing/pyproject.toml`
-contains `[tool.towel]` and `[tool.black]`. Towel looks for Ruff settings and
-pre-commit formatting hooks only up to that project file. In a repository
+contains `[tool.towel]` and `[tool.black]`. When choosing settings for billing,
+Towel searches up to that project file for formatter settings, pre-commit
+hooks, type-checker settings and strict mypy CI commands. In a repository
 without a packaging file, the Git or Mercurial root bounds the search.
+
+When verifying a change, Towel also runs the enclosing projects’ configured
+checks. For example, if an application at the repository root imports billing,
+the root’s Pyright check sees the changed billing code even when you run
+Towel on billing alone.
 
 ```bash
 towel preview packages/billing --summary

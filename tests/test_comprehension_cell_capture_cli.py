@@ -32,7 +32,7 @@ import towel
 
 from tests.differential.grammar import generate_case
 from tests.differential.runner import Mode, run_case
-from towel.type_inference import _configured_root
+from towel.type_inference import _member_config_root
 
 _FIXTURE = Path(__file__).parent / "fixtures/comprehension_captured_cell_original.py.txt"
 _RUN = """
@@ -131,7 +131,7 @@ def test_default_cli_keeps_native_errors_state_and_argument_effects(
             '\n[tool.mypy]\npython_version="3.11"\nfiles=["case.py"]\n' "check_untyped_defs=true\n"
         )
     (original / "pyproject.toml").write_text(config)
-    assert _configured_root(original / "case.py", "mypy") == (original if configured else None)
+    assert _member_config_root(original / "case.py", "mypy") == (original if configured else None)
     output = tmp_path / "output"
     runtime = Path(towel.__file__).resolve().parents[1]
     bootstrap = (

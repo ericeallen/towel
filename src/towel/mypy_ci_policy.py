@@ -28,6 +28,9 @@ import shlex
 from typing import Optional, Sequence, Tuple
 
 
+from .project_layout import configuration_directories, source_directory
+
+
 class UnsupportedMypyPolicy(ValueError):
     """A declared CI check cannot be represented by the supported literal policy."""
 
@@ -448,31 +451,35 @@ def _workflow_commands(path: Path, root: Path) -> Tuple[MypyCommand, ...]:
     return tuple(found)
 
 
+def declares_mypy_for(root: Path, subject: Path) -> bool:
+    """Whether a workflow at this root declares strict mypy for the resolved subject."""
+    for workflow in workflow_files(root):
+        try:
+            if any(
+                command.strict
+                and any(
+                    subject.is_relative_to(target)
+                    or (subject.is_dir() and target.is_relative_to(subject))
+                    for target in command.targets
+                )
+                for command in _workflow_commands(workflow, root)
+            ):
+                return True
+        except (UnsupportedMypyPolicy, OSError, UnicodeError):
+            return True  # The build reports the unsupported declaration explicitly.
+    return False
+
+
 def declared_mypy_root(path: Path) -> Optional[Path]:
-    directory = (
-        path.resolve().parent
-        if path.suffix in {".py", ".pyi"} or path.is_file()
-        else path.resolve()
+    subject = path.resolve()
+    return next(
+        (
+            root
+            for root in configuration_directories(source_directory(path))
+            if declares_mypy_for(root, subject)
+        ),
+        None,
     )
-    for root in (directory, *directory.parents):
-        for workflow in workflow_files(root):
-            try:
-                subject = path.resolve()
-                if any(
-                    command.strict
-                    and any(
-                        subject.is_relative_to(target)
-                        or (subject.is_dir() and target.is_relative_to(subject))
-                        for target in command.targets
-                    )
-                    for command in _workflow_commands(workflow, root)
-                ):
-                    return root
-            except (UnsupportedMypyPolicy, OSError, UnicodeError):
-                return root  # The build reports the unsupported declaration explicitly.
-        if (root / ".git").exists() or (root / ".hg").exists():
-            break
-    return None
 
 
 def mypy_policy(root: Path, paths: Sequence[Path]) -> MypyPolicy:

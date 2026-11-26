@@ -64,6 +64,7 @@ from typing import (
     Iterable,
     Iterator,
     List,
+    Literal,
     Mapping,
     Optional,
     Protocol,
@@ -75,7 +76,12 @@ from typing import (
 
 from .shared_locks import restoring_lock_depth
 from .diagnostics import LOG
-from .mypy_ci_policy import UnsupportedMypyPolicy, declared_mypy_root, mypy_policy
+from .mypy_ci_policy import (
+    UnsupportedMypyPolicy,
+    declared_mypy_root,
+    declares_mypy_for,
+    mypy_policy,
+)
 from .project_tools import ToolChoice, python_tool_environment
 from .unification.exceptions import TowelError
 from .checker_project import (
@@ -94,7 +100,15 @@ from .pyright_session import (
     pyright_scope,
 )
 from .source_text import read_source, source_lines
-from .project_layout import find_project_root, load_pyproject, package_chain
+from .project_layout import (
+    configuration_directories,
+    find_project_root,
+    is_repository_root,
+    load_pyproject,
+    package_chain,
+    repository_directories,
+    source_directory,
+)
 from .consumers import (
     ImportScan,
     ScanLimitExceeded,
@@ -441,15 +455,10 @@ def _is_checker_root(directory: Path) -> bool:
     return any((directory / name).is_file() for name in _CHECKER_ROOT_MARKERS)
 
 
-def _is_repository_root(directory: Path) -> bool:
-    return (directory / ".git").exists() or (directory / ".hg").exists()
-
-
 def _checker_root(path: Path) -> Path:
     """Nearest checker or packaging root, independently of import-layout inference."""
-    path = path.resolve()
-    directory = path.parent if path.is_file() or path.suffix in {".py", ".pyi"} else path
-    for root in (directory, *directory.parents):
+    directory = source_directory(path)
+    for root in configuration_directories(directory):
         if _is_checker_root(root):
             return root
     return find_project_root(directory)
@@ -467,86 +476,58 @@ def _mypy_config(root: Path) -> Optional[str]:
     return None
 
 
-def _configured_root(path: Path, checker: str) -> Optional[Path]:
-    """Checker discovery must not stop at an unrelated packaging configuration."""
-    path = path.resolve()
-    directory = path.parent if path.is_file() or path.suffix in {".py", ".pyi"} else path
+CheckerName = Literal["mypy", "pyright"]
+
+
+def _member_config_root(path: Path, checker: CheckerName) -> Optional[Path]:
+    """The nearest checker settings governing this member, inside its project boundary."""
+    directory = source_directory(path)
     configured = project_configures_mypy if checker == "mypy" else project_configures_pyright
-    for root in (directory, *directory.parents):
+    for root in configuration_directories(directory):
         if configured(root):
             return root
-        if _is_repository_root(root):
-            break
     return None
 
 
-def _source_groups(sources: Mapping[str, str], checker: str) -> Dict[Path, Dict[str, str]]:
-    groups: Dict[Path, Dict[str, str]] = {}
-    for path, source in sources.items():
-        absolute = str(Path(path).resolve())
-        groups.setdefault(
-            _configured_root(Path(absolute), checker) or _checker_root(Path(absolute)), {}
-        )[absolute] = source
-    return groups
+def _member_check_root(path: Path, checker: CheckerName) -> Path:
+    return _member_config_root(path, checker) or _checker_root(path)
 
 
-def _pyright_roots(path: Path) -> List[Path]:
-    """Every directory pyright checks ``path`` from: its nearest root, and each enclosing it.
+def _configured_consumer_roots(path: Path, checker: CheckerName) -> Iterator[Path]:
+    """Roots whose own check can see the source, up to and including the checkout root."""
+    subject = path.resolve()
+    for root in repository_directories(source_directory(subject)):
+        if checker == "pyright":
+            if project_configures_pyright(root):
+                yield root
+        elif project_configures_mypy(root) or declares_mypy_for(root, subject):
+            yield root
 
-    A project's pyright run at a directory checks everything beneath it,
-    including a member with a configuration of its own; that configuration
-    applies only when pyright is run from the member. A consumer in the outer
-    project imports the member (through ``extraPaths`` or an editable install)
-    and is checked by the outer run alone. Checking the member's files only
-    from the member judged that consumer against the member as it was: a
-    helper that changed what an unannotated function returns broke it, and
-    the outer project's own check failed once the change was written.
 
-    The enclosing roots are those pyright is configured at, found as the
-    nearest is, within the repository. Where nothing configures pyright the
-    roots are checker and packaging roots, and they enclose one another only
-    within a repository: outside one, nothing bounds the walk up but the
-    filesystem's root.
-    """
-    nearest = _configured_root(path, "pyright")
-    if nearest is not None:
-        roots = [nearest]
-        while not _is_repository_root(roots[-1]) and roots[-1].parent != roots[-1]:
-            outer = _configured_root(roots[-1].parent, "pyright")
-            if outer is None:
-                break
-            roots.append(outer)
-        return roots
-    roots = [_checker_root(path)]
-    within = next(
-        (
-            directory
-            for directory in (roots[0], *roots[0].parents)
-            if _is_repository_root(directory)
-        ),
-        None,
+def _consumer_check_roots(path: Path, checker: CheckerName) -> Iterator[Path]:
+    """Check the member in its own context and show the change to its enclosing consumers."""
+    member = _member_check_root(path, checker)
+    yield member
+    configured = tuple(_configured_consumer_roots(path, checker))
+    if configured:
+        yield from (root for root in configured if root != member)
+    elif checker == "pyright":
+        # Without explicit settings, 2.0 also checks enclosing packaging roots inside a VCS tree.
+        ancestors = tuple(repository_directories(member))
+        if is_repository_root(ancestors[-1]):
+            yield from (root for root in ancestors[1:] if _is_checker_root(root))
+
+
+def _verification_roots(paths: Iterable[str], checker: CheckerName) -> Tuple[Path, ...]:
+    return tuple(
+        dict.fromkeys(root for path in paths for root in _consumer_check_roots(Path(path), checker))
     )
-    if within is not None:
-        roots += [
-            directory
-            for directory in roots[0].parents
-            if directory.is_relative_to(within) and _is_checker_root(directory)
-        ]
-    return roots
 
 
 def _pyright_groups(sources: Mapping[str, str]) -> Dict[Path, Dict[str, str]]:
-    """Each root pyright checks ``sources`` from, with every one of them that lies beneath it.
-
-    A root's copy holds the whole directory, so each of its checks shows every
-    change inside it, not only those whose nearest root it is: a nested
-    configuration's files, in the outer copy, used to stand as they were on
-    disk while the nested copy showed the change.
-    """
+    """Give each Pyright consumer check the complete candidate beneath its root."""
     resolved = {str(Path(path).resolve()): text for path, text in sources.items()}
-    roots: Dict[Path, None] = {}
-    for path in resolved:
-        roots.update(dict.fromkeys(_pyright_roots(Path(path))))
+    roots = _verification_roots(resolved, "pyright")
     return {
         root: {path: text for path, text in resolved.items() if Path(path).is_relative_to(root)}
         for root in roots
@@ -763,9 +744,7 @@ class MypyInferrer:
             if not sources:
                 return _BuildMessages(())
             if root is None:
-                root = _configured_root(Path(sources[0].path), "mypy") or _checker_root(
-                    Path(sources[0].path)
-                )
+                root = _member_check_root(Path(sources[0].path), "mypy")
             try:
                 policy = mypy_policy(
                     root,
@@ -978,7 +957,7 @@ class MypyInferrer:
         """The errors of every configuration group's check of the project with ``sources`` over it.
 
         A group is the directory of a mypy configuration, or where there is
-        none a project's root (``_source_groups``), and each is checked as mypy
+        none a project's root (``_consumer_check_roots``), and each is checked as mypy
         run there would check it, under its own configuration and in a cache
         of its own. Every group that holds any file of ``sources`` is checked,
         including one an earlier check of the run found and this one holds
@@ -993,15 +972,15 @@ class MypyInferrer:
         """
         errors: List[TypeDiagnostic] = []
         reported: set[str] = set()
-        groups = _source_groups(sources, "mypy")
-        every = {path: text for grouped in groups.values() for path, text in grouped.items()}
+        every = {str(Path(path).resolve()): text for path, text in sources.items()}
+        roots = _verification_roots(every, "mypy")
         with restoring_lock_depth(self._lock), self._lock:
-            self._group_roots.update(groups)
+            self._group_roots.update(roots)
             known = sorted(self._group_roots)
         for root in known:
             nested = (
                 [other for other in known if other != root and other.is_relative_to(root)]
-                if _mypy_config(root) is None
+                if _mypy_config(root) is None and not declares_mypy_for(root, root)
                 else []
             )
             replacements = {
@@ -1203,7 +1182,7 @@ class PyrightOracle:
         comes. Read from the configuration, without starting pyright.
         """
         original = Path(file_path).resolve()
-        root = _configured_root(original, "pyright") or _checker_root(original)
+        root = _member_check_root(original, "pyright")
         scope = self._scopes.get(root)
         if scope is None:
             scope = self._scopes[root] = pyright_scope(root)
@@ -1346,7 +1325,7 @@ class PyrightOracle:
 
     def _diagnostics(self, file_path: str, text: str) -> _PyrightDiagnostics | CheckFailure:
         original = Path(file_path).resolve()
-        root = _configured_root(original, "pyright") or _checker_root(original)
+        root = _member_check_root(original, "pyright")
         return self._probe_diagnostics(root, {str(original): text})[str(original)]
 
     def _probe_diagnostics(
@@ -1546,7 +1525,7 @@ class PyrightOracle:
                 shift += len(request.expressions)
             probes[file_path] = probe_lines
             original = Path(file_path).resolve()
-            root = _configured_root(original, "pyright") or _checker_root(original)
+            root = _member_check_root(original, "pyright")
             groups.setdefault(root, {})[str(original)] = text
         results = {
             path: result
@@ -2286,22 +2265,27 @@ def type_checkers_for_project(path: Path) -> Tuple[str, ...]:
     that configures mypy gets mypy; one that configures pyright gets
     pyright; one that configures both gets both; one that configures
     neither gets mypy when installed, else pyright, else none, ``()``. A
-    configured checker that is not installed raises
+    configured enclosing consumer also requires its checker. The member's
+    inference checker comes first. A required checker that is not installed raises
     :class:`CheckerNotInstalled`: substituting another, or none, would verify
     against a check the project does not run. Nothing is constructed, so a
     caller may describe the run before the user has agreed to it.
     """
-    mypy_root = _configured_root(path, "mypy") or declared_mypy_root(path)
-    pyright_root = _configured_root(path, "pyright")
-    mypy = (mypy_root is not None or pyright_root is None) and _mypy_installed()
+    member_mypy = _member_config_root(path, "mypy") or declared_mypy_root(path)
+    member_pyright = _member_config_root(path, "pyright")
+    mypy_root = member_mypy or next(_configured_consumer_roots(path, "mypy"), None)
+    pyright_root = member_pyright or next(_configured_consumer_roots(path, "pyright"), None)
+    mypy = _mypy_installed()
     pyright = (pyright_root is not None or not mypy) and _pyright_command() is not None
     missing = [
         (name, root)
-        for name, root, chosen in (("mypy", mypy_root, mypy), ("pyright", pyright_root, pyright))
-        if root is not None and not chosen
+        for name, root, installed in (("mypy", mypy_root, mypy), ("pyright", pyright_root, pyright))
+        if root is not None and not installed
     ]
     if missing:
         raise _refuse_missing_checkers(missing)
+    if member_pyright and not member_mypy:
+        return ("pyright", "mypy") if mypy_root else ("pyright",)
     return tuple(name for name, chosen in (("mypy", mypy), ("pyright", pyright)) if chosen)
 
 
@@ -2326,8 +2310,10 @@ def type_oracle_for_project(path: Path) -> ToolChoice[TypeOracle]:
             mypy.close()
         raise
     if mypy is not None and pyright is not None:
+        primary, other = (mypy, pyright) if checkers[0] == "mypy" else (pyright, mypy)
         return ToolChoice(
-            CombinedOracle(mypy, [pyright]), "mypy for inference, mypy and pyright for verification"
+            CombinedOracle(primary, [other]),
+            f"{checkers[0]} for inference, mypy and pyright for verification",
         )
     if mypy is not None:
         return ToolChoice(mypy, "mypy")

@@ -1344,8 +1344,9 @@ where the evidence comes from:
   out, such as an environment's site directory, names the original in the
   copy's configuration, rather than nothing.
   Project include/exclude settings still determine the checker's coverage.
-  A change is checked from the root of its nearest pyright configuration and
-  from every configured root enclosing that one within the repository, and
+  Type inference uses the member’s configuration, with discovery bounded by
+  its nearest packaging or repository root. A change is checked from the member
+  and every enclosing configured Pyright root within the repository, and
   each root's copy shows every change beneath it: pyright run at the outer
   root checks a member with a configuration of its own as well, and a
   consumer there was judged against the member's original text. Where nothing

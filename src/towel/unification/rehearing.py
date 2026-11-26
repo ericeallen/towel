@@ -39,13 +39,14 @@ from ..formatting import formatting_repeatability, _counterpart
 from ..project_layout import find_project_root
 from ..project_tools import python_tool_environment
 from ..type_inference import (
+    CheckerName,
     CombinedOracle,
     MypyInferrer,
     PyrightOracle,
     TypeOracle,
     _RelocatedOracle,
     _mypy_config,
-    _source_groups,
+    _verification_roots,
 )
 from .annotation_wiring import _mypy_sections
 from .block_comments import (
@@ -160,9 +161,9 @@ def checker_context(oracle: Optional[TypeOracle], paths: Sequence[str]) -> Optio
         return _joined("combined", (id(oracle), *contexts))
     if type(oracle) not in (MypyInferrer, PyrightOracle):
         return None
-    checker = "mypy" if type(oracle) is MypyInferrer else "pyright"
+    checker: CheckerName = "mypy" if type(oracle) is MypyInferrer else "pyright"
     try:
-        roots = _source_groups({path: "" for path in paths}, checker)
+        roots = _verification_roots(paths, checker)
         if not roots:
             return None
         files: set[Path] = set()

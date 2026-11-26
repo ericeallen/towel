@@ -223,3 +223,32 @@ def test_subproject_ignores_formatter_configuration_above_its_boundary(
     (member / "ruff.toml").touch()
     assert _pre_commit_formatter(module) == "black"
     assert _ruff_configuration(module) == member / "ruff.toml"
+
+
+@pytest.mark.parametrize("boundary", ["pyproject.toml", ".git", ".hg"])
+def test_member_annotations_use_only_local_checker_settings(tmp_path: Path, boundary: str) -> None:
+    """Cold read 7: a parent's mypy flags, CI command and checker targets cannot govern a member."""
+    from towel.mypy_ci_policy import declared_mypy_root
+    from towel.unification.annotation_wiring import declared_oldest_python, mypy_ladder_flags
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.mypy]\nstrict=true\npython_version="3.9"\n[tool.pyright]\npythonVersion="3.8"\n'
+    )
+    workflow = tmp_path / ".github/workflows/ci.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("jobs:\n  lint:\n    steps:\n      - run: python -m mypy --strict .\n")
+    member = tmp_path / "billing"
+    member.mkdir()
+    path = member / "amount.py"
+    path.touch()
+    if boundary == "pyproject.toml":
+        (member / boundary).touch()
+    else:
+        (member / boundary).mkdir()
+    assert declared_oldest_python(path) is None
+    assert declared_mypy_root(path) is None
+    assert not any(mypy_ladder_flags(path).values())
+
+    (member / "mypy.ini").write_text("[mypy]\nstrict=true\npython_version=3.10\n")
+    assert declared_oldest_python(path) == (3, 10)
+    assert all(mypy_ladder_flags(path).values())

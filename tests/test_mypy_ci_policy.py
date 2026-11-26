@@ -659,3 +659,23 @@ def test_possible_strict_tokens_across_shell_continuations_do_not_fall_open(
     module = _project(tmp_path, "|\n          " + command)
     with pytest.raises(UnsupportedMypyPolicy):
         mypy_policy(tmp_path, [module])
+
+
+def test_member_settings_do_not_hide_an_enclosing_strict_ci_check(tmp_path: Path) -> None:
+    """Cold read 7: the outer CI can reject a change the member's own mypy accepts."""
+    outer = tmp_path / ".github/workflows/ci.yml"
+    outer.parent.mkdir(parents=True)
+    outer.write_text("jobs:\n  lint:\n    steps:\n      - run: python -m mypy --strict billing\n")
+    member = tmp_path / "billing"
+    member.mkdir()
+    (member / "pyproject.toml").write_text("[tool.mypy]\nstrict=false\n")
+    path = member / "amount.py"
+    path.write_text("def amount() -> int:\n    return 1\n")
+    oracle = MypyInferrer()
+    try:
+        assert oracle.check(str(path), path.read_text()) == CheckSuccess()
+        after = oracle.check(str(path), "def amount():\n    return 1\n")
+        assert isinstance(after, CheckSuccess), after
+        assert any("missing a return type annotation" in error.message for error in after.errors)
+    finally:
+        oracle.close()

@@ -26,8 +26,12 @@ release numbers; see the
   about an unrecognized or misplaced `# towel:` directive.
 - With redirected stdin, bare `rename-helpers` prints the assistant prompt
   and exits successfully. On a terminal it explains how to submit or cancel.
-- Formatter configuration discovery stops at the nearest packaging or repository
-  boundary, including when the parent configures Ruff or a pre-commit formatter.
+- A member project reads its own checker, formatter, pre-commit and message
+  extraction settings. Discovery stops at the nearest packaging or repository
+  boundary. Verification still checks a member change under every enclosing
+  Pyright configuration in the checkout, including consumers outside the member.
+  Enclosing mypy configurations and applicable strict CI commands also get
+  their own verification runs.
 
 ### Packaging
 

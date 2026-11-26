@@ -311,6 +311,18 @@ PROJECT_KEYWORDS: Dict[str, Tuple[str, str, str]] = {
 }
 
 
+def test_translation_keyword_discovery_stops_at_the_checkout(tmp_path: Path) -> None:
+    """Cold read 7: a Babel configuration above the checkout belongs to another project."""
+    name, config, marker = PROJECT_KEYWORDS["babel.cfg"]
+    (tmp_path / name).write_text(config)
+    checkout = tmp_path / "checkout"
+    (checkout / ".git").mkdir(parents=True)
+    source = str(checkout / "pkg/module.py")
+    assert configured_translation_keywords([source]).positions(marker) is None
+    (checkout / name).write_text(config)
+    assert configured_translation_keywords([source]).positions(marker) == frozenset({1})
+
+
 @pytest.mark.parametrize("configuration", sorted(PROJECT_KEYWORDS))
 def test_a_keyword_the_project_configures_for_extraction_is_read_too(
     tmp_path: Path, configuration: str

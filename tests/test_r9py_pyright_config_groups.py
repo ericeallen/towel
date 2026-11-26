@@ -147,3 +147,35 @@ def test_r9py_the_consumer_in_the_other_group_sees_the_change(
     finally:
         oracle.close()
     assert found == {"member-only": ["use.py"], "whole-project": ["use.py"]}, found
+
+
+@requires_pyright
+def test_member_uses_local_settings_and_checks_the_outer_consumer(tmp_path: Path) -> None:
+    """Cold read 7: keep the outer check even when only the packaging member changes."""
+    from towel.type_inference import type_oracle_for_project
+
+    project = _configured(tmp_path, nested=False)
+    (project / "pyproject.toml").touch()
+    member = project / "sub"
+    (member / "pyproject.toml").touch()
+    candidate = _candidates(project)["member-only"]
+    path = next(iter(candidate))
+    choice = type_oracle_for_project(member)
+    assert choice.tool is not None
+    try:
+        assert choice.tool.check_project({path: Path(path).read_text()}) == CheckSuccess()
+        result = choice.tool.check_project(candidate)
+        assert isinstance(result, CheckSuccess), result
+        assert any(
+            Path(error.path) == project / "app/use.py" and _R9PY_BROKEN in error.message
+            for error in result.errors
+        ), result
+    finally:
+        choice.tool.close()
+    # The same candidate is clean when checked from the member alone.
+    (member / ".git").mkdir()
+    oracle = PyrightOracle(language_server=False)
+    try:
+        assert oracle.check_project(candidate) == CheckSuccess()
+    finally:
+        oracle.close()

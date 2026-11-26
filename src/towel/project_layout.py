@@ -119,18 +119,37 @@ def _packaging_root(directory: Path) -> bool:
     )
 
 
-def _repository_directories(directory: Path) -> Iterator[Path]:
+def source_directory(path: Path) -> Path:
+    """The directory to search for a source file (including a prospective file) or directory."""
+    path = path.resolve()
+    return (
+        path.parent
+        if path.is_file() or path.suffix in {".py", ".pyi"} and not path.is_dir()
+        else path
+    )
+
+
+def is_repository_root(directory: Path) -> bool:
+    return (directory / ".git").exists() or (directory / ".hg").exists()
+
+
+def is_configuration_boundary(directory: Path) -> bool:
+    return _packaging_root(directory) or is_repository_root(directory)
+
+
+def repository_directories(directory: Path) -> Iterator[Path]:
+    """Ancestors through the enclosing checkout, including its root."""
     for current in (directory, *directory.parents):
         yield current
-        if (current / ".git").exists() or (current / ".hg").exists():
+        if is_repository_root(current):
             break
 
 
 def configuration_directories(directory: Path) -> Iterator[Path]:
     """Search from a directory through its nearest packaging or VCS boundary, inclusive."""
-    for current in _repository_directories(directory):
+    for current in (directory, *directory.parents):
         yield current
-        if _packaging_root(current):
+        if is_configuration_boundary(current):
             break
 
 
@@ -139,7 +158,7 @@ def find_project_root(start_path: Path) -> Path:
     start = resolve_user_path(start_path)
     base_dir = start.parent if start.is_file() else start
 
-    for current in _repository_directories(base_dir):
+    for current in repository_directories(base_dir):
         if _packaging_root(current):
             return current
     # VCS roots do not establish sys.path. Honor classic package ancestry;

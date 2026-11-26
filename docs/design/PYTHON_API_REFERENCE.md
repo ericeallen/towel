@@ -247,6 +247,11 @@ project that configures neither is checked by mypy when it is installed, with
 mypy's defaults: the check is the one `mypy` itself makes of the same files,
 and only the probes that infer a helper's types also check the bodies of
 functions without annotations, where mypy otherwise reveals nothing but `Any`.
+When the target belongs to a nested project, its own checker configuration
+governs inference. Verification also checks the candidate from each enclosing
+configured root in the checkout, with the enclosing project's settings and
+consumers.
+
 Without a formatter the rendering is `ast.unparse`'s: one
 statement per line, single-quoted strings, no blank-line conventions.
 

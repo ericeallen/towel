@@ -130,6 +130,12 @@ In any other virtual environment, install it there with
 | Both | mypy to infer types, both to check |
 | Neither | whichever is installed where Towel runs, preferring mypy, with its defaults |
 
+For a member with its own `pyproject.toml`, the table describes the member’s
+inference checker. Towel also verifies changes from enclosing Pyright and mypy
+roots in the same checkout, under each root’s settings. That lets an application
+outside the member catch a change to a type it imports. A strict mypy CI command
+whose targets include the member also applies during verification.
+
 Without a working checker, what Towel writes depends on why:
 
 | Situation | Helpers | `types` in `--json` |
