@@ -165,3 +165,20 @@ def test_directory_sorting_recovers_after_unresolved_ruff_configuration(
     assert sorter(str(module), ASSEMBLED) == SORTED
     assert formatting.formatting_repeatability(sorter) is None
     assert module.read_text() == ORIGINAL
+
+
+def test_subproject_format_hook_uses_ruff_defaults_when_only_parent_configures_it(
+    tmp_path: Path,
+) -> None:
+    """Cold read 7: Ruff's own discovery can cross the boundary after Towel selects the hook."""
+    pytest.importorskip("ruff")
+    (tmp_path / "ruff.toml").write_text("[format]\nquote-style='single'\n")
+    member = tmp_path / "member"
+    member.mkdir()
+    (member / "pyproject.toml").write_text('[project]\nname="member"\nversion="1"\n')
+    (member / ".pre-commit-config.yaml").write_text("hooks:\n  - id: ruff-format\n")
+    module = member / "example.py"
+    module.touch()
+    choice = formatter_for_project(module)
+    assert choice.note == "ruff (pre-commit hook)" and choice.tool is not None
+    assert choice.tool("value = 'abc'") == 'value = "abc"'

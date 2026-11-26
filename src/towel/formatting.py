@@ -656,6 +656,9 @@ def ruff_formatter(path: Path) -> SnippetFormatter:
     command = list(tuple(command))
     root = _root(path)
     target = str(path.resolve())
+    # A hook or the formatted-source check can select Ruff without local settings.
+    # In that case Ruff itself must not pick up a parent project’s configuration.
+    defaults = [] if _ruff_configuration(path) is not None else ["--isolated"]
 
     def run_ruff(source: str) -> str:
         try:
@@ -663,6 +666,7 @@ def ruff_formatter(path: Path) -> SnippetFormatter:
                 [
                     *command,
                     "format",
+                    *defaults,
                     "--force-exclude",
                     "--stdin-filename",
                     target,
@@ -920,7 +924,7 @@ def _sources_already_formatted(path: Path) -> Optional[FormatterKind]:
         ruff = _ruff_executable()
     except FormattingChangedCode:
         return None
-    if ruff is not None and unchanged([*ruff, "format", "--check", "--no-cache"]):
+    if ruff is not None and unchanged([*ruff, "format", "--check", "--isolated", "--no-cache"]):
         return "ruff"
     return None
 
