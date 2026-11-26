@@ -371,8 +371,8 @@ expand custom entities, even when its file hash matches.
 The example abbreviates `records`: every name exported by
 `scripts.verify_release_evidence.REQUIRED_RECORDS` is mandatory. List them with
 `python -c 'from scripts.verify_release_evidence import REQUIRED_RECORDS; print("\n".join(REQUIRED_RECORDS))'`.
-These are the retained native source/artifact inventories, five build/quality
-steps, dependency/diagram checks, both 2,000-case fuzz families in both modes
+These are the retained native source/artifact inventories, the sdist rebuild
+comparison, five build/quality steps, dependency/diagram checks, both 2,000-case fuzz families in both modes
 (`fuzz*` relaxed, `fuzz-strict*` strict), all five interpreter results with the
 matrix driver, full runtime coverage XML and logs, the strict full suites on
 Python 3.13 and 3.15 (`matrix-strict-*`), ten clean-wheel command
@@ -460,7 +460,10 @@ Keep the original bundle and artifacts. Commit the final documentation, then:
 
 1. Build new wheel and sdist in a new directory inside that evidence bundle,
    using the same pinned development environment and `python -m build
-   --no-isolation --outdir REBUILD/dist`. Record the installed tool versions
+   --no-isolation --outdir REBUILD/dist`, with `SOURCE_DATE_EPOCH` set to that
+   commit's time, then run the
+   [sdist rebuild check](#reproducible-source-distribution) with `REBUILD` as
+   its evidence directory and `--no-isolation`. Record the installed tool versions
    again with `python scripts/audit_dependencies.py`; they must match the
    original `dependencies-dev.txt` exactly. Isolated builds may resolve
    different backend versions, so they are not accepted for this shortcut.
@@ -873,6 +876,28 @@ wheel environment; the audit command requires `pip-audit` in the audit environme
 ### Candidate artifacts
 
 **Before building, sweep every human-facing version reference, not just `pyproject.toml`.** `python -m build` embeds the README into the wheel and sdist as the PyPI `long_description`, and PyPI freezes that description at upload time: a published version's project page cannot be edited afterward, so a stale version string ships to PyPI and stays wrong until the next release. `just bump-version` rewrites the version in `pyproject.toml` and then refreshes `uv.lock` and the dev environment (`uv lock`, `uv sync --frozen --extra dev`); it touches no other file. Before freezing, search the tree for the outgoing version and update `README.md`'s `**Release status: X (beta).**` line, its version-pinned documentation links, `SECURITY.md`'s source-target version, and the version sentences of `docs/README.md` and `docs/QUICKSTART.md`. Each names the version the source describes and says nothing about publication; see [what shipped files may say about a release](#what-shipped-files-may-say-about-a-release). Preserve historical measurements and released-version records under their original identities. The README in the built artifacts must match the reviewed source. (code-towel 1.618 shipped with the README still reading 1.414 for exactly this reason; the PyPI 1.618 page cannot be corrected.)
+
+#### Reproducible source distribution
+
+Build the candidate artifacts with `SOURCE_DATE_EPOCH` set to the commit's
+time. The wheel backend reads it, and Towel's own backend
+(`scripts/sdist_backend.py`) uses it to date every member and the gzip header
+of the sdist and to drop the builder's owner names and umask. Then rebuild the
+sdist in the same environment from a fresh clone and compare:
+
+```bash
+export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+uv run --frozen python -m build --outdir /path/to/bundle/dist
+uv run --frozen python scripts/check_sdist_reproducible.py \
+  /path/to/bundle /path/to/bundle/dist/code_towel-VERSION.tar.gz
+```
+
+Pass `--no-isolation` to the check if the primary build used it. The check
+writes `sdist-rebuild.json` and `rebuild-dist/` only when the two archives are
+identical. The verifier requires the record, compares the two archives itself
+and reads the dates from the shipped one. This covers rebuilds of one commit
+with the same Python, setuptools and zlib. It does not promise the same bytes
+from other tool versions, and nothing shipped claims it.
 
 For the exact candidate commit:
 

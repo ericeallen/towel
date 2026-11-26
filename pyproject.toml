@@ -1,6 +1,8 @@
 [build-system]
 requires = ["setuptools>=77.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+# setuptools, plus a source distribution dated by SOURCE_DATE_EPOCH.
+build-backend = "sdist_backend"
+backend-path = ["scripts"]
 
 [project]
 name = "code-towel"

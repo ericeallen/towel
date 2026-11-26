@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+import gzip
 import hashlib
 import io
 import json
@@ -32,6 +33,7 @@ import zipfile
 import pytest
 
 from scripts import verify_release_evidence as gate
+from scripts.sdist_normalize import normalize_sdist
 
 VERSION = "9.0.0"
 START, FINISH = "2026-09-01T00:00:00+00:00", "2026-09-01T00:00:10+00:00"
@@ -138,7 +140,21 @@ def artifacts(bundle: Bundle, *, extra_metadata: bytes = b"") -> tuple[str, str]
             member = tarfile.TarInfo(f"code_towel-{VERSION}/{name}")
             member.size = len(data)
             archive.addfile(member, io.BytesIO(data))
-    sdist = bundle.ref(sdist_name, stream.getvalue())
+    commit = git(bundle.repo, "rev-parse", "HEAD")
+    epoch = int(git(bundle.repo, "show", "-s", "--format=%ct", commit))
+    unpinned = bundle.ref(sdist_name, stream.getvalue())
+    normalize_sdist(bundle.root / gate.text(unpinned["path"]), epoch)
+    pinned = (bundle.root / sdist_name).read_bytes()
+    sdist = bundle.ref(sdist_name, pinned)
+    bundle.write(
+        "sdist-rebuild.json",
+        {
+            "commit": commit,
+            "source_date_epoch": epoch,
+            "build": command(args=["python", "-m", "build", "--sdist"]),
+            "rebuild": bundle.ref(f"rebuild-dist/code_towel-{VERSION}.tar.gz", pinned),
+        },
+    )
     bundle.value["artifacts"] = {"wheel": wheel, "sdist": sdist}
     bundle.write(
         "artifacts.json",
@@ -577,6 +593,68 @@ def test_dirty_checkout_and_version_drift_refuse(bundle: Bundle) -> None:
     git(bundle.repo, "commit", "-qm", "Synthetic docs")
     with pytest.raises(gate.EvidenceError):
         gate.verify(bundle.repo, bundle.path, "9.0.1")
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        (lambda row: row.update(source_date_epoch=1), "another commit or build time"),
+        (lambda row: row.update(commit="b" * 40), "another commit or build time"),
+        (lambda row: row.update(build={**gate.table(row["build"]), "exit_status": 1}), "failed"),
+        (
+            lambda row: row.update(
+                rebuild={
+                    **gate.table(row["rebuild"]),
+                    "path": f"dist/code_towel-{VERSION}.tar.gz",
+                }
+            ),
+            "shipped archive itself",
+        ),
+    ],
+)
+def test_sdist_rebuild_record_must_describe_a_second_build_of_this_commit(
+    bundle: Bundle, change: Callable[[dict[str, object]], None], message: str
+) -> None:
+    bundle.check()
+    bundle.alter("sdist-rebuild.json", change)
+    with pytest.raises(gate.EvidenceError, match=message):
+        bundle.check()
+
+
+def test_sdist_that_rebuilt_differently_refuses(bundle: Bundle) -> None:
+    other = bundle.ref(f"rebuild-dist/code_towel-{VERSION}.tar.gz", b"another build")
+    bundle.alter("sdist-rebuild.json", lambda row: row.update(rebuild=other))
+    with pytest.raises(gate.EvidenceError, match="byte for byte"):
+        bundle.check()
+
+
+@pytest.mark.parametrize("header, message", [(True, "gzip header"), (False, "member is not")])
+def test_matching_copies_of_an_undated_sdist_refuse(
+    bundle: Bundle, header: bool, message: str
+) -> None:
+    ref = gate.FileRef.read(gate.table(bundle.value["artifacts"])["sdist"])
+    pinned = ref.bytes(bundle.root)
+    if header:
+        data = pinned[:4] + (1).to_bytes(4, "little") + pinned[8:]
+    else:
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=io.BytesIO(pinned)) as old:
+            plain = io.BytesIO()
+            with tarfile.open(fileobj=plain, mode="w") as new:
+                for member in old:
+                    member.mtime += 1
+                    new.addfile(member, old.extractfile(member) if member.isfile() else None)
+        stream.write(gzip.compress(plain.getvalue(), mtime=int.from_bytes(pinned[4:8], "little")))
+        data = stream.getvalue()
+    epoch = int(git(bundle.repo, "show", "-s", "--format=%ct", bundle.commit))
+    bundle.ref(ref.path, data)
+    second = bundle.ref(f"rebuild-dist/code_towel-{VERSION}.tar.gz", data)
+    bundle.alter("sdist-rebuild.json", lambda row: row.update(rebuild=second))
+    recorded = gate.table(bundle.value["records"])["sdist-rebuild.json"]
+    records = gate.Records(bundle.root, {"sdist-rebuild.json": gate.FileRef.read(recorded)})
+    changed = gate.FileRef(ref.path, gate.digest(data))
+    with pytest.raises(gate.EvidenceError, match=message):
+        gate.verify_sdist_rebuild(records, changed, bundle.commit, epoch)
 
 
 def test_duplicate_json_key_and_path_escape_refuse(bundle: Bundle) -> None:
