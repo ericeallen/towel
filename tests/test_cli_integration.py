@@ -312,7 +312,7 @@ def test_interactive_helper_prompt_accepts_manual_markdown_json(
     response = '```json\n{"helpers.py:__extracted_func_0": "double_value"}\n```\n'
     result = invoke(arguments, stdin=response, terminal_input=True)
     assert result.status == 0
-    assert "Ctrl-C" in result.stdout and "Ctrl-D" in result.stdout
+    assert "Ctrl-C" in result.stdout and "Ctrl+D" in result.stdout
     assert "Copy the following prompt" in result.stdout
     assert "return x * 2" in result.stdout
     assert "double_value" in result.stdout

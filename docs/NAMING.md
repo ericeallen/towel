@@ -154,7 +154,7 @@ Applied 6 change(s)
 Without `--rename-file`, `rename-helpers` prints a prompt that shows each
 helper, its rename keys and a call, and asks for a JSON mapping. Give it to an
 AI assistant such as Claude or ChatGPT, paste the answer back, then press
-Enter and Ctrl-D (Ctrl-Z then Enter on Windows). Towel checks and applies the
+Enter and Ctrl-D. Towel checks and applies the
 mapping. Ctrl-C cancels. To save just the prompt, redirect stdin and stdout,
 for example `towel rename-helpers . < /dev/null > prompt.txt`. The command
 exits after printing the prompt. Apply a saved reply with `--rename-file`. Towel itself sends

@@ -3509,9 +3509,8 @@ def _run_interactive_llm_mode(
     print('  {"src/utils.py:__extracted_func_2.__param_0": "raw_value"}')
     print('  {"src/box.py:Box.__extracted_func_3": "__scaled_width"}')
     print()
-    finish = "Ctrl-Z then Enter" if os.name == "nt" else "Ctrl-D"
     print(
-        f"Waiting for JSON. Paste the answer, press Enter, then {finish}. Press Ctrl-C to cancel.",
+        "Waiting for JSON. Paste the answer, press Enter, then Ctrl+D. Press Ctrl-C to cancel.",
         flush=True,
     )
 

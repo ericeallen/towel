@@ -341,6 +341,7 @@ def test_rename_preview_prints_unified_diff_before_change_count(tmp_path: Path) 
     interactive = invoke(
         ["rename-helpers", str(tmp_path), "--preview"],
         stdin=mapping.read_text(encoding="utf-8"),
+        terminal_input=True,
     )
     assert interactive.status == 0, interactive.stderr
     assert "--- before/orders.py" in interactive.stdout
@@ -548,6 +549,7 @@ def test_interactive_rename_text_omits_unsupported_windows_instruction(tmp_path:
     result = invoke(
         ["rename-helpers", str(tmp_path), "--preview"],
         stdin='{"m.py:__extracted_func_0": "increment"}\n',
+        terminal_input=True,
     )
     assert result.status == 0, result.stderr
     assert "Ctrl+D" in result.stdout
