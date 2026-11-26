@@ -219,3 +219,51 @@ def test_r9my_a_group_reads_another_groups_change_with_the_candidates_text(
     assert not isinstance(before, CheckFailure) and before.errors == (), before
     assert not isinstance(after, CheckFailure), after
     assert [(Path(error.path).name, error.line) for error in after.errors] == [("mod.py", 3)]
+
+
+@requires_mypy
+def test_batched_reveals_use_each_members_platform(tmp_path: Path) -> None:
+    """Cold read 7: a batch spanning a packaging boundary must use both members' settings."""
+    from towel.type_inference import RevealRequest
+
+    source = textwrap.dedent("""\
+        import sys
+        if sys.platform == "win32":
+            value = 1
+        else:
+            value = "other"
+        """)
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": '[tool.mypy]\nplatform = "win32"\n',
+            "outer.py": source,
+            "sub/pyproject.toml": '[tool.mypy]\nplatform = "linux"\n',
+            "sub/__init__.py": "",
+            "sub/inner.py": "value = 1.5\n",
+            "sub/provider.py": "amount = 1.5\n",
+        },
+    )
+    # The submitted revision introduces an import which reaches another revised module.
+    inner = source.replace("value = 1", "from sub.provider import amount as value")
+    outer = source + "from sub.inner import value as imported\n"
+    requests = [
+        RevealRequest(str(tmp_path / "outer.py"), outer, 7, "", ("value", "imported")),
+        RevealRequest(str(tmp_path / "sub/inner.py"), inner, 6, "", ("value",)),
+        RevealRequest(str(tmp_path / "sub/provider.py"), "amount = 1\n", 2, "", ("amount",)),
+    ]
+    oracle = MypyInferrer()
+    try:
+        for batch in (requests, list(reversed(requests))):
+            answers = oracle.reveal(batch)
+            assert {
+                (Path(path).name, index): value.removeprefix("builtins.")
+                for (path, _, index), value in answers.items()
+            } == {
+                ("outer.py", 0): "int",
+                ("outer.py", 1): "int",
+                ("inner.py", 0): "str",
+                ("provider.py", 0): "int",
+            }
+    finally:
+        oracle.close()

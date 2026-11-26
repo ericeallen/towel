@@ -1232,8 +1232,9 @@ where the evidence comes from:
   `python -m mypy` (including a literal versioned interpreter), and
   `uv run --frozen mypy`, with existing project path targets. Their explicit
   targets override configured `files`, `packages` and `modules`; per-module
-  options retain mypy's precedence over CLI flags. The same policy applies
-  to inference, baseline, candidate and final confirmation checks. Unsupported
+  options retain mypy's precedence over CLI flags. A member’s CI settings apply
+  to its inference probes. Each enclosing CI check applies its own policy to
+  the baseline, the candidate and the final confirmation. Unsupported
   strict commands, conditional or computed contexts and conflicting policies
   refuse typed verification with a diagnostic. If one Towel input spans strict
   targets and files outside them, narrow the input. Other CI flags, platform

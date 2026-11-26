@@ -797,10 +797,11 @@ class MypyInferrer:
             }
             if complete and self._run_targets is not None:
                 request["targets"] = sorted(self._run_targets)
-            if complete:
+            if foreign:
                 request["foreign"] = {
-                    os.path.realpath(path): text for path, text in (foreign or {}).items()
+                    os.path.realpath(path): text for path, text in foreign.items()
                 }
+            if complete:
                 request["nested_roots"] = [os.path.realpath(path) for path in nested]
             try:
                 process = self._running_worker()
@@ -1020,10 +1021,27 @@ class MypyInferrer:
         return CheckSuccess(tuple(errors))
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        """Reveal each request through one mypy build per module, probes appended in memory."""
+        """Probe each member under its own mypy settings, with the batch's source revisions."""
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:
             by_file.setdefault(request.file_path, []).append(request)
+        groups: Dict[Path, Dict[str, List[RevealRequest]]] = {}
+        for path, probes in by_file.items():
+            groups.setdefault(_member_check_root(Path(path), "mypy"), {})[path] = probes
+        revealed: Dict[RevealKey, str] = {}
+        unanswered: Dict[str, str] = {}
+        for root, files in groups.items():
+            foreign = {
+                path: probes[0].source for path, probes in by_file.items() if path not in files
+            }
+            answer = self._reveal_in_member(root, files, foreign)
+            revealed.update(answer.types)
+            unanswered.update(answer.unanswered)
+        return Revealed(revealed, unanswered)
+
+    def _reveal_in_member(
+        self, root: Path, by_file: Mapping[str, List[RevealRequest]], foreign: Mapping[str, str]
+    ) -> Revealed:
         sources: List[_BuildSource] = []
         probe_lines: Dict[Tuple[str, int], RevealKey] = {}
         for file_path, file_requests in by_file.items():
@@ -1053,9 +1071,7 @@ class MypyInferrer:
                         index,
                     )
             sources.append(_build_source(file_path, text))
-        if not sources:
-            return Revealed({})
-        result = self._build_errors(sources)
+        result = self._build_errors(sources, root=root, foreign=foreign)
         if isinstance(result, CheckFailure):
             # No probe was answered, and none was looked at and found silent.
             LOG.warning("mypy inference failed: %s", result.reason)

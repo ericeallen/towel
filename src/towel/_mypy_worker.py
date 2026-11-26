@@ -1271,24 +1271,30 @@ def _request_with_inputs(request: object, cache: str) -> _Answered:
         ),
     ]
     result, sources = _build_as_the_project_reaches(sources, options, judged, complete=complete)
-    if not complete:
-        return _Answered(list(result.errors), configured.said)
     foreign = _sources(request.get("foreign") or {})
-    read = _changes_read_from_disk(result.graph, sources, foreign)
-    if read:
+    remaining = foreign.copy()
+    overlaid = replacements.copy() if foreign else {}
+    while remaining and (read := _imports_needing_overlay(result.graph, sources, remaining)):
+        # A changed import can reach another submitted module on the following build.
+        for imported_path in read:
+            overlaid[imported_path] = remaining.pop(imported_path)
         # Only a source can be given text, and a source is named by mypy's
         # walk, so each is named as the import that read it named it.
-        _text_mypy_must_be_given(
-            {**replacements, **{path: foreign[path] for path in read}}, options.cache_dir
-        )
+        _text_mypy_must_be_given(overlaid, options.cache_dir)
         sources = [
-            *sources,
+            *(
+                source
+                for source in sources
+                if source.path is None or os.path.realpath(source.path) not in read
+            ),
             *(
                 BuildSource(path, module, foreign[path], _base_for(path, module))
                 for path, module in read.items()
             ),
         ]
-        result, sources = _build_as_the_project_reaches(sources, options, judged, complete=True)
+        result, sources = _build_as_the_project_reaches(sources, options, judged, complete=complete)
+    if not complete:
+        return _Answered(list(result.errors), configured.said)
     reported = _files_reported_on(result.graph, sources, judged, options)
     return _Answered(
         _as_the_project_judges(result.errors, result.graph, sources, judged, options),
@@ -1354,17 +1360,21 @@ def _group_cache(cache: str, group: object) -> str:
     return os.path.join(cache, "groups", group)
 
 
-def _changes_read_from_disk(
+def _imports_needing_overlay(
     graph: Mapping[str, _Imports], sources: Sequence[BuildSource], foreign: Mapping[str, str]
 ) -> dict[str, str]:
-    """The changed files of ``foreign`` that a build read from disk, by the module each was read as.
+    """Imported modules whose text differs from the revision submitted by another group.
 
     ``foreign`` is the rest of a check's files, another group's, with the
     text the check has for each. A build reads such a file where an import
     reaches it, and reads what the file holds, not what the candidate made
     of it: a group must see the candidate's whole change wherever it looks.
     """
-    given = {os.path.realpath(source.path) for source in sources if source.path is not None}
+    supplied = {
+        os.path.realpath(source.path): source.text
+        for source in sources
+        if source.path is not None and source.text is not None
+    }
     by_file = {os.path.realpath(path): path for path in foreign}
     read: dict[str, str] = {}
     for module, state in graph.items():
@@ -1372,7 +1382,14 @@ def _changes_read_from_disk(
             continue
         resolved = os.path.realpath(state.path)
         path = by_file.get(resolved)
-        if path is not None and resolved not in given and not _holds(path, foreign[path]):
+        if path is None:
+            continue
+        matches = (
+            supplied[resolved] == foreign[path]
+            if resolved in supplied
+            else _holds(path, foreign[path])
+        )
+        if not matches:
             read[path] = module
     return read
 
