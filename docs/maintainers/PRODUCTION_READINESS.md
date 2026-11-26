@@ -12,6 +12,12 @@ For completed validation and publication records, see the
 The dated preparation and publication checkpoints below retain their original
 source identities, measurements and validation scope.
 
+## 2.0.1 preparation, November 26, 2026
+
+The [2.0.1 changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#201)
+lists the seven fixes reviewed for this patch. Its release campaign tests the
+versioned source with main's updated CI workflow and dependency lock.
+
 ## 2.0 preparation checkpoint, November 18, 2026
 
 **2.0** makes relaxed mode the default: Towel assumes a program does not

@@ -33,7 +33,7 @@ In GitHub Actions:
 ```yaml
 - uses: actions/checkout@v4
 - uses: astral-sh/setup-uv@v6
-- run: uvx --from "code-towel==2.0" towel preview . --check --summary
+- run: uvx --from "code-towel==2.0.1" towel preview . --check --summary
 ```
 
 Check out the repository first: on an empty directory Towel finds no Python

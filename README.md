@@ -52,7 +52,7 @@ What differed between the copies became the helper's arguments. `towel dry`
 then makes the change: despite its name, it writes, and asks first (the name
 is for "don't repeat yourself"). `towel rename-helpers` gives the helper and
 its parameters real names; then run your tests and keep the change. The
-[quick start](https://github.com/ericeallen/towel/blob/v2.0/docs/QUICKSTART.md)
+[quick start](https://github.com/ericeallen/towel/blob/v2.0.1/docs/QUICKSTART.md)
 does all of that in ten minutes.
 
 ## Get started
@@ -101,18 +101,18 @@ against `src/` does not require marking your application code. Use
 `--exclude tests` to skip that directory, or put `# towel: no-extract` on
 the `def` line of a test function whose assertions need rewriting.
 
-[Relaxed and strict](https://github.com/ericeallen/towel/blob/v2.0/docs/RELAXED_AND_STRICT.md)
+[Relaxed and strict](https://github.com/ericeallen/towel/blob/v2.0.1/docs/RELAXED_AND_STRICT.md)
 explains each assumption and when to use `--strict`.
 
 ## Install
 
-**Release status: 2.0 (beta).** This README and the guides it links
-describe Towel 2.0; `towel --version` shows the version you have. Versions
+**Release status: 2.0.1 (beta).** This README and the guides it links
+describe Towel 2.0.1. Run `towel --version` to see the version you have. Versions
 before 2.0 have no relaxed mode (they behave as `--strict` does), no
 `--check` and no `[tool.towel]`. The
 [GitHub releases page](https://github.com/ericeallen/towel/releases) lists every
 published version with its release notes, and the
-[compatibility policy](https://github.com/ericeallen/towel/blob/v2.0/docs/COMPATIBILITY.md#upgrades-and-support)
+[compatibility policy](https://github.com/ericeallen/towel/blob/v2.0.1/docs/COMPATIBILITY.md#upgrades-and-support)
 says what beta means for upgrades.
 
 The PyPI package is **[`code-towel`](https://pypi.org/project/code-towel/)**;
@@ -160,7 +160,7 @@ uv tool install "code-towel[format,types]"     # or: pipx install "code-towel[fo
 A type checker needs your project's dependencies, which an environment of
 Towel's own does not have; for a typed project, run Towel in the project's
 environment
-([typed projects](https://github.com/ericeallen/towel/blob/v2.0/docs/TYPING.md)).
+([typed projects](https://github.com/ericeallen/towel/blob/v2.0.1/docs/TYPING.md)).
 
 `--no-format` and `--no-types` turn either off for one run. Upgrade with
 `uv tool upgrade code-towel`, `pipx upgrade code-towel` or
@@ -169,13 +169,13 @@ it: `uvx --from code-towel towel --help`.
 
 ## Learn more
 
-- [Quick start](https://github.com/ericeallen/towel/blob/v2.0/docs/QUICKSTART.md): a first refactoring, named, tested and kept.
-- [Reading Towel's output](https://github.com/ericeallen/towel/blob/v2.0/docs/GENERATED_CODE.md): helpers, parameters and the occasional `lambda`.
-- [Why something was left alone](https://github.com/ericeallen/towel/blob/v2.0/docs/WHY_LEFT_ALONE.md): every reason Towel gives, and what to do.
-- [Using Towel on a project](https://github.com/ericeallen/towel/blob/v2.0/docs/USING_TOWEL.md): branches, scope, long runs and reviewing a large change.
-- [Recipes](https://github.com/ericeallen/towel/blob/v2.0/docs/RECIPES.md): CI, pre-commit and `[tool.towel]` settings.
-- [Naming helpers](https://github.com/ericeallen/towel/blob/v2.0/docs/NAMING.md) and the [command reference](https://github.com/ericeallen/towel/blob/v2.0/docs/CLI_GUIDE.md).
-- [All documentation](https://github.com/ericeallen/towel/blob/v2.0/docs/README.md), also on [the documentation site](https://ericeallen.github.io/towel/).
+- [Quick start](https://github.com/ericeallen/towel/blob/v2.0.1/docs/QUICKSTART.md): a first refactoring, named, tested and kept.
+- [Reading Towel's output](https://github.com/ericeallen/towel/blob/v2.0.1/docs/GENERATED_CODE.md): helpers, parameters and the occasional `lambda`.
+- [Why something was left alone](https://github.com/ericeallen/towel/blob/v2.0.1/docs/WHY_LEFT_ALONE.md): every reason Towel gives, and what to do.
+- [Using Towel on a project](https://github.com/ericeallen/towel/blob/v2.0.1/docs/USING_TOWEL.md): branches, scope, long runs and reviewing a large change.
+- [Recipes](https://github.com/ericeallen/towel/blob/v2.0.1/docs/RECIPES.md): CI, pre-commit and `[tool.towel]` settings.
+- [Naming helpers](https://github.com/ericeallen/towel/blob/v2.0.1/docs/NAMING.md) and the [command reference](https://github.com/ericeallen/towel/blob/v2.0.1/docs/CLI_GUIDE.md).
+- [All documentation](https://github.com/ericeallen/towel/blob/v2.0.1/docs/README.md), also on [the documentation site](https://ericeallen.github.io/towel/).
 
 ## Requirements
 
@@ -186,24 +186,24 @@ Windows is not a supported or validated release platform.
 
 One core is enough, and `TOWEL_WORKERS=1` limits analysis to one worker. A
 module takes seconds; a large project with type checking can take an hour.
-[Requirements and performance](https://github.com/ericeallen/towel/blob/v2.0/docs/REQUIREMENTS.md)
+[Requirements and performance](https://github.com/ericeallen/towel/blob/v2.0.1/docs/REQUIREMENTS.md)
 has the figures.
 
 ## Contributing and security
 
 Contributors can start with
-[development setup and checks](https://github.com/ericeallen/towel/blob/v2.0/CONTRIBUTING.md).
+[development setup and checks](https://github.com/ericeallen/towel/blob/v2.0.1/CONTRIBUTING.md).
 Report security issues through the
-[security policy](https://github.com/ericeallen/towel/blob/v2.0/SECURITY.md).
+[security policy](https://github.com/ericeallen/towel/blob/v2.0.1/SECURITY.md).
 
 ## License
 
-Towel is licensed under the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v2.0/LICENSE);
+Towel is licensed under the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v2.0.1/LICENSE);
 its source files carry Eric Allen copyright headers.
 
 ## Releases
 
-The [changelog](https://github.com/ericeallen/towel/blob/v2.0/CHANGELOG.md)
+The [changelog](https://github.com/ericeallen/towel/blob/v2.0.1/CHANGELOG.md)
 describes the user-visible changes in this version and in each earlier one.
 The [GitHub releases page](https://github.com/ericeallen/towel/releases) lists
 the published versions with their release notes and artifacts, and

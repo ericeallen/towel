@@ -35,7 +35,7 @@ the variable and the shortest name allowed, as arguments. The
 ten minutes. This output comes from an install with Black available; the plain
 install prints a different first line.
 
-These pages describe Towel 2.0; `towel --version` shows the version you have.
+These pages describe Towel 2.0.1. Run `towel --version` to see the version you have.
 Versions before 2.0 have no relaxed mode (they behave as `--strict` does), no
 `--check` and no `[tool.towel]`; the
 [releases page](https://github.com/ericeallen/towel/releases) has each version's

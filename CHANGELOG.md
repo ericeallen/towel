@@ -12,6 +12,8 @@ release numbers; see the
 
 ## [2.0.1]
 
+2026-11-26
+
 ### Fixed
 
 - `rename-helpers DIR --list --json` reads the before/after records beside

@@ -6,7 +6,7 @@ backend-path = ["scripts"]
 
 [project]
 name = "code-towel"
-version = "2.0"
+version = "2.0.1"
 description = "Refactor duplicated Python code into shared helper functions, declining extractions that fail binding, control-flow and evaluation-order checks"
 keywords = [
     "refactoring",

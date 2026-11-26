@@ -2,9 +2,9 @@
 
 [Maintainers' records](README.md) · [Documentation index](../README.md)
 
-This source describes **2.0**: relaxed mode as the default, with strict mode
-keeping 1.949's behavior; Python 3.14 and 3.15; and the documentation site, as
-the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#20) describes. The
+The [2.0.1 changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#201)
+lists the fixes to helper naming, refactoring reports and project configuration
+in this release. It also describes how to reproduce the source distribution. The
 [GitHub releases](https://github.com/ericeallen/towel/releases) record which
 versions have been published and, from 1.732 on, how each was validated. The
 [readiness report](PRODUCTION_READINESS.md) keeps the dated preparation and
