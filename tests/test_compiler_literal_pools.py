@@ -301,7 +301,7 @@ def test_cross_module_callers_keep_useful_fully_parameterized_or_singleton_liter
     output = tmp_path / "output"
     report = _dry(project, output, cross_module=True)
     if lifetime_order_certified():
-        assert "Applied 2 refactoring" in report
+        assert "Applied 1 refactoring(s) across 2 file(s)" in report
     else:
         _assert_lifetime_refusal(report, project, output)
     assert _cross_observe(output) == before
