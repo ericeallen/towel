@@ -233,7 +233,9 @@ def test_complete_preview_keeps_cross_module_followups_and_exclusions(
     ]
     preview = invoke(["preview", str(root), *flags])
     assert preview.status == 0, preview
-    assert "Would apply 4 refactoring(s)" in preview.stdout
+    assert "Would apply 2 refactoring(s)" in preview.stdout
+    assert "a.py: 2 refactoring(s)" in preview.stdout
+    assert all(f"{module}: 1 refactoring(s)" in preview.stdout for module in ("b.py", "c.py"))
     assert "Discovered 2 proposal(s)" in preview.stderr
     assert "Discovered 1 proposal(s)" in preview.stderr
     assert "Termination:" not in preview.stdout and "Stopped at the limit" not in preview.stdout
