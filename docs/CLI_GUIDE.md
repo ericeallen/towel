@@ -108,6 +108,10 @@ Towel reads at most 20,000 Python files around the target. Where it needs the
 whole project and the tree is larger, the run stops: give the code its own
 `pyproject.toml`, `setup.cfg` or `setup.py`, or move it out of the larger tree.
 
+Ruff settings and pre-commit formatter hooks are discovered up to and including
+the nearest packaging root or Git or Mercurial root. A parent project’s hooks
+and settings stay with the parent.
+
 ### Protect a function
 
 Mark a function’s signature with `# towel: no-extract`:

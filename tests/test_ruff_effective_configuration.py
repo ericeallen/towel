@@ -104,7 +104,7 @@ def test_dotfile_precedence_and_extended_nested_rules_apply_per_file(
     assert _finish(child, tmp_path) == SORTED
 
 
-def test_standalone_only_project_and_nested_non_ruff_pyproject_preserve_parent_policy(
+def test_standalone_ruff_policy_stops_at_a_nested_project(
     tmp_path: Path,
 ) -> None:
     pytest.importorskip("ruff")
@@ -114,10 +114,9 @@ def test_standalone_only_project_and_nested_non_ruff_pyproject_preserve_parent_p
     (nested / "pyproject.toml").write_text('[project]\nname="nested"\nversion="0"\n')
     module = nested / "m.py"
     module.write_text(ORIGINAL)
-    assert project_configures_ruff_import_sorting(module)
-    assert _finish(module) == SORTED
-    formatter = formatter_for_project(module).tool
-    assert formatter is not None and formatter('value = "string"') == "value = 'string'"
+    assert not project_configures_ruff_import_sorting(module)
+    assert _finish(module) == ASSEMBLED
+    assert "ruff" not in formatter_for_project(module).note.lower()
 
 
 @pytest.mark.parametrize("failure", ["exit", "timeout", "invalid-settings", "os-error"])

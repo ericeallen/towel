@@ -26,6 +26,8 @@ release numbers; see the
   about an unrecognized or misplaced `# towel:` directive.
 - With redirected stdin, bare `rename-helpers` prints the assistant prompt
   and exits successfully. On a terminal it explains how to submit or cancel.
+- Formatter configuration discovery stops at the nearest packaging or repository
+  boundary, including when the parent configures Ruff or a pre-commit formatter.
 
 ## [2.0]
 

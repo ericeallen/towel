@@ -71,7 +71,7 @@ from ._formatting_repeatability import (
 )
 
 from .canonical_ast import canonical_dump
-from .project_layout import find_project_root, load_pyproject
+from .project_layout import configuration_directories, find_project_root, load_pyproject
 from .project_tools import (
     IsolatedFormatTool,
     ToolChoice,
@@ -505,14 +505,14 @@ def _tool_section(root: Path, name: str) -> Mapping[str, object]:
 def _ruff_configuration(path: Path) -> Optional[Path]:
     """Discover Ruff's nearest project configuration; Ruff resolves its settings.
 
-    A packaging file without a Ruff table is not a Ruff boundary. At the same
+    The nearest packaging or VCS root bounds discovery. At the same
     directory Ruff prefers .ruff.toml, then ruff.toml, then pyproject.toml.
     Everything inside that selected configuration, including extend, is left
     to Ruff's supported CLI instead of reimplemented here.
     """
     absolute = path.resolve()
     folder = absolute if absolute.is_dir() else absolute.parent
-    for directory in (folder, *folder.parents):
+    for directory in configuration_directories(folder):
         for name in (".ruff.toml", "ruff.toml"):
             candidate = directory / name
             if candidate.is_file():
@@ -809,7 +809,7 @@ def _pre_commit_formatter(path: Path) -> Optional[FormatterKind]:
     absolute = path.resolve()
     folder = absolute if absolute.is_dir() else absolute.parent
     hook_id = re.compile(r"^(\s*)-\s+id:\s*(['\"]?)(black|ruff-format)\2\s*(?:#.*)?$")
-    for directory in (folder, *folder.parents):
+    for directory in configuration_directories(folder):
         config = directory / ".pre-commit-config.yaml"
         if not config.is_file():
             continue

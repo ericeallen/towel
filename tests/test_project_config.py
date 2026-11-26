@@ -194,3 +194,32 @@ def test_w1_retired_non_interactive_alias_keeps_dry_semantics(tmp_path: Path) ->
     source = project(tmp_path, "non-interactive = true\n")
     assert resolved(source, command="dry").interactive is False
     assert resolved(source, "--interactive", command="dry").interactive is True
+
+
+@pytest.mark.parametrize("boundary", ["pyproject.toml", ".git", ".hg"])
+def test_subproject_ignores_formatter_configuration_above_its_boundary(
+    tmp_path: Path, boundary: str
+) -> None:
+    """Cold read 7: a member must not silently inherit the enclosing checkout's tools."""
+    from towel.formatting import _pre_commit_formatter, _ruff_configuration
+    from towel.project_layout import find_project_root
+
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\n")
+    hook = "repos:\n  - repo: local\n    hooks:\n      - id: black\n"
+    (tmp_path / ".pre-commit-config.yaml").write_text(hook)
+    member = tmp_path / "packages/billing"
+    module = member / "src/totals.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("total = 0\n")
+    if boundary == "pyproject.toml":
+        (member / boundary).write_text('[project]\nname="billing"\nversion="1"\n')
+    else:
+        (member / boundary).mkdir()
+    assert _pre_commit_formatter(module) is None
+    assert _ruff_configuration(module) is None
+    assert find_project_root(module).is_relative_to(member)
+
+    (member / ".pre-commit-config.yaml").write_text(hook)
+    (member / "ruff.toml").touch()
+    assert _pre_commit_formatter(module) == "black"
+    assert _ruff_configuration(module) == member / "ruff.toml"

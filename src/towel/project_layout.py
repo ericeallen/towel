@@ -110,29 +110,40 @@ def resolve_user_path(path: str | Path) -> Path:
         raise ValueError(f"Cannot resolve path {str(path)!r}: {error}") from error
 
 
+def _packaging_root(directory: Path) -> bool:
+    # Within a package, setup.py can be an ordinary importable module.
+    return (
+        (directory / "pyproject.toml").is_file()
+        or (directory / "setup.cfg").is_file()
+        or ((directory / "setup.py").is_file() and not is_package_dir(directory))
+    )
+
+
+def _repository_directories(directory: Path) -> Iterator[Path]:
+    for current in (directory, *directory.parents):
+        yield current
+        if (current / ".git").exists() or (current / ".hg").exists():
+            break
+
+
+def configuration_directories(directory: Path) -> Iterator[Path]:
+    """Search from a directory through its nearest packaging or VCS boundary, inclusive."""
+    for current in _repository_directories(directory):
+        yield current
+        if _packaging_root(current):
+            break
+
+
 def find_project_root(start_path: Path) -> Path:
-    """Find nearest ancestor that looks like the project root."""
+    """The nearest packaging root within the repository, else the classic package root."""
     start = resolve_user_path(start_path)
     base_dir = start.parent if start.is_file() else start
 
-    # Prefer a nearby directory containing packaging markers, but fall back to
-    # the provided directory when none are found while walking upward.
-    markers = {"pyproject.toml", "setup.cfg"}
-    current = base_dir
-    while True:
-        # Inside a regular package, setup.py is an importable module just like
-        # any other .py file. Its name alone must not hide the actual project
-        # and the ordinary consumers beside that package from staging/scans.
-        if any((current / m).exists() for m in markers) or (
-            (current / "setup.py").exists() and not is_package_dir(current)
-        ):
+    for current in _repository_directories(base_dir):
+        if _packaging_root(current):
             return current
-        parent = current.parent
-        if parent == current:
-            break
-        current = parent
     # VCS roots do not establish sys.path. Honor classic package ancestry;
     # otherwise the explicit source directory is the only available anchor.
-    while (base_dir / "__init__.py").is_file():
+    while (base_dir / "__init__.py").is_file() and base_dir != current:
         base_dir = base_dir.parent
     return base_dir
