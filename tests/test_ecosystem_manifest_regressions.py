@@ -21,7 +21,9 @@ missing plugin, fixture, or source tree.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
+import shutil
 import sys
 
 from packaging.requirements import Requirement
@@ -165,17 +167,41 @@ def test_ply_manifest_runs_both_scripts_against_each_source_copy(tmp_path: Path)
 
 
 _CONTEXT_SOURCES = Path(__file__).with_name("ecosystem_context_sources")
+# GitHub's dependency graph reads a vendored lock or manifest under its upstream name and
+# raises alerts and update requests against bytes this suite keeps frozen. Such a file is
+# stored with this suffix; ``_context_tree`` restores the name Towel reads it by.
+_FIXTURE_SUFFIX = ".fixture"
 
 
-def _context_requirements(name: str) -> list[Requirement]:
-    """Read actual selected source groups, including recursive project extras."""
+def _context_row(name: str) -> Mapping[str, object]:
     import json
 
-    source = _CONTEXT_SOURCES / name
     index = ecosystem._table(json.loads((_CONTEXT_SOURCES / "index.json").read_text()))
     rows = index["projects"]
     assert isinstance(rows, list)
-    row = next(ecosystem._table(value) for value in rows if ecosystem._table(value)["name"] == name)
+    return next(
+        ecosystem._table(value) for value in rows if ecosystem._table(value)["name"] == name
+    )
+
+
+def _context_tree(name: str, destination: Path) -> Path:
+    """One project's pinned files, byte for byte, under their upstream names."""
+    paths = list((_CONTEXT_SOURCES / name).iterdir())
+    stored = {path.name.removesuffix(_FIXTURE_SUFFIX): path for path in paths}
+    files = _context_row(name)["files"]
+    assert isinstance(files, list)
+    # Equal lengths refuse a file stored under both names.
+    assert len(paths) == len(files) and set(stored) == set(files), (name, paths)
+    tree = destination / name
+    tree.mkdir()
+    for upstream_name, path in stored.items():
+        shutil.copyfile(path, tree / upstream_name)
+    return tree
+
+
+def _context_requirements(name: str, source: Path) -> list[Requirement]:
+    """Read actual selected source groups, including recursive project extras."""
+    row = _context_row(name)
     assert _project(name).rev == row["declared_pin"]
     assert isinstance(row["pin"], str) and len(row["pin"]) == 40
     data = ecosystem._read_toml(source / "pyproject.toml")
@@ -238,9 +264,9 @@ def _context_requirements(name: str) -> list[Requirement]:
         "towel-main",
     ],
 )
-def test_manifest_covers_actual_pinned_selected_source_context(name: str) -> None:
+def test_manifest_covers_actual_pinned_selected_source_context(name: str, tmp_path: Path) -> None:
     """Read upstream declarations rather than restating a curated dependency list."""
-    selected = _context_requirements(name)
+    selected = _context_requirements(name, _context_tree(name, tmp_path))
     assert selected, name
     declared = list(map(Requirement, _project(name).deps))
     for requirement in selected:
@@ -259,18 +285,16 @@ def test_manifest_covers_actual_pinned_selected_source_context(name: str) -> Non
 
 
 @pytest.mark.parametrize("name", ["jinja2", "rich", "starlette", "towel-main"])
-def test_new_weak_tool_requirements_retain_the_actual_upstream_tool_selection(name: str) -> None:
-    import json
-
-    source = _CONTEXT_SOURCES / name
-    index = ecosystem._table(json.loads((_CONTEXT_SOURCES / "index.json").read_text()))
-    rows = index["projects"]
-    assert isinstance(rows, list)
-    row = next(ecosystem._table(value) for value in rows if ecosystem._table(value)["name"] == name)
-    expected = ecosystem._table(row["pin_sources"])
+def test_new_weak_tool_requirements_retain_the_actual_upstream_tool_selection(
+    name: str, tmp_path: Path
+) -> None:
+    source = _context_tree(name, tmp_path)
+    expected = ecosystem._table(_context_row(name)["pin_sources"])
     actual = ecosystem.tool_pins(Path(sys.executable), source, tuple(expected))
     assert {tool: list(choice) for tool, choice in actual.items()} == expected
-    selected = {canonicalize_name(requirement.name) for requirement in _context_requirements(name)}
+    selected = {
+        canonicalize_name(requirement.name) for requirement in _context_requirements(name, source)
+    }
     declared = list(map(Requirement, _project(name).deps))
     for tool, (_, version) in actual.items():
         if canonicalize_name(tool) in selected:
@@ -279,6 +303,17 @@ def test_new_weak_tool_requirements_retain_the_actual_upstream_tool_selection(na
                 and str(requirement.specifier) == "==" + version
                 for requirement in declared
             ), (name, tool, version)
+
+
+def test_vendored_context_files_are_hidden_from_the_dependency_graph() -> None:
+    exposed = [
+        path.relative_to(_CONTEXT_SOURCES).as_posix()
+        for path in _CONTEXT_SOURCES.rglob("*")
+        if path.name in ecosystem.LOCK_FILES
+    ]
+    assert exposed == []
+    # Its Poetry tables are read for alerts too.
+    assert not (_CONTEXT_SOURCES / "rich" / "pyproject.toml").exists()
 
 
 def test_anyio_build_artifacts_are_excluded_from_the_source_model() -> None:
