@@ -441,9 +441,13 @@ def test_boolean_options_take_both_spellings() -> None:
     assert parser.parse_args(["dry", "in", "out", "--no-pep420"]).pep420 is False
 
 
-def test_bare_rename_with_an_open_pipe_prints_the_prompt_without_reading(tmp_path: Path) -> None:
+@pytest.mark.parametrize("project_file", [True, False], ids=["project", "unmarked-directory"])
+def test_bare_rename_with_an_open_pipe_prints_the_prompt_without_reading(
+    tmp_path: Path, project_file: bool
+) -> None:
     """Cold read 6: a caller collecting the prompt may keep the pipe open."""
-
+    if project_file:
+        (tmp_path / "pyproject.toml").touch()
     source = tmp_path / "helpers.py"
     source.write_text(HELPER)
     with subprocess.Popen(
