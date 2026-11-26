@@ -144,5 +144,9 @@ def test_complete_cross_module_preview_handles_non_table_tool_settings(
     )
     assert result.returncode == 0, result.stderr
     assert "Termination" not in result.stdout and "Stopped at the limit" not in result.stdout
-    assert "2 refactoring" in result.stdout
+    lines = result.stdout.splitlines()
+    assert "Would apply 1 refactoring(s)." in lines
+    assert "Would change 2 file(s):" in lines
+    assert "  a.py: 1 refactoring(s)" in lines
+    assert "  b.py: 1 refactoring(s)" in lines
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
