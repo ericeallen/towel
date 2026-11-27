@@ -10,6 +10,16 @@ release numbers; see the
 
 ## [Unreleased]
 
+### Validation
+
+- Every ecosystem corpus row now names a full commit: the harness refuses a
+  `rev` that is a branch, a tag or `HEAD`, and the release evidence check
+  refuses a corpus run against such a manifest. `towel-main` had followed
+  GitHub main, so a fresh clone in the 2.0.1 campaign tested a ~15,000-test
+  suite that outran its 3,600-second limit in strict mode; it is pinned to
+  that commit, `1c6a3615`, and its phase limit is raised to 7,200 seconds,
+  because the pinned suite alone needs about an hour.
+
 ## [2.0.1]
 
 2026-11-26

@@ -243,8 +243,8 @@
     },
     {
       "name": "towel-main",
-      "pin": "088a4c7c7992aa1ff59d90cc88e083ccf157b82d",
-      "declared_pin": "HEAD",
+      "pin": "1c6a361535b3e0b64b4a05011c1c96f50edba14e",
+      "declared_pin": "1c6a361535b3e0b64b4a05011c1c96f50edba14e",
       "selectors": [
         {
           "kind": "extra",
@@ -267,7 +267,7 @@
         ],
         "black": [
           "uv.lock",
-          "26.5.1"
+          "26.10.1"
         ],
         "isort": [
           "uv.lock",

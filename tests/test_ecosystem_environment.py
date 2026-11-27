@@ -488,7 +488,7 @@ def test_a_manifest_entry_cannot_turn_cross_module_off_without_a_reason(
     manifest = tmp_path / "manifest.toml"
     extra = "".join(f"{key} = {json.dumps(value)}\n" for key, value in fields.items())
     manifest.write_text(
-        '[[project]]\nname = "fixture"\nurl = "unused"\nrev = "pinned"\n'
+        '[[project]]\nname = "fixture"\nurl = "unused"\nrev = "' + "a" * 40 + '"\n'
         f'package = "p.py"\n{extra}'
     )
     with pytest.raises(ValueError, match=message):

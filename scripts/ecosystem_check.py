@@ -110,8 +110,8 @@ invoking user's privileges. That is remote code execution by design, so the
 script refuses to run unless the caller opts in with ``--run-untrusted-code``
 or ``TOWEL_ECOSYSTEM_RUN_UNTRUSTED=1``, and it belongs on a disposable
 machine, a container, or an ephemeral CI runner, never on a workstation
-holding credentials. The manifest pins projects to reviewed commits except the
-intentional ``towel-main`` HEAD compatibility entry;
+holding credentials. The manifest pins every project to a reviewed commit,
+and ``load_manifest`` refuses a ``rev`` that is not a full commit SHA;
 ``--print-pins`` lists the commits the last run tested so the pins can be
 refreshed after review.
 
@@ -526,6 +526,25 @@ class Result:
     """A strict refactor and suite, run when relaxed mode changed a test's outcome."""
 
 
+_COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def pinned_commit(name: str, rev: object) -> str:
+    """``rev`` when it names one commit for good: a full, lowercase 40-character SHA.
+
+    A branch, a tag or ``HEAD`` moves, so a row that names one tests whatever
+    upstream holds on the day it runs, and a reused clone tests whatever it held
+    when it was made. Neither result can be reproduced, and both execute code
+    nobody reviewed. An abbreviated SHA can grow ambiguous as the repository does.
+    """
+    if not isinstance(rev, str) or not _COMMIT_SHA.fullmatch(rev):
+        raise ValueError(
+            f"{name}: rev must be a full 40-character commit SHA, not {rev!r}; "
+            "a branch, tag or HEAD moves, so the row could not be reproduced"
+        )
+    return rev
+
+
 def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     projects = []
@@ -536,7 +555,7 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
         project = Project(
             name=entry["name"],
             url=entry["url"],
-            rev=entry.get("rev", "HEAD"),
+            rev=pinned_commit(entry["name"], entry.get("rev")),
             package=entry["package"],
             pythonpath=entry.get("pythonpath", "."),
             deps=tuple(entry.get("deps", ())),
@@ -820,12 +839,11 @@ def clone(project: Project, source: Path, log_dir: Path) -> str:
             check=True,
             capture_output=True,
         )
-    if project.rev != "HEAD":
-        subprocess.run(
-            ["git", "-C", str(source), "checkout", "-q", project.rev],
-            check=True,
-            capture_output=True,
-        )
+    subprocess.run(
+        ["git", "-C", str(source), "checkout", "-q", project.rev],
+        check=True,
+        capture_output=True,
+    )
     if project.prepare:
         # The command is split into an argument vector and run without a shell.
         # The manifest's only ``prepare`` is ``git submodule update --init
@@ -4106,7 +4124,7 @@ def print_pins(report_dir: Path) -> int:
 
     Reads only the per-project JSON the harness wrote; nothing is executed. The
     output is the input for refreshing the manifest's ``rev`` fields after the
-    new commits have been reviewed (towel-main deliberately stays at HEAD).
+    new commits have been reviewed.
     """
     reports = sorted(path for path in report_dir.glob("*.json") if path.stem != "summary")
     if not reports:

@@ -161,7 +161,8 @@ def test_the_relaxed_notice_is_recorded_from_the_refactor_log(
 def test_a_relaxed_assumption_must_be_a_complete_reviewed_table(tmp_path: Path, table: str) -> None:
     manifest = tmp_path / "manifest.toml"
     manifest.write_text(
-        '[[project]]\nname = "fixture"\nurl = "unused"\npackage = "package.py"\n\n'
+        '[[project]]\nname = "fixture"\nurl = "unused"\nrev = "' + "a" * 40 + '"\n'
+        'package = "package.py"\n\n'
         f"[project.relaxed_assumption]\n{table}\n"
     )
     with pytest.raises(ValueError, match="fixture: relaxed_assumption"):
@@ -171,7 +172,8 @@ def test_a_relaxed_assumption_must_be_a_complete_reviewed_table(tmp_path: Path, 
 def test_a_complete_table_loads(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.toml"
     manifest.write_text(
-        '[[project]]\nname = "fixture"\nurl = "unused"\npackage = "package.py"\n\n'
+        '[[project]]\nname = "fixture"\nurl = "unused"\nrev = "' + "a" * 40 + '"\n'
+        'package = "package.py"\n\n'
         '[project.relaxed_assumption]\nassumption = "stable_module_names"\n'
         'reason = "a test patches mod.f while it runs"\ntests = ["test_a.py::test_patch"]\n'
     )

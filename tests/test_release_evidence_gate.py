@@ -1284,6 +1284,31 @@ def _verify_corpus_with_manifest(bundle: Bundle, entry: bytes) -> None:
     gate.verify_corpus(records, bundle.commit, gate.text(review["wheel_sha256"]), source, review)
 
 
+@pytest.mark.parametrize("rev", ["HEAD", "main", "v2.0", "a" * 12])
+def test_a_corpus_row_that_follows_a_moving_revision_refuses(bundle: Bundle, rev: str) -> None:
+    # The report's commit is the one the run happened to clone; a manifest that
+    # names a branch, tag or HEAD cannot say that is the commit it meant.
+    source = dict(bundle.source)
+    manifest = source["scripts/ecosystem/manifest.toml"]
+    assert manifest.count(b"a" * 40) == 1
+    source["scripts/ecosystem/manifest.toml"] = manifest.replace(b"a" * 40, rev.encode())
+    bundle.alter(
+        "corpus-environment.json",
+        lambda record: record.update(
+            manifest_sha256=gate.digest(source["scripts/ecosystem/manifest.toml"])
+        ),
+    )
+    records = gate.Records(
+        bundle.root,
+        {name: gate.FileRef.read(ref) for name, ref in gate.table(bundle.value["records"]).items()},
+    )
+    review = gate.table(bundle.read("review.json"))
+    with pytest.raises(gate.EvidenceError, match="follows a moving revision"):
+        gate.verify_corpus(
+            records, bundle.commit, gate.text(review["wheel_sha256"]), source, review
+        )
+
+
 RELAXED_ASSUMPTION = (
     b'[project.relaxed_assumption]\nassumption = "object_lifetimes"\n'
     b'reason = "test_del waits for a __del__"\ntests = ["t.py::test_del"]\n'

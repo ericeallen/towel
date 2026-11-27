@@ -1112,10 +1112,10 @@ def verify_corpus(
         require(row.get("towel_mode") == mode, f"Corpus row ran in another mode: {name}")
         pin = text(manifest[name].get("rev"))
         require(
-            bool(re.fullmatch(r"[0-9a-f]{40}", text(row.get("commit"))))
-            and (pin == "HEAD" or row.get("commit") == pin),
-            f"Corpus input revision mismatch: {name}",
+            bool(re.fullmatch(r"[0-9a-f]{40}", pin)),
+            f"Corpus row follows a moving revision, not a commit: {name} = {pin!r}",
         )
+        require(row.get("commit") == pin, f"Corpus input revision mismatch: {name}")
         require(
             verdict in accepted,
             f"Incomplete or unaccepted corpus verdict: {name}/{verdict}",

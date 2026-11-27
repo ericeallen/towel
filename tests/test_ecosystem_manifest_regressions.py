@@ -23,8 +23,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+import re
 import shutil
 import sys
+import tomllib
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
@@ -37,6 +39,55 @@ def _project(name: str) -> ecosystem.Project:
     projects = ecosystem.load_manifest(ecosystem.REPO / "scripts/ecosystem/manifest.toml", [name])
     assert len(projects) == 1, f"Missing or ambiguous corpus entry: {name}"
     return projects[0]
+
+
+_MANIFEST = ecosystem.REPO / "scripts/ecosystem/manifest.toml"
+
+
+def test_every_corpus_row_names_a_full_commit() -> None:
+    """A row that follows a branch, tag or HEAD tests whatever upstream holds that day.
+
+    Read from the TOML directly, so the check does not rest on load_manifest's own.
+    towel-main followed main until a fresh clone's longer suite timed out in the
+    2.0.1 campaign's strict run; nothing about that row was reproducible.
+    """
+    rows = tomllib.loads(_MANIFEST.read_text(encoding="utf-8"))["project"]
+    moving = [
+        (row["name"], row.get("rev"))
+        for row in rows
+        if not isinstance(row.get("rev"), str) or not re.fullmatch(r"[0-9a-f]{40}", row["rev"])
+    ]
+    assert moving == []
+    assert len(ecosystem.load_manifest(_MANIFEST, [])) == len(rows)
+
+
+def test_towel_main_is_pinned_to_the_commit_the_2_0_1_campaign_cloned() -> None:
+    assert _project("towel-main").rev == "1c6a361535b3e0b64b4a05011c1c96f50edba14e"
+
+
+@pytest.mark.parametrize(
+    "rev",
+    [
+        '"HEAD"',
+        '"main"',
+        '"v2.0"',
+        '"1c6a3615"',
+        '"' + "1C6A361535B3E0B64B4A05011C1C96F50EDBA14E" + '"',
+        '"1c6a361535b3e0b64b4a05011c1c96f50edba14e "',
+        "40",
+        None,
+    ],
+)
+def test_a_manifest_row_that_follows_a_moving_revision_is_refused(
+    tmp_path: Path, rev: str | None
+) -> None:
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text(
+        '[[project]]\nname = "fixture"\nurl = "unused"\npackage = "p.py"\n'
+        + ("" if rev is None else f"rev = {rev}\n")
+    )
+    with pytest.raises(ValueError, match="fixture: rev must be a full 40-character commit SHA"):
+        ecosystem.load_manifest(manifest, [])
 
 
 @pytest.mark.parametrize(

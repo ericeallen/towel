@@ -5,14 +5,17 @@
 # Every `rev` is pinned to the full commit SHA the last release-gate run
 # tested, because the harness executes each project's code (see the trust
 # boundary in scripts/ecosystem_check.py): a pin means a hijacked upstream
-# cannot put unreviewed code into the run. The one exception is towel-main,
-# which must track current `main` and stays at "HEAD" on purpose. To refresh
-# the pins: run the check, review the new commits, then print the commits the
-# run tested with `python scripts/ecosystem_check.py --work <work> --print-pins`
-# (it executes nothing) and replace the `rev` lines below with those SHAs,
-# leaving towel-main alone. Run the check again before relying on the result.
+# cannot put unreviewed code into the run, and two runs of the same manifest
+# test the same code. There are no exceptions: a branch, a tag or "HEAD" moves,
+# and load_manifest refuses any `rev` that is not a full commit SHA. towel-main
+# is Towel's GitHub main at the commit the last release gate tested, refreshed
+# with the others. To refresh the pins: run the check, review the new commits,
+# then print the commits the run tested with
+# `python scripts/ecosystem_check.py --work <work> --print-pins` (it executes
+# nothing) and replace the `rev` lines below with those SHAs. Run the check
+# again before relying on the result.
 #
-# Fields: name, url, rev (full commit SHA; "HEAD" only for towel-main),
+# Fields: name, url, rev (full 40-character commit SHA),
 # package (path refactored, relative to the project root), pythonpath (for
 # the test run), deps (test requirements installed into the project's own
 # environment), test (command run from the project root; {python} is the
@@ -2654,14 +2657,18 @@ problems = [
 [[project]]
 name = "towel-main"
 # Test context: Selected extra:dev.
-# Original selected tool pins: mypy 2.3.1 (uv.lock), pyright 1.1.414 (uv.lock), black 26.5.1 (uv.lock), isort 9.0.1 (uv.lock), ruff 0.16.8 (uv.lock).
+# Original selected tool pins: mypy 2.3.1 (uv.lock), pyright 1.1.414 (uv.lock), black 26.10.1 (uv.lock), isort 9.0.1 (uv.lock), ruff 0.16.8 (uv.lock).
 url = "https://github.com/ericeallen/towel.git"
-rev = "HEAD"  # on purpose: this entry tracks current main, never a fixed commit
+# Pinned like every other row. Following main made the row unreproducible: a
+# fresh clone in the 2.0.1 campaign took main at 1c6a3615, whose ~15,000 tests
+# outran the 3,600 s limit in strict mode, while the previous campaign had
+# reused an older clone with a shorter suite.
+rev = "1c6a361535b3e0b64b4a05011c1c96f50edba14e"
 package = "src/towel"
 pythonpath = "src"
 deps = [
     "bandit>=1.7.6",
-    "black==26.5.1",
+    "black==26.10.1",
     "black>=26.3.1",
     "build>=1.0.0",
     "coverage>=7.0.0",
@@ -2682,7 +2689,9 @@ deps = [
     "tomli",
     "tqdm>=4.66.0",
 ]
-timeout = 3600
+# Its suite alone needs about an hour: at this pin the unmodified baseline
+# took 3,521 s in relaxed and was killed at 3,600 s in strict (2.0.1 campaign).
+timeout = 7200
 
 [project.expected_refusal]
 reason = """\

@@ -99,7 +99,8 @@ def test_clone_time_git_prepare_stays_separate_from_post_install(
 def test_post_install_rejects_non_argv_manifest_values(tmp_path: Path, value: str) -> None:
     manifest = tmp_path / "manifest.toml"
     manifest.write_text(
-        '[[project]]\nname="fixture"\nurl="unused"\npackage="pkg"\npost_install=' + value
+        '[[project]]\nname="fixture"\nurl="unused"\nrev="' + "a" * 40 + '"\n'
+        'package="pkg"\npost_install=' + value
     )
     with pytest.raises(ValueError, match="post_install must be an argv array"):
         ecosystem.load_manifest(manifest, [])

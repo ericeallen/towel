@@ -1430,7 +1430,8 @@ def test_listed_problems_are_the_indented_lines_right_after_the_error() -> None:
 def test_an_expected_refusal_must_be_a_complete_reviewed_table(tmp_path: Path, table: str) -> None:
     manifest = tmp_path / "manifest.toml"
     manifest.write_text(
-        '[[project]]\nname = "fixture"\nurl = "unused"\npackage = "package.py"\n\n'
+        '[[project]]\nname = "fixture"\nurl = "unused"\nrev = "' + "a" * 40 + '"\n'
+        'package = "package.py"\n\n'
         f"[project.expected_refusal]\n{table}\n"
     )
     with pytest.raises(ValueError, match="fixture: expected_refusal"):
