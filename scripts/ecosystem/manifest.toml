@@ -2689,8 +2689,11 @@ deps = [
     "tomli",
     "tqdm>=4.66.0",
 ]
-# Its suite alone needs about an hour: at this pin the unmodified baseline
-# took 3,521 s in relaxed and was killed at 3,600 s in strict (2.0.1 campaign).
+# Its suite alone needs more than an hour: at this pin the unmodified baseline
+# took 3,521 s in relaxed and was killed at 3,600 s in strict (2.0.1 campaign),
+# then 4,403 s relaxed and 4,052 s strict when this row was pinned (2026-11-27,
+# same image, 6 CPUs, on a loaded host). Both modes then reached the expected
+# refusal in under 9 s.
 timeout = 7200
 
 [project.expected_refusal]
