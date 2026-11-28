@@ -53,6 +53,7 @@ from typing import cast, Any, Dict, List, Literal, Optional, Tuple
 
 from tests.differential.cases import Case
 from tests.differential.comparison import Difference, behaviour_changes
+from tests.differential.memory_stop_log import Sample, describe_stop
 from tests.differential.process_memory import resident_bytes as _resident_bytes
 from tests.differential.scope_grammar import FAMILY as SCOPE_FAMILY
 from tests.hostile_execution import ISOLATED_ENV, ScopeWatch
@@ -82,6 +83,8 @@ untouched reservations while bounding what a runaway can touch.
 OBSERVER_FILE_BYTES = 16 * 1024 * 1024
 OBSERVER_EXIT_SECONDS = 5.0
 """How long an observer that the kernel says is past signalling may take to finish exiting."""
+OBSERVER_STACK_SECONDS = 0.5
+"""How long a stopped observer may take to write its Python stack to the log before it is killed."""
 
 Record = Dict[str, Any]
 
@@ -279,6 +282,61 @@ def _memory_record(stopped_by: str, budget: int, resident: int) -> Record:
     }
 
 
+def _observer_stack(process: subprocess.Popen[bytes], stderr: Path) -> str:
+    """Ask a live observer for its Python stack, and return what it wrote to ``stderr``.
+
+    The observer registers :mod:`faulthandler` on ``SIGUSR1``, which writes
+    every thread's stack to its stderr file. An observer that has not
+    registered yet dies of the signal instead, and writes nothing.
+    """
+    offset = stderr.stat().st_size
+    process.send_signal(signal.SIGUSR1)
+    deadline = time.monotonic() + OBSERVER_STACK_SECONDS
+    size = offset
+    while time.monotonic() < deadline:
+        time.sleep(0.02)
+        grown = stderr.stat().st_size
+        if grown > offset and grown == size:
+            break  # The stack was written and the observer stopped writing.
+        size = grown
+    with stderr.open("rb") as errors:
+        errors.seek(offset)
+        stack = errors.read(16000).decode("utf-8", errors="replace").rstrip()
+    return "--- the observer's Python stack ---\n" + (stack or "(none written)")
+
+
+def _log_memory_stop(
+    process: subprocess.Popen[bytes],
+    stderr: Path,
+    stopped_by: str,
+    budget: int,
+    resident: int,
+    samples: List[Sample],
+    *,
+    alive: bool,
+) -> None:
+    """Write to this process's stderr what the budget stopped, while a live observer can be read.
+
+    Logging only: it never changes the record, and a failure to describe the
+    observer is itself logged rather than raised.
+    """
+    try:
+        text = describe_stop(
+            process.pid,
+            stopped_by,
+            budget,
+            resident,
+            samples,
+            alive=alive,
+        )
+        if alive:
+            text += "\n" + _observer_stack(process, stderr)
+    except Exception:  # noqa: BLE001 - the log must not change the verdict
+        text = f"=== observer memory stop: pid {process.pid}, {stopped_by}; describing it failed:\n"
+        text += traceback.format_exc()
+    print(text, file=sys.stderr, flush=True)
+
+
 def _observer_failure(
     root: Path, returncode: Optional[int], stderr: Path, why: str
 ) -> RuntimeError:
@@ -301,14 +359,28 @@ def _observe_one(root: Path, spec: Path, work: Path, memory_bytes: int) -> Recor
             env=OBSERVER_ENV,
             start_new_session=True,
         )
-        deadline = time.monotonic() + OBSERVER_SECONDS
+        started = time.monotonic()
+        deadline = started + OBSERVER_SECONDS
         # A sample taken while memory is released, or after exit (zero), is
-        # lower than an earlier one; the record keeps the highest.
+        # lower than an earlier one; the record keeps the highest. Every
+        # sample is kept for the log of a stop.
         highest = 0
+        samples: List[Sample] = []
         try:
             while process.poll() is None:
-                highest = max(highest, _resident_bytes(process.pid))
+                resident = _resident_bytes(process.pid)
+                samples.append((time.monotonic() - started, resident))
+                highest = max(highest, resident)
                 if highest > memory_bytes:
+                    _log_memory_stop(
+                        process,
+                        stderr,
+                        "resident memory",
+                        memory_bytes,
+                        highest,
+                        samples,
+                        alive=True,
+                    )
                     return _memory_record("resident memory", memory_bytes, highest)
                 if any(
                     path.exists() and path.stat().st_size > OBSERVER_FILE_BYTES
@@ -340,6 +412,15 @@ def _observe_one(root: Path, spec: Path, work: Path, memory_bytes: int) -> Recor
         # The program raised MemoryError, or the address-space cap refused an allocation.
         return _memory_record("MemoryError in the observer", memory_bytes, peak)
     if peak > memory_bytes:
+        _log_memory_stop(
+            process,
+            stderr,
+            "peak resident memory at exit",
+            memory_bytes,
+            peak,
+            samples,
+            alive=False,
+        )
         return _memory_record("peak resident memory at exit", memory_bytes, peak)
     return record
 
