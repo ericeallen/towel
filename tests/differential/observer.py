@@ -56,6 +56,7 @@ from __future__ import annotations
 import atexit
 import contextlib
 import copy
+import faulthandler
 import importlib
 import inspect
 import io
@@ -518,6 +519,10 @@ def _write_all(descriptor: int, data: bytes) -> None:
 
 def main(argv: Sequence[str]) -> int:
     root, spec_path, out_path, peak_path = argv
+    # Diagnostics only: the runner sends SIGUSR1 just before it kills an
+    # observer over its memory budget, to log where the program was. The
+    # stack goes to this process's stderr file, never to what the program sees.
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
     # Report the peak after the program's own exit handlers, which may also
     # allocate. A failure here leaves the report empty, which the runner
     # treats as the observer failing.
